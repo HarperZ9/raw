@@ -66,7 +66,11 @@ public:
                      ID3D12Resource* preWater = nullptr);
     bool SubmitWater(ID3D12CommandQueue* q);
     bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload
-    static constexpr UINT kWaterDescriptors = 36;   // 8 + 4 a frame in flight
+    // Binds live GPU 256x256 Shallow-Water simulation textures (WaterState, WaterNormal) for RtWater.hlsl.
+    // Pass nullptrs or worldSpanU <= 0 to disable cleanly (safe WARP/fallback path).
+    void SetFluidWaterResources(ID3D12Resource* waterState, ID3D12Resource* waterNormal,
+                                float originX, float originY, float worldSpanU);
+    static constexpr UINT kWaterDescriptors = 42;   // (10 water + 4 sss) * 3 frames in flight
 
 private:
     struct Mesh
@@ -171,7 +175,11 @@ private:
     UINT m_waterAt = 0;
     uint64_t m_tlasFrame = ~0ull;   // m_frame when the TLAS was last recorded
     ComPtr<ID3D12PipelineState> m_waterPso, m_sssPso;
-    ComPtr<ID3D12RootSignature> m_sssRoot;
+    ComPtr<ID3D12RootSignature> m_waterRoot, m_sssRoot;
+    ID3D12Resource* m_fluidWaterState = nullptr;
+    ID3D12Resource* m_fluidWaterNormal = nullptr;
+    float m_fluidWaterOrigin[2] = {0.0f, 0.0f};
+    float m_fluidWaterSpanU = 0.0f;
     ComPtr<ID3D12CommandAllocator> m_wAlloc[3];
     ComPtr<ID3D12GraphicsCommandList4> m_wList;
     ComPtr<ID3D12Resource> m_wCb[3], m_wTsRead;

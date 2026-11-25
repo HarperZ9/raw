@@ -30,6 +30,7 @@
 #include "rt_forensics.h"
 #include "rt_memory_guards.h"
 #include "rt_softbody.h"
+#include "rt_stealth_survival.h"
 #include "rt_terrain_lod.h"
 #include "rt_world_sim.h"
 #include "rt_papyrus.h"
@@ -133,6 +134,13 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
                 Log("[GameplayHooks] mask=0x%02X hits=%u parries=%u guardBreaks=%u counterHits=%u ai(atk=%u blk=%u bash=%u) barter=%u",
                     gp.hooksActive, gp.hitsProcessed, gp.timedParries, gp.guardBreaks, gp.counterHits,
                     gp.aiAttackEvals, gp.aiBlockEvals, gp.aiBashEvals, gp.barterOpens);
+            }
+            raw::rt::StealthSurvivalTelemetry ss{};
+            if (raw::rt::StealthSurvivalGetTelemetry(&ss) && (ss.sneakHookActive || ss.staminaGmstBound)) {
+                Log("[StealthSurvival] sneakHook=%u checks=%u masked=%u crunch=%u warmth=%.1f wet=%.2f chill=%.1fC stamMult=%.2f hearth=%.2f acEnv=%u rt60=%.2fs",
+                    ss.sneakHookActive, ss.sneakChecksTotal, ss.sneakMaskedCount, ss.sneakCrunchCount,
+                    ss.coreWarmth, ss.wetness01, ss.windChillC, ss.staminaRegenMult,
+                    ss.hearthProximity01, ss.acousticEnvKind, ss.acousticRt60Sec);
             }
         }
     }
@@ -272,6 +280,9 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     if (IniInt("GameplayHooks", 1)) {
         Log("%s", raw::rt::GameplayHooksInit(g_img).c_str());
     }
+    if (IniInt("StealthSurvival", 1)) {
+        Log("%s", raw::rt::StealthSurvivalInstallHooks(g_img).c_str());
+    }
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -299,6 +310,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::StealthSurvivalShutdown();
     raw::rt::GameplayHooksShutdown();
     raw::rt::WorldSimShutdown();
     raw::rt::DepthTopologyShutdown();

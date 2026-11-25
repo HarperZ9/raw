@@ -19,6 +19,7 @@
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
 #include "RawSeasonsThermals.hlsli"
+#include "RawWeathering.hlsli"
 
 Texture2D<float>  Depth   : register(t0);
 Texture2D<float4> Normal  : register(t1);
@@ -949,18 +950,51 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.alpha = clamp(lerp(min(s.alpha + 0.16f, 0.96f), max(s.alpha - 0.10f, 0.10f), pomOcc), 0.08f, 0.96f);
         }
     }
-    // 2027 Geometric Curvature Cavity AO & Convex Edge-Wear Micro-Detail Synthesis (upgrades 2011 low-poly meshes & normals):
-    // Darkens recessed stone/timber/armor crevices via analytic normal divergence and lifts crisp metallic/stone bevels.
-    if (!match && (base == 1u || base == 2u || base == 4u) && z < 2400.0f) {
-        const float3 dpx = ddx(p), dpy = ddy(p);
-        const float3 dnxC = ddx(s.n), dnyC = ddy(s.n);
-        const float pxScale = max(length(dpx) + length(dpy), 0.25f);
-        const float curv = clamp((dot(dnxC, dpx) + dot(dnyC, dpy)) / max(pxScale * pxScale * 0.25f, 0.15f), -1.0f, 1.0f);
-        const float curvFade = saturate(1.0f - z / 2400.0f);
-        const float cavity = saturate(-curv * 0.72f) * curvFade;
-        const float bevel  = saturate(curv * 0.60f) * curvFade * (base == 2u ? 1.0f : 0.42f);
-        albedo *= (1.0f - cavity * 0.13f + bevel * 0.06f);
-        s.alpha = clamp(s.alpha + cavity * 0.08f - bevel * 0.06f, 0.06f, 0.96f);
+    // Wave 40 Unified 3D Procedural Weathering (RawWeathering.hlsli):
+    // Curvature-driven edge chipping & mortar erosion (quad-safe ddx/ddy), seasonal creeping north-facing moss/lichen,
+    // and rising thermal soot/smoke stains above active hearths, forges & wall sconces!
+    const float3 wDpx = ddx(p), wDpy = ddy(p);
+    const float3 wDnx = ddx(s.n), wDny = ddy(s.n);
+    if (!match && !isActorFeat && !isActorCloth && (base == 1u || base == 2u || base == 4u) && z < 3200.0f) {
+        const float pxScaleW = max(length(wDpx) + length(wDpy), 0.25f);
+        const float curvW = clamp((dot(wDnx, wDpx) + dot(wDny, wDpy)) / max(pxScaleW * pxScaleW * 0.25f, 0.15f), -1.0f, 1.0f);
+        const float edgeMagW = saturate((length(wDnx) + length(wDny)) * 1.15f);
+        const float curvConvexW  = saturate(curvW * 0.72f + edgeMagW * 0.25f * saturate(curvW * 2.0f));
+        const float curvConcaveW = saturate(-curvW * 0.78f);
+        // Compute thermal soot column exposure directly above active warm hearths/forges/sconces:
+        float sootHeat01 = 0.0f;
+        if (z < 2200.0f && flags.y > 0u) {
+            const uint4 cBitsS = clusters[clusterOf(px, z)];
+            uint sootChk = 0u;
+            [loop] for (uint sw = 0u; sw < 4u && sootChk < 12u; ++sw) {
+                uint sb = cBitsS[sw];
+                [loop] while (sb != 0u && sootChk < 12u) {
+                    const uint sli = sw * 32u + firstbitlow(sb);
+                    sb &= sb - 1u;
+                    if (sli >= flags.y) { continue; }
+                    const float3 slc = lightColS[sli].rgb;
+                    if (slc.r > slc.b * 1.30f && slc.r > 0.20f) {
+                        sootHeat01 = max(sootHeat01, evalThermalSootColumn(p, lightPosR[sli].xyz, lightPosR[sli].w, saturate(slc.r * 0.90f)));
+                        ++sootChk;
+                    }
+                }
+            }
+        }
+        // River/shoreline proximity boost for creeping damp moss:
+        float waterProxW = 0.0f;
+        if (sunColour.w > 0.5f && engineWorld.z > 0.5f && engineWorld.x > -13000.0f) {
+            const float abW = (p.z + camPosW.z) - engineWorld.x;
+            waterProxW = smoothstep(260.0f, 12.0f, max(abW, 0.0f)) * smoothstep(-10.0f, 4.0f, abW);
+        }
+        const float iceQuick = saturate((albedo.b - albedo.r * 1.04f) * 4.5f) * smoothstep(0.18f, 0.44f, albedo.b);
+        const RawWeatheringResult wRes = evalSurfaceWeathering3D(
+            p + camPosW.xyz, s.n, albedo, s.alpha,
+            curvConvexW, curvConcaveW, z, base,
+            wet.wet, wet.snow, iceQuick, waterProxW,
+            phenology0, seasonThermal0, sootHeat01, (sunColour.w > 0.5f));
+        albedo  = wRes.albedo;
+        s.n     = wRes.normal;
+        s.alpha = wRes.roughness;
     }
     // True 3D Physical Relief Decals (blood pools, static frost-creep, charred scorches & weapon cracks) +
     // 100% Static, Non-Pulsing Crystalline Glacial Ice Optical Transport (includes base==2u EnvMap ice caves!):
@@ -1127,15 +1161,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Foliage (base == 5u) single unified energy-conserving backlit transmission runs once at line ~1491
         // (removed duplicate stacked diff/spec glow lobes that quadruple-counted chlorophyll and made trees glow!).
-        // Marschner dual-lobe shifted hair specular (base == 11: primary colorless cuticle band + warm tinted secondary band).
-        if (!match && base == 11u && sunShadow > 0.05f) {
-            const float3 hHair = normalize(s.v + sunDir.xyz);
-            const float3 tHair = normalize(cross(s.n, float3(0.0f, 0.0f, 1.0f) + 1.0e-4f));
-            const float3 t1 = normalize(tHair + s.n * 0.10f);
-            const float3 t2 = normalize(tHair - s.n * 0.14f);
-            const float s1 = pow(sqrt(max(1.0f - pow(dot(t1, hHair), 2.0f), 0.0f)), 48.0f);
-            const float s2 = pow(sqrt(max(1.0f - pow(dot(t2, hHair), 2.0f), 0.0f)), 18.0f);
-            spec += dirCol * (s1 * 0.22f + albedo * s2 * 0.34f) * sunShadow;
+        // Wave 40 Physical Marschner 3-Lobe Anisotropic Hair Shading (R cuticle + TT backlit transmission + TRT pigment):
+        // Replaces plastic isotropic GGX highlights on NPC hair with real shifted strand-tangent R/TT/TRT highlights!
+        if (!match && base == 11u) {
+            spec = 0.0f.xxx;
+            const float3 gDownH = float3(0.0f, 0.0f, -1.0f);
+            float3 tStrand = gDownH - s.n * dot(gDownH, s.n);
+            tStrand = (dot(tStrand, tStrand) > 1.0e-4f) ? normalize(tStrand) : normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)));
+            const float strandShift = (rawNoise3Grad((p + camPosW.xyz) * 0.85f).x - 0.5f) * 0.14f;
+            const float3 tFlow = normalize(tStrand + s.n * strandShift);
+            const float3 hair3Lobe = evalMarschnerHair3Lobe(tFlow, s.n, s.v, sunDir.xyz, albedo, clamp(s.alpha, 0.24f, 0.52f));
+            spec += dirCol * hair3Lobe * lerp(0.18f, 1.0f, sunShadow);
         }
         if (skin && !match) {
             // Dual-lobe character skin shading (Callisto Protocol / SKN-09): terminator-peaked warm dermal SSS +
@@ -1267,7 +1303,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 sArea.alpha = aPrime;
                 float3 specTmp = 0.0f.xxx;
                 addLight(sArea, l, c * sh, c, diff, specTmp);
-                spec += specTmp * (normE * normE);
+                if (isHair) {
+                    const float3 gDownP = float3(0.0f, 0.0f, -1.0f);
+                    float3 tStrP = gDownP - s.n * dot(gDownP, s.n);
+                    tStrP = (dot(tStrP, tStrP) > 1.0e-4f) ? normalize(tStrP) : normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)));
+                    spec += c * evalMarschnerHair3Lobe(tStrP, s.n, s.v, l, albedo, clamp(s.alpha, 0.24f, 0.52f)) * lerp(0.22f, 1.0f, sh) * 0.65f;
+                } else {
+                    spec += specTmp * (normE * normE);
+                }
             } else {
                 addLight(s, l, c * sh, c, diff, spec);
             }
@@ -1787,16 +1830,35 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float fuzzRim = pow(1.0f - nvSkin, 4.0f) * saturate(nlRaw * 0.5f + 0.5f) * 0.032f;
             lit += albedo * float3(1.04f, 0.92f, 0.86f) * (min(skKeyCol, 0.90f.xxx) * fuzzRim);
         } else if (base == 11u) {
-            // 2) Hair (base==11): Dual-lobe Kajiya-Kay / Marschner anisotropic hair sheen (works in both exteriors & interiors).
-            const float3 tHair = normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)) + float3(0.0f, 0.0f, 0.35f));
-            const float3 hDir = normalize(s.v + (isExterior ? sunDir.xyz : normalize(s.v + float3(0.20f, 0.15f, 0.65f))));
-            const float tdoth = dot(tHair, hDir);
-            const float sinTH = sqrt(max(1.0f - tdoth * tdoth, 0.0f));
-            const float kajiya1 = pow(sinTH, 52.0f) * 0.40f;
-            const float kajiya2 = pow(sinTH, 14.0f) * 0.18f;
-            const float3 hKey = isExterior ? (sunColour.rgb * (0.35f + 0.65f * sunShadow) + amb * 0.35f)
-                                           : max(amb * 1.45f, float3(0.14f, 0.13f, 0.12f));
-            lit += hKey * (float3(0.95f, 0.96f, 1.0f) * kajiya1 + (albedo * 0.80f + 0.20f.xxx) * kajiya2);
+            // 2) Hair (base==11): Wave 40 Physical Marschner 3-Lobe Anisotropic Hair Shading (R + TT + TRT)
+            // driven by actual strongest local hearth/candle/torch key light indoors or sun+sky fill outdoors!
+            const float3 gDownH = float3(0.0f, 0.0f, -1.0f);
+            float3 tStrand = gDownH - s.n * dot(gDownH, s.n);
+            tStrand = (dot(tStrand, tStrand) > 1.0e-4f) ? normalize(tStrand) : normalize(cross(s.n, float3(1.0f, 0.0f, 0.0f)));
+            const float strandJit = (rawNoise3Grad((p + camPosW.xyz) * 0.85f).x - 0.5f) * 0.14f;
+            const float3 tFlow = normalize(tStrand + s.n * strandJit);
+            float3 hKeyDir = isExterior ? sunDir.xyz : normalize(s.v + float3(0.18f, 0.14f, 0.72f));
+            float3 hKeyCol = isExterior ? (amb * 0.45f) : max(amb * 0.85f, float3(0.08f, 0.075f, 0.07f));
+            if (flags.y > 0u) {
+                float bestHL = 0.0f;
+                const uint nHairL = min(flags.y, 16u);
+                [loop] for (uint hli = 0u; hli < nHairL; ++hli) {
+                    const float3 dlH = lightPosR[hli].xyz - p;
+                    const float dH = length(dlH);
+                    const float rH = lightPosR[hli].w;
+                    if (dH < rH && dH > 1.0f) {
+                        const float winH = saturate(1.0f - (dH / rH) * (dH / rH));
+                        const float lumH = dot(lightColS[hli].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * winH * winH;
+                        if (lumH > bestHL) {
+                            bestHL = lumH;
+                            hKeyDir = dlH / dH;
+                            hKeyCol = lightColS[hli].rgb * (winH * winH * 0.85f);
+                        }
+                    }
+                }
+            }
+            const float3 m3 = evalMarschnerHair3Lobe(tFlow, s.n, s.v, hKeyDir, albedo, clamp(s.alpha, 0.24f, 0.52f));
+            lit += min(hKeyCol * m3, 1.6f.xxx);
         } else if (base == 12u) {
             // 3) Eyes (base==12): Luminous iris subsurface translucency + crisp dual wet corneal catchlights
             // (live sky/sun reflection in exteriors + soft warm window/hearth catchlight in interiors so eyes never look dead).

@@ -507,6 +507,7 @@ bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut) {
         {"HitData::totalDamage",              Addr("fn:HitData::Populate"),                     Off("off:HitData::totalDamage"),              4, true},
         {"HitData::flags",                    Addr("fn:HitData::PopulateMelee"),                Off("off:HitData::flags"),                    4, false},
         {"TESObjectREFR::loadedData",         Addr("fn:TESObjectREFR::Get3D2"),                 Off("off:TESObjectREFR::loadedData"),         8, false},
+        {"Actor::actorStateFlags",            Addr("fn:SneakDetectionCalc"),                    Off("off:Actor::actorStateFlags"),            4, false},
     };
     g_lastVerify = VerifyCriticalOffsets(img, kRules, sizeof(kRules) / sizeof(kRules[0]));
     // Fail-closed: if ANY rule failed, lock out all struct mutations!

@@ -529,7 +529,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T ps_${RAW_SHADER_MODEL} -E fs ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/world_field_sim_fs.h -Vn kDxil_world_field_sim_fs ${RAW_WORLDSIM_HLSL}
         DEPENDS ${RAW_LIGHT_HLSL} ${RAW_LIGHTFOG_HLSL} ${RAW_CLOUDS_HLSL} ${RAW_VOLUMETRIC_HLSL} ${RAW_BLOOM_HLSL} ${RAW_ATMO_HLSL} ${RAW_REFL_FILT_HLSL} ${RAW_DOF_HLSL} ${RAW_RAWLSS5_HLSL} ${RAW_GI_ATROUS_HLSL} ${RAW_CLOUD_NOISE_HLSL} ${RAW_ENV_CUBE_HLSL} ${RAW_FROXEL_HLSL} ${RAW_WORLDSIM_HLSL} ${RAW_SHARE_HLSL}/LightingCommon.hlsli ${RAW_SHARE_HLSL}/Weather.hlsli
                 ${RAW_SHARE_HLSL}/CloudCommon.hlsli ${RAW_SHARE_HLSL}/DistantLod.hlsli ${RAW_SHARE_HLSL}/ElderOptics.hlsli ${RAW_SHARE_HLSL}/StrataBRDF.hlsli ${RAW_SHARE_HLSL}/SpectralTransport.hlsli ${RAW_SHARE_HLSL}/RawTensorMath.hlsli ${RAW_SHARE_HLSL}/RawProceduralNoise.hlsli ${RAW_SHARE_HLSL}/RawMaterials3D.hlsli ${RAW_SHARE_HLSL}/RawDecals3D.hlsli ${RAW_SHARE_HLSL}/RawSpells3D.hlsli
-                ${RAW_SHARE_HLSL}/RawWeatherAtmo.hlsli ${RAW_SHARE_HLSL}/RawCosmosSky.hlsli ${RAW_SHARE_HLSL}/RawSeasonsThermals.hlsli
+                ${RAW_SHARE_HLSL}/RawWeatherAtmo.hlsli ${RAW_SHARE_HLSL}/RawCosmosSky.hlsli ${RAW_SHARE_HLSL}/RawSeasonsThermals.hlsli ${RAW_SHARE_HLSL}/RawWeathering.hlsli
         COMMENT "dxc: SM${RAW_SHADER_MODEL} lighting, cloud, volumetric, bloom, atmosphere, refl denoiser, 3-pass DoF & 3-pass A-Trous GI -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE src/d3d12_bridge/LightingPass.cpp ${RAW_LIGHT_HEADERS})
@@ -627,6 +627,7 @@ if(RAW_ENGINE_DIR)
         VERBATIM)
     set(RAW_FLUID_FIRE_HLSL ${RAW_SHARE_HLSL}/RawFluidFireSim.hlsl)
     set(RAW_FLUID_WATER_HLSL ${RAW_SHARE_HLSL}/RawFluidWaterSim.hlsl)
+    set(RAW_FLUID_COMPOSITE_HLSL ${RAW_SHARE_HLSL}/RawFluidFireComposite.hlsl)
     set(RAW_FLUID_HEADERS
         ${RAW_ENGINE_GEN}/raw_fluid_fire_inject_cs.h
         ${RAW_ENGINE_GEN}/raw_fluid_fire_advect_cs.h
@@ -637,7 +638,8 @@ if(RAW_ENGINE_DIR)
         ${RAW_ENGINE_GEN}/raw_fluid_fire_rad_cs.h
         ${RAW_ENGINE_GEN}/raw_fluid_water_inject_cs.h
         ${RAW_ENGINE_GEN}/raw_fluid_water_step_cs.h
-        ${RAW_ENGINE_GEN}/raw_fluid_water_normals_cs.h)
+        ${RAW_ENGINE_GEN}/raw_fluid_water_normals_cs.h
+        ${RAW_ENGINE_GEN}/raw_fluid_fire_composite_cs.h)
     add_custom_command(
         OUTPUT ${RAW_FLUID_HEADERS}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
@@ -651,16 +653,17 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_water_inject ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_water_inject_cs.h -Vn kDxil_raw_fluid_water_inject ${RAW_FLUID_WATER_HLSL}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_water_step ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_water_step_cs.h -Vn kDxil_raw_fluid_water_step ${RAW_FLUID_WATER_HLSL}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_water_normals ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_water_normals_cs.h -Vn kDxil_raw_fluid_water_normals ${RAW_FLUID_WATER_HLSL}
-        DEPENDS ${RAW_FLUID_FIRE_HLSL} ${RAW_FLUID_WATER_HLSL}
-        COMMENT "dxc: GPU 3D Navier-Stokes Fire/Smoke & 2D Shallow-Water Fluid Solvers SM${RAW_SHADER_MODEL} -> DXIL headers"
+        COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E cs_fire_composite ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/raw_fluid_fire_composite_cs.h -Vn kDxil_raw_fluid_fire_composite ${RAW_FLUID_COMPOSITE_HLSL}
+        DEPENDS ${RAW_FLUID_FIRE_HLSL} ${RAW_FLUID_WATER_HLSL} ${RAW_FLUID_COMPOSITE_HLSL}
+        COMMENT "dxc: GPU 3D Navier-Stokes Fire/Smoke, Composite & 2D Shallow-Water Fluid Solvers SM${RAW_SHADER_MODEL} -> DXIL headers"
         VERBATIM)
     target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/raw_mesh_as.h ${RAW_ENGINE_GEN}/raw_mesh_ms.h ${RAW_ENGINE_GEN}/raw_subdiv_cs.h
                    ${RAW_ENGINE_GEN}/raw_terrain_as.h ${RAW_ENGINE_GEN}/raw_terrain_ms.h ${RAW_ENGINE_GEN}/raw_terrain_vs.h ${RAW_ENGINE_GEN}/raw_terrain_ps.h
                    ${RAW_FLUID_HEADERS}
                    src/d3d12_bridge/RawAssetBridge.cpp src/d3d12_bridge/RawTextureBridge.cpp src/d3d12_bridge/RawProceduralLib.cpp
-                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
+                   src/d3d12_bridge/RawMeshHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawOverrideRegistry.cpp src/d3d12_bridge/RawBindlessHeap.cpp
                    src/d3d12_bridge/RawAsyncCompute.cpp src/d3d12_bridge/RawIndirectBatch.cpp src/d3d12_bridge/RawAssetStream.cpp
-                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp
+                   src/worldgen/RawTerrainGen.cpp src/worldgen/RawBiomeWorld.cpp src/worldgen/RawMeshPipeline.cpp src/worldgen/RawFloraEngine.cpp src/worldgen/RawWeatherSim.cpp src/worldgen/RawWorldShowcase.cpp src/worldgen/RawEsmWorldLoader.cpp
                    src/materials/RawMaterialLib.cpp src/materials/RawAssetForge.cpp
                    src/assets/RawOverrideRegistry.cpp src/assets/RawAssetScaffold.cpp)
     add_executable(test_fluid_sim tests/test_fluid_sim.cpp src/d3d12_bridge/RawFluidSimHost.cpp ${RAW_FLUID_HEADERS})
@@ -668,6 +671,11 @@ if(RAW_ENGINE_DIR)
     target_compile_definitions(test_fluid_sim PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_link_libraries(test_fluid_sim PRIVATE d3d12 dxgi dxguid)
     set_target_properties(test_fluid_sim PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
+    add_executable(test_fluid_composite_warp tests/test_fluid_composite_warp.cpp src/d3d12_bridge/RawFluidCompositeHost.cpp src/d3d12_bridge/RawFluidSimHost.cpp ${RAW_FLUID_HEADERS})
+    target_include_directories(test_fluid_composite_warp PRIVATE ${RAW_ENGINE_GEN} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge)
+    target_compile_definitions(test_fluid_composite_warp PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(test_fluid_composite_warp PRIVATE d3d12 dxgi dxguid)
+    set_target_properties(test_fluid_composite_warp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(raw_d3d12_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/worldgen ${CMAKE_CURRENT_SOURCE_DIR}/src/materials ${CMAKE_CURRENT_SOURCE_DIR}/src/assets)
     set(RAW_RTSHADOW_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtShadow.hlsl)
     add_custom_command(
@@ -676,7 +684,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow.h -Vn kDxil_rt_shadow ${RAW_RTSHADOW_HLSL}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug.h -Vn kDxil_rt_shadow_debug ${RAW_RTSHADOW_HLSL}
         DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/SpectralTransport.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawCosmosSky.hlsli
         COMMENT "dxc: ray-traced shadows -> DXIL header"
         VERBATIM)
     if(RAW_HAS_SM69_DXIL)
@@ -686,7 +694,7 @@ if(RAW_ENGINE_DIR)
             COMMAND ${RAW_DXC_NEXT} -T cs_6_9 -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_69.h -Vn kDxil_rt_shadow_69 ${RAW_RTSHADOW_HLSL}
             COMMAND ${RAW_DXC_NEXT} -T cs_6_9 -E main -DRT_DEBUG=1 ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_shadow_debug_69.h -Vn kDxil_rt_shadow_debug_69 ${RAW_RTSHADOW_HLSL}
             DEPENDS ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/SpectralTransport.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli
-                    ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli
+                    ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawCosmosSky.hlsli
             COMMENT "dxc 1.9+: native SM 6.9 DXIL 1.9 ray-traced shadows -> DXIL headers"
             VERBATIM)
         target_sources(raw_d3d12_bridge PRIVATE ${RAW_ENGINE_GEN}/rt_shadow_69.h ${RAW_ENGINE_GEN}/rt_shadow_debug_69.h)
@@ -696,7 +704,7 @@ if(RAW_ENGINE_DIR)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E water ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_water.h -Vn kDxil_rt_water ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtWater.hlsl ${RAW_RTSHADOW_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawProceduralNoise.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCacheCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtHit.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/Weather.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawProceduralNoise.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawCosmosSky.hlsli
         COMMENT "dxc: ray-traced water -> DXIL header"
         VERBATIM)
     add_custom_command(
@@ -735,7 +743,7 @@ if(RAW_ENGINE_DIR)
         OUTPUT ${RAW_ENGINE_GEN}/rt_sky_filter.h
         COMMAND ${CMAKE_COMMAND} -E make_directory ${RAW_ENGINE_GEN}
         COMMAND ${RAW_DXC} -T cs_${RAW_SHADER_MODEL} -E main ${RAW_DXC_FLAGS} -Fh ${RAW_ENGINE_GEN}/rt_sky_filter.h -Vn kDxil_rt_sky_filter ${RAW_RTSKY_HLSL}
-        DEPENDS ${RAW_RTSKY_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli
+        DEPENDS ${RAW_RTSKY_HLSL} ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/LightingCommon.hlsli ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RawCosmosSky.hlsli
         COMMENT "dxc: sky visibility filter -> DXIL header"
         VERBATIM)
     set(RAW_RTCACHE_HLSL ${CMAKE_CURRENT_SOURCE_DIR}/src/d3d12_bridge/shaders/RtCache.hlsl)
@@ -863,6 +871,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_depth_topology.cpp
         src/engine_rt/rt_memory_guards.cpp
         src/engine_rt/ce_rebuild_arch.cpp
+        src/engine_rt/rt_stealth_survival.cpp
         src/engine_rt/rt_patch.cpp)
     set_target_properties(raw_engine PROPERTIES
         CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
@@ -914,6 +923,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/engine_rt/rt_depth_topology.cpp
         src/engine_rt/rt_memory_guards.cpp
         src/engine_rt/ce_rebuild_arch.cpp
+        src/engine_rt/rt_stealth_survival.cpp
         src/engine_rt/rt_softbody.cpp
         src/engine_rt/rt_skeleton_ik.cpp
         src/engine_rt/rt_combat_ai.cpp
@@ -924,6 +934,7 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         src/worldgen/RawFloraEngine.cpp
         src/worldgen/RawWeatherSim.cpp
         src/worldgen/RawWorldShowcase.cpp
+        src/worldgen/RawEsmWorldLoader.cpp
         src/materials/RawMaterialLib.cpp
         src/materials/RawAssetForge.cpp
         src/assets/RawOverrideRegistry.cpp
@@ -935,12 +946,14 @@ if(RAW_ZYDIS_LIB AND RAW_ZYCORE_LIB)
         tests/test_weather_sim.cpp
         tests/test_skeleton_physics.cpp
         tests/test_gameplay_mechanics.cpp
-        tests/test_pipeline_forge.cpp)
+        tests/test_pipeline_forge.cpp
+        tests/test_stealth_survival.cpp
+        tests/test_esm_world_loader.cpp)
     set_target_properties(ce_runtime_check PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_include_directories(ce_runtime_check PRIVATE src/engine_rt src/d3d12_bridge src/ce_runtime src/worldgen src/materials src/assets src/pipeline src/ui "${RAW_ZYDIS_ROOT}/include")
-    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1)
+    target_compile_definitions(ce_runtime_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN ZYDIS_STATIC_BUILD ZYCORE_STATIC_BUILD RAW_SIM_PURE_TEST=1 RAW_WEATHER_SIM_NO_MAIN=1 RAW_GAMEPLAY_MECHANICS_NO_MAIN=1 RAW_STEALTH_SURVIVAL_NO_MAIN=1)
     target_link_libraries(ce_runtime_check PRIVATE ${RAW_ZYDIS_LIB} ${RAW_ZYCORE_LIB} windowscodecs ole32 dxgi)
 
     # raw_forge_cli: standalone C++23 first-principles authoring, batch baking & validation CLI

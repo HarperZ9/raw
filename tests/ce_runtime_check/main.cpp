@@ -37,10 +37,12 @@
 namespace raw::worldgen {
 int RunFloraEngineTests(void (*checkFn)(bool, const char*));
 int RunWeatherSimTests();
+int RunEsmWorldLoaderTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::rt {
 int RunSkeletonPhysicsTests(void (*checkFn)(bool, const char*));
 int RunGameplayMechanicsTests(void (*checkFn)(bool, const char*));
+int RunStealthSurvivalTests(void (*checkFn)(bool, const char*));
 }
 namespace raw::pipeline {
 int RunPipelineForgeTests(void (*checkFn)(bool, const char*));
@@ -997,6 +999,8 @@ int main() {
     raw::assets::RunRawAssetsTests(Check);
     raw::rt::RunSkeletonPhysicsTests(Check);
     raw::rt::RunGameplayMechanicsTests(Check);
+    raw::rt::RunStealthSurvivalTests(Check);
+    raw::worldgen::RunEsmWorldLoaderTests(Check);
     raw::pipeline::RunPipelineForgeTests(Check);
     std::printf("ce_runtime_check: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

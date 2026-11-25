@@ -1,11 +1,10 @@
 // Rawlss5Pass.hlsl: RAWLSS 7.0 Split-Manifold Metal — SM 6.6-6.10 Wave-Quad & 16-Wide Long-Vector Ray Reconstructor.
-// Upgrades over RAWLSS 6.5:
-//   1) Split-Manifold Albedo Demodulation (t6 AlbedoTex + t7 GiBounce): preserves razor-sharp native texture detail
-//      during camera motion via zero-fetch pixel-quad albedo high-frequency extraction!
-//   2) 12->16->4 Split-Manifold Neural Ray Reconstructor (rawEvalSplitManifoldNet12x16x4 -> SM 6.9 vector<float16_t, 16>!)
-//   3) Zero-Lag Disocclusion World-GI Prior: newly exposed pixels seed from quad-bilateral irradiance + world GI manifold
-//   4) Wave-Quad Register-Shuffle Fine Curvature & Irradiance Variance (QuadReadAcrossX/Y/Diagonal -> 0 extra L1 loads!)
-//   5) Karis-Tonemapped Perceptual YCoCg 5-Tap Jimenez Catmull-Rom + Ray-to-Mean clipAABB + Highlight-Ceiling Guard
+// Wave 40 Zero-Ghosting & Anti-Halo Temporal Reconstruction:
+//   1) Velocity-adaptive 3x3 Karis-weighted YCoCg variance clipping (gamma 1.25 static -> 0.85 fast motion/divergence)
+//   2) Full depth + normal + motion-magnitude + 3x3 motion-vector divergence disocclusion reset (zero ghostly trails
+//      on moving NPCs, swinging weapons, and foreground silhouettes; Karis anti-flicker preserved on foliage & snow!)
+//   3) Split-Manifold Albedo Demodulation + 12->16->4 SM 6.9 Long-Vector Neural Ray Reconstructor
+//   4) Restrained highlight-guarded cavity/detail harmony (zero dark-edge GI glow bleed)
 // Original work, MIT.
 #include "LightingCommon.hlsli"
 #include "RawTensorMath.hlsli"
@@ -141,26 +140,38 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const bool isLod      = (base == 7u);
     const bool isWater    = (base == 9u);
 
-    // 3x3 Perceptual Karis-Tonemapped YCoCg neighborhood moments + depth-dilated closest-velocity selection:
+    const float2 mvCenter = Motion.Load(ip);
+
+    // 3x3 Perceptual Karis-Tonemapped YCoCg neighborhood moments + depth/normal/motion-divergence disocclusion scan:
     float3 m1 = 0.0f.xxx, m2 = 0.0f.xxx;
     float3 nMinY = 1.0e6f.xxx, nMaxY = -1.0e6f.xxx;
     float3 rgbBlur = 0.0f.xxx;
     float wSum = 0.0f;
     float maxDz = 0.0f;
+    float minDotN = 1.0f;
+    float mvDivPx = 0.0f;
     float bestD = d;
     int2 bestVelPx = p;
     [unroll] for (int dy = -1; dy <= 1; dy++) {
         [unroll] for (int dx = -1; dx <= 1; dx++) {
             const int2 q = clamp(p + int2(dx, dy), int2(0, 0), dMax);
-            const float dq = Depth.Load(int3(q, 0));
+            const int3 iq = int3(q, 0);
+            const float dq = Depth.Load(iq);
             if (dq < bestD) { bestD = dq; bestVelPx = q; }
             const float zq = dq < 1.0f ? viewZOf(dq) : 1.0e6f;
             maxDz = max(maxDz, abs(zq - z));
-            const float3 cq = max(CurHdr.Load(int3(q, 0)).rgb, 0.0f.xxx);
+            if (dx != 0 || dy != 0) {
+                const float3 nq = worldNormal(Normal.Load(iq));
+                minDotN = min(minDotN, dot(nC, nq));
+                const float2 mvq = Motion.Load(iq);
+                mvDivPx = max(mvDivPx, length((mvq - mvCenter) * dims.xy));
+            }
+            const float3 cq = max(CurHdr.Load(iq).rgb, 0.0f.xxx);
             const float3 cqTm = tonemapKaris(cq);
             const float3 yq = rgbToYCoCg(cqTm);
             const float lumQ = dot(cq, kLumaW);
-            const float kw = (dx == 0 && dy == 0) ? 1.5f : (1.0f / (1.0f + lumQ * 0.45f));
+            // Karis luminance anti-flicker weighting preserves crisp fine foliage & snow sparkles!
+            const float kw = (dx == 0 && dy == 0) ? 1.55f : (1.0f / (1.0f + lumQ * 0.55f));
             m1 += yq * kw;
             m2 += (yq * yq) * kw;
             nMinY = min(nMinY, yq);
@@ -186,11 +197,10 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float3 nD3 = worldNormal(Normal.Load(int3(p.x, min(p.y + 3, dMax.y), 0)));
     const float3 nU3 = worldNormal(Normal.Load(int3(p.x, max(p.y - 3, 0), 0)));
     const float divBroad = clamp(dot(nR3 - nL3, tX) + dot(nD3 - nU3, tY), -1.5f, 1.5f);
-    const float edgeGate = 1.0f - smoothstep(max(z * 0.028f, 3.5f), max(z * 0.11f, 16.0f), maxDz);
+    const float edgeGate = 1.0f - smoothstep(max(z * 0.022f, 2.5f), max(z * 0.095f, 12.0f), maxDz);
     const float divTotal = divFine * 0.68f + divBroad * 0.32f * edgeGate;
 
-    // Wave 30 Hypergraph 4-Party Quad-Cut Firefly vs Geometric Glint Separator (Kwanten arXiv:2611.25019):
-    // Classifies each 2x2 hardware quad as a 4-vertex hypergraph via zero-cost QuadReadAcrossX/Y/Diagonal:
+    // Hypergraph 4-Party Quad-Cut Firefly vs Geometric Glint Separator:
     //   - Radiance splits (1 vs 3) while normal & depth are uniform (4 vs 0) -> isolated RT firefly -> clamp cleanly!
     //   - Radiance AND normal/depth BOTH split (1 vs 3) -> true geometric bevel glint or snow diamond -> preserve 100%!
     float3 curRgb = max(curRaw.rgb, 0.0f.xxx);
@@ -212,8 +222,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     }
     const float curLum = dot(curRgb, kLumaW);
 
-    // Highlight-ceiling & glacier/ice protection (covers BOTH base==1/4 outdoor glaciers AND base==2 EnvMap ice caves!):
-    // Prevents RAWLSS from injecting micro-grain, E8 chatter, or sharpening bright snow/glaciers/highlights into bloom territory!
+    // Highlight-ceiling & glacier/ice protection:
     const float hlGuard = 1.0f - smoothstep(0.72f, 1.65f, curLum);
     const float isIceLike = ((base == 1u || base == 2u || base == 4u) && curRgb.b > curRgb.r * 1.05f && curLum > 0.18f)
         ? saturate((curRgb.b - curRgb.r * 1.05f) * 5.0f) : 0.0f;
@@ -223,7 +232,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float fresnel = pow(1.0f - nv, 3.0f);
     const float midKey = saturate(curLum * rcp(1.0f + curLum));
 
-    // Split-Manifold Albedo & World-GI Decomposition (zero-fetch 2x2 quad stats for irradiance variance & native albedo sharpness):
+    // Split-Manifold Albedo & World-GI Decomposition (zero-fetch 2x2 quad stats):
     const float3 albedoRaw = max(AlbedoTex.Load(ip).rgb, 0.0f.xxx);
     const float albedoPeak = max(albedoRaw.r, max(albedoRaw.g, albedoRaw.b));
     const bool useDemod = (!isEye && !isEmissive && !isWater && !isLod && albedoPeak > 0.045f);
@@ -237,11 +246,9 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float giLum = dot(giTap, kLumaW);
 
     const float2 mv = Motion.Load(int3(bestVelPx, 0));
-    const float speedPx = length(mv * dims.xy);
+    const float speedPx = max(length(mv * dims.xy), length(mvCenter * dims.xy));
 
     // RAWLSS 7.0 12->16->4 Split-Manifold Neural Ray Reconstructor (native 16-wide SM 6.9 Long Vectors on DXIL 1.9!)
-    // Pre-stabilizes the 8D geometric/radiance input manifold onto the optimal E8 sphere-packing lattice (scale 16)
-    // to suppress 1-spp sub-LSB quantization chatter across stationary surfaces while preserving continuous edges!
     float4 qf0, qf1;
     rawQuantizeE8(
         float4(curv, divTotal * 0.5f, localContrast, fresnel),
@@ -254,10 +261,8 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         float4(saturate(specTap.x), saturate(specTap.y), saturate(speedPx * 0.12f), 1.0f - edgeGate)
     );
 
-    // Per-class artistic intent: eyes/emissives untouched; glaciers/ice silk-smooth; stone/wood/metal get clean 3D micro-relief!
     const float rawClassGain = isEye || isEmissive ? 0.0f
         : (isSkin ? 0.16f : (isWater ? 0.18f : (isLod ? 0.25f : (isHair ? 0.42f : (isFoliage ? 0.48f : 1.0f)))));
-    // Preserve crisp crystalline glacial ice fractures & crevices instead of blurring ice caves into flat blue clay!
     const float classGain = rawClassGain * (1.0f - isIceLike * 0.22f);
     const float distFade = smoothstep(5200.0f, 260.0f, z);
 
@@ -272,17 +277,18 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         worldMicro = (g1 * 0.65f + g2 * 0.35f) * (isMetal ? 0.055f : (isFoliage ? 0.055f : 0.085f)) * microFade;
     }
 
-    // Highlight-guarded dual-scale cavity deepening + bevel catchlights + micro-detail & bounce harmony:
+    // Highlight-guarded dual-scale cavity deepening + bevel catchlights (restrained bounceHarm kills dark-edge glow!):
     const float cavNeg = min(divTotal, 0.0f);
     const float bevPos = max(divTotal, 0.0f);
     const float cavityScale = 1.0f + clamp(cavNeg * 0.20f, -0.22f, 0.0f) * classGain * edgeGate * distFade;
-    const float bevelLift = clamp(bevPos * 0.14f, 0.0f, 0.16f) * (0.45f + 0.55f * fresnel) * classGain * edgeGate * distFade * hlGuard;
-    const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.34f * classGain * edgeGate * distFade * hlGuard);
-    const float3 sheenAdd = curRgb * ((max(mlpOut.y, 0.0f) * fresnel * (isMetal ? 0.12f : (isSkin ? 0.02f : 0.065f)) + bevelLift) * distFade * hlGuard);
-    const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.055f * classGain * distFade * hlGuard);
+    const float bevelLift = clamp(bevPos * 0.13f, 0.0f, 0.14f) * (0.45f + 0.55f * fresnel) * classGain * edgeGate * distFade * hlGuard;
+    const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.32f * classGain * edgeGate * distFade * hlGuard);
+    const float3 sheenAdd = curRgb * ((max(mlpOut.y, 0.0f) * fresnel * (isMetal ? 0.10f : (isSkin ? 0.02f : 0.055f)) + bevelLift) * distFade * hlGuard);
+    const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.020f * classGain * edgeGate * edgeGate * distFade * hlGuard);
     float3 recon = max(curRgb * (cavityScale + worldMicro) + detailDelta + sheenAdd + bounceHarm, 0.0f.xxx);
 
-    // Perceptual Karis-Tonemapped 5-Tap Catmull-Rom + Ray-to-Mean clipAABB + Zero-Lag Disocclusion Prior:
+    // Perceptual Karis-Tonemapped 5-Tap Catmull-Rom + Velocity-Adaptive YCoCg Variance Clipping (gamma 1.25 -> 0.85)
+    // + Depth/Normal/Motion-Divergence Disocclusion History Reset:
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     const float2 puv = uv + mv;
     if (all(puv > 0.004f) && all(puv < 0.996f)) {
@@ -291,35 +297,47 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float3 curTm = tonemapKaris(recon);
         const float3 curY = rgbToYCoCg(curTm);
 
-        const float lumDelta = abs(prevY.x - curY.x) / max(curY.x + 0.06f, 0.06f);
-        const float chrDelta = length(prevY.yz - curY.yz) / max(curY.x + 0.08f, 0.08f);
-        const float trapSep = rawTrappingSeparator(curY.x, prevY.x, stdDev.x, speedPx, edgeGate);
-        const float disocc = max(max(saturate((lumDelta - 0.22f) * 2.4f), saturate((chrDelta - 0.26f) * 2.2f)) * (1.0f - edgeGate * 0.25f), trapSep);
-        // Material-aware reactive mask (high responsiveness on water, emissives, disoccluded edges & fast specular glints):
-        const float reactive = saturate(max(isWater ? 0.62f : (isEmissive ? 0.75f : 0.0f),
-                                            disocc * 0.92f + (1.0f - edgeGate) * 0.88f));
-        // Tighter perceptual variance AABB prevents double-temporal ghosting when paired with NVIDIA DLAA / DLSS-RR:
-        const float boxScale = lerp(1.05f, 0.58f, saturate(speedPx * 0.18f + reactive * 0.82f));
-        const float3 boxMin = max(nMinY, m1 - stdDev * boxScale);
-        const float3 boxMax = min(nMaxY, m1 + stdDev * boxScale);
+        // Multi-signal disocclusion detector (depth silhouette + normal break + motion-vector divergence + velocity + color):
+        const float depthDisocc  = smoothstep(max(z * 0.022f, 2.2f), max(z * 0.085f, 10.0f), maxDz);
+        const float normalDisocc = smoothstep(0.18f, 0.52f, 1.0f - minDotN) * saturate(speedPx * 0.45f + mvDivPx * 0.85f);
+        const float mvDivDisocc  = smoothstep(0.42f, 1.55f, mvDivPx);
+        const float speedRamp    = smoothstep(0.65f, 6.50f, speedPx);
+        const float lumDelta     = abs(prevY.x - curY.x) / max(curY.x + 0.05f, 0.05f);
+        const float chrDelta     = length(prevY.yz - curY.yz) / max(curY.x + 0.07f, 0.07f);
+        const float trapSep      = rawTrappingSeparator(curY.x, prevY.x, stdDev.x, speedPx, edgeGate);
+        const float colDisocc    = max(saturate((lumDelta - 0.18f) * 2.6f), saturate((chrDelta - 0.22f) * 2.4f));
+        const float geoDisocc    = max(mvDivDisocc, max(depthDisocc * 0.92f, normalDisocc * 0.85f));
+        const float disocc       = saturate(max(max(colDisocc, trapSep), geoDisocc));
+
+        // Velocity-adaptive 3x3 YCoCg variance clipping:
+        // Tightens gamma smoothly from 1.25 when static (crisp anti-flicker on fine foliage & snow sparkles!)
+        // down to 0.85 under rapid motion, camera sweeps, or moving-NPC/weapon velocity divergence!
+        const float motionTight = saturate(max(speedRamp, mvDivDisocc * 0.95f));
+        const float gammaClip   = lerp(1.25f, 0.85f, motionTight);
+        const float3 boxMin = max(nMinY, m1 - stdDev * gammaClip);
+        const float3 boxMax = min(nMaxY, m1 + stdDev * gammaClip);
         const float3 clippedY = clipAABB(boxMin, boxMax, m1, prevY);
 
-        // Disciplined accumulation weight (fast enough to eliminate ghost trails under DLAA/DLSS-RR while keeping glaciers silk-smooth):
-        const float baseAlpha = isFace ? lerp(0.50f, 0.92f, saturate(speedPx * 0.16f))
-                                       : (isWater ? lerp(0.45f, 0.88f, saturate(speedPx * 0.15f))
-                                                  : (isIceLike > 0.25f ? lerp(0.24f, 0.74f, saturate(speedPx * 0.15f))
-                                                                       : lerp(0.26f, 0.78f, saturate(speedPx * 0.15f))));
+        // Material-aware & silhouette-reactive history reset (cleanly flushes stale history on moving NPCs/weapons!):
+        const float reactive = saturate(max(
+            isWater ? 0.68f : (isEmissive ? 0.82f : (isSkin || isHair ? (0.48f + speedRamp * 0.48f) : 0.0f)),
+            max(disocc * 0.96f, mvDivDisocc * 0.98f)));
+        // Tighter static accumulation keeps snow/foliage flicker-free while motion snaps cleanly with zero trails:
+        const float baseAlpha = isFace ? lerp(0.54f, 0.96f, speedRamp)
+                                       : (isWater ? lerp(0.50f, 0.94f, speedRamp)
+                                                  : (isFoliage ? lerp(0.22f, 0.86f, speedRamp)
+                                                               : (isIceLike > 0.25f ? lerp(0.24f, 0.84f, speedRamp)
+                                                                                    : lerp(0.26f, 0.88f, speedRamp))));
         const float alpha = saturate(max(baseAlpha, reactive));
         const float3 blendedY = lerp(clippedY, curY, alpha);
         recon = invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx));
 
         // Zero-Lag Disocclusion Split-Manifold Prior + Native-Resolution Albedo Sharpness Preservation:
-        // 1) On disoccluded pixels with noisy irradiance, stabilize frame-1 with quad-bilateral demodulated irradiance * crisp albedo.
-        // 2) Under camera pan, re-inject bounded native-resolution albedo micro-contrast so stone/runes/fabric never smear!
-        if (useDemod && edgeGate > 0.25f) {
-            const float priorW = saturate(disocc * mlpOut.w * 0.32f * (1.0f - isIceLike * 0.5f));
+        // Suppresses priorRgb on moving silhouette divergence (mvDivDisocc) so swinging weapons/NPCs stay razor-sharp!
+        if (useDemod && edgeGate > 0.30f && mvDivDisocc < 0.35f) {
+            const float priorW = saturate(colDisocc * mlpOut.w * 0.26f * (1.0f - isIceLike * 0.5f) * (1.0f - mvDivDisocc * 2.5f));
             if (priorW > 0.01f) {
-                const float3 priorRgb = max(quadIrradMean * albedoBase, giTap * albedoBase * 0.65f);
+                const float3 priorRgb = max(quadIrradMean * albedoBase, giTap * albedoBase * 0.60f);
                 recon = lerp(recon, priorRgb, priorW);
             }
             const float panBlurGuard = saturate(speedPx * 0.14f) * (1.0f - alpha) * classGain * edgeGate * hlGuard * (1.0f - isIceLike);

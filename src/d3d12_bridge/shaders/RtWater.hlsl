@@ -24,6 +24,13 @@
 #define WaterOut Vis
 #define PreWater Refl   // u4: the HDR colour just before the game composites its water (RAW's lit bed), when skyLength > 0.5
 
+// Wave 40 Live 256x256 GPU Shallow-Water Equations (RawFluidWaterSim.hlsl) bindings:
+// Safe fallback when fluidWaterDomain.w <= 0.5 (null SRVs, zero cost on WARP tests without fluids).
+Texture2D<float4> SimWaterState  : register(t10); // R = height, G = vx, B = vy, A = advected lacy foam persistence
+Texture2D<float4> SimWaterNormal : register(t11); // RGB = analytical curl-free Z-up normal, A = Jacobian crest + lacy foam
+SamplerState      SimWaterSamp   : register(s0);  // linear wrap for exact toroidal world-locked lookup
+cbuffer FluidWaterDomainCB : register(b3) { float4 fluidWaterDomain; }; // xy = originXY, z = invWorldSpanU, w = active (> 0.5)
+
 // The distance from a point to the nearest wall between moving cells: 0 on the walls. The walls of
 // a cell field whose centres drift slowly read as the bright net that waves focus onto a bed.
 float cellWalls(float2 q, float t) {
@@ -371,6 +378,28 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 g = rainRings(wpW.xy, camPosW.w) * (0.065f * weather.w * rainFade);
                 n = normalize(n + float3(-g, 0.0f));
             }
+            // Wave 40 Live 256x256 GPU Shallow-Water Equations (RawFluidWaterSim) Coupling:
+            // Smoothly blends live GPU player/16-NPC wakes, raindrop impact rings, height ripples,
+            // analytical curl-free normals, and advected webbed foam into RtWater when inside [0.02..0.98].
+            float simFoamLive = 0.0f;
+            if (fluidWaterDomain.w > 0.5f && fluidWaterDomain.z > 0.0f) {
+                const float2 winUv = (wpW.xy - fluidWaterDomain.xy) * fluidWaterDomain.z;
+                if (winUv.x > 0.02f && winUv.x < 0.98f && winUv.y > 0.02f && winUv.y < 0.98f) {
+                    const float edgeFade = smoothstep(0.02f, 0.10f, winUv.x) * (1.0f - smoothstep(0.90f, 0.98f, winUv.x))
+                                         * smoothstep(0.02f, 0.10f, winUv.y) * (1.0f - smoothstep(0.90f, 0.98f, winUv.y));
+                    const float2 simUv = frac(wpW.xy * fluidWaterDomain.z);
+                    const float4 swState = SimWaterState.SampleLevel(SimWaterSamp, simUv, 0.0f);
+                    const float4 swNorm  = SimWaterNormal.SampleLevel(SimWaterSamp, simUv, 0.0f);
+                    waveHeight3D += swState.x * (0.85f * edgeFade);
+                    const float2 sweSlope = swNorm.xy / max(swNorm.z, 0.25f);
+                    const float sweActivity = saturate(length(sweSlope) * 3.5f + abs(swState.x) * 0.45f + length(swState.yz) * 0.025f);
+                    const float sweNormWeight = edgeFade * lerp(0.45f, 0.88f, sweActivity);
+                    n = normalize(float3(n.xy + sweSlope * sweNormWeight, max(n.z, 0.15f)));
+                    simFoamLive = saturate(max(swState.w, swNorm.w * 0.85f)) * edgeFade;
+                    jacobianFold = max(jacobianFold, swNorm.w * edgeFade * 0.72f);
+                    bowHit = max(bowHit, simFoamLive * 0.85f);
+                }
+            }
             const float nvRaw = dot(n, v);
             if (nvRaw < 0.05f) { n = normalize(n + v * (0.05f - nvRaw)); }   // a wave normal never faces away
             const float nv = saturate(dot(n, v));
@@ -625,9 +654,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float shoreJitter = rawNoise3Grad(float3(wpW.xy * 0.022f, wtF * 0.28f)).x;
                 const float collarReach = (isSeaFoam ? 6.5f : 2.6f) * (0.55f + 0.90f * shoreJitter);
                 const float contactCollar = (1.0f - smoothstep(0.0f, collarReach, depthV)) * smoothstep(0.0f, 0.35f, depthV);
-                const float foamEnergy = saturate(max(max(crestBreak, contactCollar * (isSeaFoam ? 0.64f : 0.34f)), max(bowHit * 0.62f, eddyLee * 0.34f)));
+                const float foamEnergy = saturate(max(max(crestBreak, contactCollar * (isSeaFoam ? 0.64f : 0.34f)), max(max(bowHit * 0.62f, eddyLee * 0.34f), simFoamLive * 0.92f)));
                 const float foamLace = foamEnergy > 0.02f ? cellularFoamLace(wpW.xy - foamFlow * (wtF * 8.0f), wtF, foamEnergy) : 0.0f;
-                const float foamMask = saturate(foamLace * smoothstep(0.08f, 0.56f, foamEnergy)) * nearW;
+                const float foamMask = saturate(max(foamLace * smoothstep(0.08f, 0.56f, foamEnergy), simFoamLive * (0.48f + 0.52f * foamLace))) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (EXTERIORS ONLY — never fire cyan sunbeams inside underground sewers!).
                 float3 uwShaft = 0.0f.xxx;
                 if (isExtBody && sunDir.w > 0.5f && sunDir.z > 0.08f && depthV > 6.0f && wDist < 4200.0f) {
@@ -653,6 +682,9 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float troughWeight = lerp(0.80f, 1.16f, saturate(0.42f + jacobianFold * 0.68f));
                 const float3 waterBody = (((bed * shoreDark + caus) * T + scatter * (1.0f - T)) * (waveFacet * troughWeight) + waveSSS + uwShaft);
                 body = lerp(waterBody, foamLit, foamMask * 0.84f);
+            } else if (simFoamLive > 0.02f) {
+                const float3 foamLitFar = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 0.92f + sunColour.rgb * (sunDir.w > 0.5f ? 0.38f : 0.0f)) * float3(0.95f, 0.98f, 1.00f);
+                body = lerp(body, foamLitFar, saturate(simFoamLive * 0.78f));
             }
             const float shoreFeather = dBed < 1.0f ? smoothstep(0.0f, 8.0f, max(p.z - worldAt(px, dBed).z, 0.0f)) : 1.0f;
             // Continuous single world-space fluid surface from boots to horizon (extends full JONSWAP + RT water out to 42,000u!):

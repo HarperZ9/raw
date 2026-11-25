@@ -650,4 +650,86 @@ RawMaterialEvalResult evalMaterialFromRecord3D(
     return res;
 }
 
+// ============================================================================
+// 7. PHYSICAL MARSCHNER 3-LOBE ANISOTROPIC HAIR BRDF (R + TT + TRT)
+//    Marschner et al. (SIGGRAPH 2003) / Chiang et al. (2016) clean-room MIT:
+//      - R   : colorless cuticle reflection shifted toward tip (keratin IOR 1.55)
+//      - TT  : warm melanin-transmitted backlit forward-scattering halo
+//      - TRT : deep pigment-tinted internal reflection shifted toward root
+// ============================================================================
+float rawMarschnerGauss(float beta, float theta) {
+    const float b = max(beta, 0.04f);
+    return exp(-0.5f * (theta * theta) / (b * b)) / (2.5066283f * b);
+}
+
+float3 evalMarschnerHair3Lobe(
+    float3 T,          // Unit hair strand tangent (root -> tip)
+    float3 N,          // Macro surface normal
+    float3 V,          // View direction (toward eye)
+    float3 L,          // Light direction (toward light)
+    float3 hairAlbedo, // Linear hair pigment reflectance
+    float  roughness)  // Longitudinal roughness [0.22..0.58]
+{
+    const float3 tUnit = normalize(T);
+    const float3 vUnit = normalize(V);
+    const float3 lUnit = normalize(L);
+
+    const float sinTi = clamp(dot(tUnit, lUnit), -0.999f, 0.999f);
+    const float sinTo = clamp(dot(tUnit, vUnit), -0.999f, 0.999f);
+    const float thetaI = asin(sinTi);
+    const float thetaO = asin(sinTo);
+    const float thetaH = 0.5f * (thetaI + thetaO);
+    const float thetaD = 0.5f * (thetaI - thetaO);
+    const float cosTd  = max(cos(thetaD), 0.12f);
+
+    // Azimuthal projection onto plane perpendicular to strand tangent T:
+    const float3 lPerp = lUnit - tUnit * sinTi;
+    const float3 vPerp = vUnit - tUnit * sinTo;
+    const float lPerpLen = length(lPerp);
+    const float vPerpLen = length(vPerp);
+    const float cosPhi = (lPerpLen > 1.0e-4f && vPerpLen > 1.0e-4f)
+        ? clamp(dot(lPerp, vPerp) / (lPerpLen * vPerpLen), -1.0f, 1.0f)
+        : 0.0f;
+
+    // Keratin IOR 1.55 dielectric Fresnel at half-difference angle:
+    const float cosHalf = sqrt(max(0.5f * (1.0f + cosPhi), 0.0f)) * cosTd;
+    const float F_R = rawDielectricFresnel(cosHalf, 1.55f);
+
+    // Cuticle scale tilt (~ -5.5 deg toward tip): R shifts toward tip, TRT shifts toward root!
+    const float alphaR   = -0.096f;
+    const float alphaTT  = -0.5f * alphaR;
+    const float alphaTRT = -1.5f * alphaR;
+
+    const float betaR   = clamp(roughness * 0.42f, 0.09f, 0.28f);
+    const float betaTT  = max(betaR * 0.58f, 0.06f);
+    const float betaTRT = min(betaR * 2.05f, 0.52f);
+
+    // Longitudinal scattering Gaussians M_R, M_TT, M_TRT:
+    const float M_R   = rawMarschnerGauss(betaR,   thetaH - alphaR);
+    const float M_TT  = rawMarschnerGauss(betaTT,  thetaH - alphaTT);
+    const float M_TRT = rawMarschnerGauss(betaTRT, thetaH - alphaTRT);
+
+    // Azimuthal lobes N_R (broad front), N_TT (strong backlit forward peak), N_TRT (secondary caustic):
+    const float cosHalfPhi = sqrt(max(0.5f * (1.0f + cosPhi), 0.0f));
+    const float N_R   = 0.25f * cosHalfPhi;
+    const float N_TT  = exp(-pow((1.0f + cosPhi) * 1.85f, 2.0f)) * 0.65f;
+    const float N_TRT = (0.17f + 0.38f * exp(-pow((cosPhi - 0.55f) * 2.2f, 2.0f)));
+
+    // Melanin Beer-Lambert absorption along internal hair cylinder paths:
+    const float3 baseCol = clamp(hairAlbedo, 0.035f.xxx, 0.96f.xxx);
+    const float3 A_TT    = pow(baseCol, 0.72f) * (1.0f - F_R) * (1.0f - F_R);
+    const float3 A_TRT   = pow(baseCol, 1.38f) * (1.0f - F_R) * (1.0f - F_R) * F_R;
+
+    // Soft wrap shadow gate along macro scalp normal so back-facing hair receives backlit TT without front-glare artifacts:
+    const float nlMacro = dot(normalize(N), lUnit);
+    const float frontGate = saturate(nlMacro * 0.85f + 0.28f);
+    const float backGate  = saturate(0.45f - nlMacro * 0.55f) * saturate(dot(-vUnit, lUnit) * 0.75f + 0.35f);
+
+    const float3 lobeR   = float3(0.96f, 0.97f, 1.00f) * (M_R * N_R * F_R * frontGate * 0.95f);
+    const float3 lobeTT  = A_TT  * float3(1.12f, 0.96f, 0.82f) * (M_TT * N_TT * backGate * 1.15f);
+    const float3 lobeTRT = A_TRT * (M_TRT * N_TRT * frontGate * 2.40f);
+
+    return min((lobeR + lobeTT + lobeTRT) / max(cosTd * cosTd, 0.25f), 2.8f.xxx);
+}
+
 #endif

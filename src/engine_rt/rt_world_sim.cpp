@@ -5,8 +5,10 @@
 #include "CeNavMesh.h"
 #include "rt_combat_ai.h"
 #include "rt_skeleton_ik.h"
+#include "rt_stealth_survival.h"
 #ifndef RAW_SIM_PURE_TEST
 #include "rt_control.h"
+#include "rt_livestate.h"
 #include "rt_patch.h"
 #include "rt_softbody.h"
 #include "rt_view.h"
@@ -137,12 +139,24 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
     out.staminaRegenMult = therm.staminaRegenMult;
     out.freezingRisk     = therm.freezingRisk ? 1u : 0u;
 
-    // 6. Sabine-Eyring 3D acoustic room reverb & occlusion estimate
-    const float encRadU = inInterior ? 700.0f : (altZ > 2200.0f ? 2100.0f : 4200.0f);
-    const auto ac = ComputeAcousticReverb(inInterior, encRadU, snow01, rain01, windSpeed, false);
-    out.acousticRt60Sec   = ac.rt60Sec;
-    out.acousticLowPassHz = ac.lowPassHz;
-    out.acousticEnvClass  = static_cast<uint8_t>(ac.envClass);
+    // 6. Wave 40 Physical 3D Acoustic Environment Classifier (Sabine-Eyring RT60 + ISO 9613-1 HF Air Absorption):
+    const float encRadU = inInterior ? 720.0f : (altZ > 2200.0f ? 2100.0f : 4200.0f);
+    AcousticClassificationInput acIn{};
+    acIn.inInterior       = inInterior;
+    acIn.underwater       = false;
+    acIn.isIceCavern      = inInterior && (playerPos ? (playerPos[1] > 24000.0f) : false);
+    acIn.altitudeZ        = altZ;
+    acIn.worldY           = playerPos ? playerPos[1] : 0.0f;
+    acIn.snowCover01      = snow01;
+    acIn.rain01           = rain01;
+    acIn.windSpeedMs      = windSpeed;
+    acIn.temperatureC     = therm.ambientTempC;
+    acIn.humidity01       = std::clamp(0.45f + rain01 * 0.45f + snow01 * 0.25f, 0.15f, 0.98f);
+    acIn.enclosureRadiusU = encRadU;
+    const auto acProf = ClassifyAcousticEnvironment(acIn);
+    out.acousticRt60Sec   = acProf.rt60Sec;
+    out.acousticLowPassHz = acProf.lowPassHz;
+    out.acousticEnvClass  = static_cast<uint8_t>(acProf.kind);
 
     // 7. Dynamic hold economy scarcity + smooth-follow combat camera FOV lock-on solver
     const auto econ = EvaluateDynamicEconomy(std::max(rain01, snow01), out.snowDepthU, gameHour, actorCount, inInterior);
@@ -314,12 +328,72 @@ void WorldSimOnPresent() {
     snap.adaptiveQuality = StepExtremumSeekingGovernor(g_gpuEsState, esCost, tickDtSec, 0.75f, 1.0f, 0.015f, 8.0f, 0.35f);
     g_coreWarmth = snap.coreWarmth;
     g_shiverAtomic.store(snap.shiverIntensity, std::memory_order_relaxed);
-    // Feed bounded live economy, thermal survival, tidal water buoyancy & planetary gravity into Skyrim's live engine memory:
+    // Feed bounded live economy, thermal survival, tidal water buoyancy, stealth & acoustics into Skyrim's live engine memory:
     const auto liveGm = ComputeDynamicGameplayGmsts(snap.economyBuyMult, snap.staminaRegenMult);
     WorldSimApplyLiveGmsts(liveGm.barterMin, liveGm.barterMax, liveGm.sprintStaminaDrainMult);
     WorldSimApplyLivePlanetaryGravity(snap.gravityMps2);
     ViewApplyLiveTide(snap.tideHeightU);
     GameplayHooksUpdateSquadSnapshot(snap.actorsTracked, snap.attackTokensUsed, snap.tacticalAction, storm, snap.snowDepthU);
+
+    // Wave 40: Feed live weather, wind direction, hearth/fire proximity, water submersion & acoustics to rt_stealth_survival:
+    {
+        float hearthProx = 0.0f;
+        EngineLight lights[32]{};
+        uint64_t lFrame = 0;
+        const uint32_t nLights = RAW_EngineLights(lights, 32u, &lFrame);
+        for (uint32_t i = 0; i < nLights; ++i) {
+            if ((lights[i].flags & 8u) == 0u) continue;  // kLightFire (campfire / brazier / forge / torch)
+            const float dx = lights[i].pos[0] - ev.playerPos[0];
+            const float dy = lights[i].pos[1] - ev.playerPos[1];
+            const float dz = lights[i].pos[2] - ev.playerPos[2];
+            const float d  = std::sqrt(dx * dx + dy * dy + dz * dz);
+            const float reach = std::clamp(lights[i].radius * 0.85f, 220.0f, 520.0f);
+            if (d < reach) {
+                hearthProx = std::max(hearthProx, 1.0f - (d / reach));
+            }
+        }
+        const float windMs = std::max(windSpd * 0.014f, synLive.windSpeedMs);
+        const float wLen = std::sqrt(wx * wx + wy * wy);
+        StealthEnvSnapshot sEnv{};
+        sEnv.rain01          = rain01;
+        sEnv.snow01          = snow01;
+        sEnv.storm01         = storm;
+        sEnv.fog01           = std::clamp(0.12f + storm * 0.45f + ((ev.gameHour >= 4.5f && ev.gameHour <= 7.5f) ? 0.30f : 0.0f), 0.0f, 1.0f);
+        sEnv.snowDepthU      = snap.snowDepthU;
+        sEnv.ambientTempC    = snap.ambientTempC;
+        sEnv.nightDarkness01 = (ev.gameHour < 5.0f || ev.gameHour > 21.0f) ? 0.85f :
+                               ((ev.gameHour < 6.5f || ev.gameHour > 19.5f) ? 0.40f : 0.0f);
+        sEnv.windDirX        = wLen > 1.0e-3f ? (wx / wLen) : 1.0f;
+        sEnv.windDirY        = wLen > 1.0e-3f ? (wy / wLen) : 0.0f;
+        sEnv.windSpeedMs     = windMs;
+
+        const bool inWater = (!inInt && ev.waterHeight > -13999.0f && (ev.playerPos[2] + 30.0f) < ev.waterHeight);
+        ThermalSurvivalInput tIn{};
+        tIn.ambientTempC      = snap.ambientTempC;
+        tIn.windSpeedMs       = windMs;
+        tIn.rain01            = rain01;
+        tIn.snow01            = snow01;
+        tIn.altitudeZ         = ev.playerPos[2];
+        tIn.inInterior        = inInt;
+        tIn.inWater           = inWater;
+        tIn.nearHearth        = (hearthProx > 0.12f);
+        tIn.hearthProximity01 = hearthProx;
+        tIn.dtSec             = tickDtSec;
+
+        AcousticClassificationInput aIn{};
+        aIn.inInterior       = inInt;
+        aIn.underwater       = inWater && ((ev.camPos[2] + 4.0f) < ev.waterHeight);
+        aIn.isIceCavern      = inInt && (ev.playerPos[1] > 24000.0f);
+        aIn.altitudeZ        = ev.playerPos[2];
+        aIn.worldY           = ev.playerPos[1];
+        aIn.snowCover01      = snow01;
+        aIn.rain01           = rain01;
+        aIn.windSpeedMs      = windMs;
+        aIn.temperatureC     = snap.ambientTempC;
+        aIn.humidity01       = std::clamp(0.45f + rain01 * 0.45f + snow01 * 0.25f, 0.15f, 0.98f);
+        aIn.enclosureRadiusU = inInt ? 720.0f : 4000.0f;
+        StealthSurvivalUpdateFrame(sEnv, tIn, aIn);
+    }
 
     std::lock_guard<std::mutex> lk(g_simMu);
     g_tel = snap;

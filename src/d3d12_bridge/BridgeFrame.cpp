@@ -368,6 +368,54 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runFluid) {
             m->StepFluidSimOnQueue(isInterior);
+            // Forward live 256x256 GPU SWE water state + normals to RtWater (RtScene):
+            if (m->rt) {
+                const auto wDom = m->fluidSim.GetWaterDomainInfo();
+                if (wDom.active && m->fluidSim.WaterStateResource() && m->fluidSim.WaterNormalResource()) {
+                    m->rt->SetFluidWaterResources(
+                        m->fluidSim.WaterStateResource(), m->fluidSim.WaterNormalResource(),
+                        wDom.originXY[0], wDom.originXY[1], wDom.worldSpanU);
+                }
+            }
+            // Composite live 64x64x64 GPU 3D Navier-Stokes fire/smoke/radiance directly onto colorOut with SceneDepth occlusion:
+            const auto fDom = m->fluidSim.GetFireDomainInfo();
+            if (m->fluidComposite.Ready() && fDom.active && fDom.emitterCount > 0u &&
+                m->fluidSim.FireThermoResource() && m->fluidSim.FireRadianceResource()) {
+                LightingFluidInputs fi{};
+                LightingPassFluidInputs(m->pass.get(), &fi);
+                FluidCompositeParams cp{};
+                std::memcpy(cp.clipToWorld, &m->lighting.clipToWorld[0][0], 64u);
+                cp.camPosW[0] = m->lighting.posAdjust[0];
+                cp.camPosW[1] = m->lighting.posAdjust[1];
+                cp.camPosW[2] = m->lighting.posAdjust[2];
+                cp.simTimeSec = fi.simTimeSec;
+                cp.domainMinW[0] = fDom.originXYZ[0];
+                cp.domainMinW[1] = fDom.originXYZ[1];
+                cp.domainMinW[2] = fDom.originXYZ[2];
+                cp.domainSpanW = fDom.worldSpanU;
+                cp.resScale[0] = m->lighting.resolutionScale[0];
+                cp.resScale[1] = m->lighting.resolutionScale[1];
+                cp.sunDir[0] = m->lighting.sunDirection[0];
+                cp.sunDir[1] = m->lighting.sunDirection[1];
+                cp.sunDir[2] = m->lighting.sunDirection[2];
+                cp.sunIntensity = m->lighting.hasSun ? 1.0f : 0.25f;
+                cp.sunCol[0] = m->lighting.sunColour[0];
+                cp.sunCol[1] = m->lighting.sunColour[1];
+                cp.sunCol[2] = m->lighting.sunColour[2];
+                cp.ambientFill = isInterior ? 0.35f : 0.65f;
+                cp.width = m->cfg.width;
+                cp.height = m->cfg.height;
+                cp.activeEmitters = fDom.emitterCount;
+                cp.isInterior = isInterior;
+                if (m->fluidComposite.Composite(
+                        m->queue.Get(), m->colorOut.res12.Get(), m->depthIn.res12.Get(),
+                        m->fluidSim.FireThermoResource(), m->fluidSim.FireRadianceResource(), cp)) {
+                    if ((m->fluidCompFrames++ % 180ull) == 0ull) {
+                        m->log("[FluidComposite] live 64^3 NS fire/smoke composited: emitters=%u, domainSpan=%.0fu",
+                               fDom.emitterCount, fDom.worldSpanU);
+                    }
+                }
+            }
         }
         return SUCCEEDED(m->queue->Signal(m->fence12.Get(), v2));
     };

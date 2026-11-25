@@ -659,13 +659,14 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
     Check(fireExecOk && host.FireFrameIndex() == static_cast<uint32_t>(kFireFrames),
           "DX12 StepFire executed 24 full Navier-Stokes + Radiance Cascade frames");
 
-    constexpr D3D12_RESOURCE_STATES kAllSrv =
-        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    const FluidFireDomainInfo fireDom = host.GetFireDomainInfo();
+    Check(fireDom.active && fireDom.emitterCount == 1u && std::fabs(fireDom.worldSpanU - 256.0f) < 1.0e-3f,
+          "RawFluidSimHost::GetFireDomainInfo reports active 256u domain and 1 active emitter");
 
     std::vector<float> thermoData, radData;
     uint32_t fw = 0, fh = 0, fd = 0;
-    const bool rbFireOk = rig.ReadbackRgba16Tex(host.FireThermoResource(), kAllSrv, thermoData, fw, fh, fd) &&
-                          rig.ReadbackRgba16Tex(host.FireRadianceResource(), kAllSrv, radData, fw, fh, fd);
+    const bool rbFireOk = rig.ReadbackRgba16Tex(host.FireThermoResource(), host.FireResourceState(), thermoData, fw, fh, fd) &&
+                          rig.ReadbackRgba16Tex(host.FireRadianceResource(), host.FireResourceState(), radData, fw, fh, fd);
     Check(rbFireOk && fw == 64u && fh == 64u && fd == 64u, "DX12 FireThermo & FireRadiance 64x64x64 GPU readback succeeded");
 
     if (rbFireOk) {
@@ -758,10 +759,15 @@ void TestDx12LiveGpuSolvers(bool preferWarp)
     }
     Check(waterExecOk && host.WaterFrameIndex() == 10u, "DX12 StepWater executed 10 SWE + wake + rain + toroidal-shift frames");
 
+    const FluidWaterDomainInfo waterDom = host.GetWaterDomainInfo();
+    Check(waterDom.active && std::fabs(waterDom.worldSpanU - 2048.0f) < 1.0e-3f &&
+          host.WaterResourceState() == D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+          "RawFluidSimHost::GetWaterDomainInfo reports active 2048u toroidal domain in NON_PIXEL_SHADER_RESOURCE");
+
     std::vector<float> waterState, waterNorm;
     uint32_t ww = 0, wh = 0, wd = 0;
-    const bool rbWaterOk = rig.ReadbackRgba16Tex(host.WaterStateResource(), kAllSrv, waterState, ww, wh, wd) &&
-                           rig.ReadbackRgba16Tex(host.WaterNormalResource(), kAllSrv, waterNorm, ww, wh, wd);
+    const bool rbWaterOk = rig.ReadbackRgba16Tex(host.WaterStateResource(), host.WaterResourceState(), waterState, ww, wh, wd) &&
+                           rig.ReadbackRgba16Tex(host.WaterNormalResource(), host.WaterResourceState(), waterNorm, ww, wh, wd);
     Check(rbWaterOk && ww == 256u && wh == 256u && wd == 1u, "DX12 WaterState & WaterNormal 256x256 GPU readback succeeded");
 
     if (rbWaterOk) {

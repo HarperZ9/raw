@@ -94,6 +94,19 @@ struct FluidWaterParams {
     FluidWaterTrail trails[32] = {};
 };
 
+struct FluidWaterDomainInfo {
+    float originXY[2] = {0.0f, 0.0f}; // world-space min XY corner of the 256x256 toroidal window
+    float worldSpanU  = 0.0f;         // total span in world units (256 * cellSize)
+    bool  active      = false;        // true once StepWater has executed
+};
+
+struct FluidFireDomainInfo {
+    float    originXYZ[3] = {0.0f, 0.0f, 0.0f}; // world-space min XYZ corner of the 64x64x64 voxel cube
+    float    worldSpanU   = 0.0f;               // total cube span in world units (64 * cellSize)
+    bool     active       = false;              // true once StepFire has executed
+    uint32_t emitterCount = 0u;                 // active verified world emitters in the last StepFire
+};
+
 // Optional explicit DXIL shader bytecode bundle (for runtime loading or standalone test harnesses).
 struct FluidShaderBlobs {
     D3D12_SHADER_BYTECODE fireInject   = {};
@@ -166,6 +179,12 @@ public:
     ID3D12Resource* WaterStateResource() const { return m_waterState[0].Get(); }
     ID3D12Resource* WaterNormalResource() const { return m_waterNormal.Get(); }
 
+    // Live world-space domain bounds & current tracked D3D12 resource states:
+    FluidFireDomainInfo   GetFireDomainInfo() const { return m_fireDomain; }
+    FluidWaterDomainInfo  GetWaterDomainInfo() const { return m_waterDomain; }
+    D3D12_RESOURCE_STATES FireResourceState() const { return m_fireThermo[m_fireParity].state; }
+    D3D12_RESOURCE_STATES WaterResourceState() const { return m_waterState[0].state; }
+
     uint32_t FireFrameIndex() const { return m_fireFrameIdx; }
     uint32_t WaterFrameIndex() const { return m_waterFrameIdx; }
 
@@ -221,8 +240,10 @@ private:
     uint32_t m_waterFrameIdx  = 0u;
     bool     m_fireResetNext  = true;
     bool     m_waterResetNext = true;
-    float    m_prevWaterCamXY[2] = {0.0f, 0.0f};
-    bool     m_hasPrevWaterCam   = false;
+    float                m_prevWaterCamXY[2] = {0.0f, 0.0f};
+    bool                 m_hasPrevWaterCam   = false;
+    FluidFireDomainInfo  m_fireDomain{};
+    FluidWaterDomainInfo m_waterDomain{};
 };
 
 } // namespace raw::bridge

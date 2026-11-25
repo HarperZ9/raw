@@ -225,7 +225,7 @@ bool farOccluded(float3 o, float3 dir, float tMax, uint steps, out float3 colour
 
 // What a reflection ray that leaves the scene sees: the game's own sky where it is on screen (the
 // direction projected, clamped into the frame and walked up towards the top row to the first sky pixel),
-// else the directional ambient for that direction. Puddles read by the sky they mirror.
+// else the dynamic environment cubemap enriched with live RawCosmosSky aurora & galaxy at night.
 float3 skyAt(float3 rd) {
     const float4 s = screenOf(rd * 1.0e6f);
     if (s.w > 0.0f && all(s.xy >= 2.0f.xx) && all(s.xy <= dims.xy - 3.0f)) {
@@ -235,7 +235,12 @@ float3 skyAt(float3 rd) {
             xy.y = floor(xy.y * 0.5f);
         }
     }
-    return evalDynamicEnvCube(rd, 0.14f);
+    float3 env = evalDynamicEnvCube(rd, 0.14f);
+    if (sunColour.w > 0.5f && rd.z > 0.0f && astroSunElev() < 0.06f) {
+        const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+        env += evalCosmosAndAuroraEx(rd, astroSunDir(), timeEnv.x, simTime, clouds.x, weather.z, camPosW.y, false, true);
+    }
+    return min(env, 3.5f.xxx);
 }
 
 
@@ -248,13 +253,13 @@ void cacheFromHit(float3 hp, float3 n, float2 r, bool isInterior) {
     const float bLen = isInterior ? min(skyLength, 240.0f) : skyLength;
     float freeHit = bLen;
     if (isInterior || d.z > 0.0f) {
-        const float3 o = hp + n * (0.65f + 0.0025f * length(hp));
+        const float3 o = hp + n * clamp(length(hp) * 0.0018f, 0.30f, 4.0f);
         Hit h;
         if (traceHit(o, d, bLen, h)) {
             float3 n2;
             freeHit = h.t;
             sky = isInterior ? saturate(h.t / max(bLen, 1.0f)) : 0.0f;
-            bounce = radianceAt(h, o, d, r.yx, false, n2);
+            bounce = rawCapBounceRadiance(radianceAt(h, o, d, r.yx, false, n2));
         }
     }
     cacheAdd(hp, n, bounce, sky, freeHit);
@@ -282,16 +287,20 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float3 n = worldNormal(Normal.Load(ip));
         const float z = viewZOf(d);
         const float3 ng = geometricNormal(px, p, n);
-        // Stronger normal offset on skinned meshes (base == 10/11/12) to eliminate RT terminator/self-shadow acne cleanly:
+        // Clean geometric-normal + view-distance adaptive ray origin bias (clamp(viewDist * 0.0018, 0.30, 4.0)):
+        // Eliminates low-poly 2011 NPC face & curved-stonework BLAS triangle self-intersection acne without floating shadows!
+        const float viewDist = length(p - eyeAt());
+        const float baseBias = clamp(viewDist * 0.0018f, 0.30f, 4.0f);
         const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u);
-        const float oScale = isSkinnedMesh ? (2.25f + 0.008f * z) : (0.85f + 0.005f * z);
-        const float3 o = p + ng * oScale;
+        const float3 biasN = isSkinnedMesh ? normalize(lerp(ng, n, 0.28f)) : ng;
+        const float oScale = isSkinnedMesh ? clamp(baseBias * 1.45f, 0.45f, 4.0f) : baseBias;
+        const float3 o = p + biasN * oScale;
         const float4 q4 = stbnPrime4(px, frameIndex);
         const float2 r = q4.xy;
         if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
             // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows driven by decorrelated 4D Prime-Root QMC strata:
-            const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
-            const float tMinS = max(termDist, 1.8f) * turn * turn;
+            const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.45f);
+            const float tMinS = max(max(termDist, 1.8f) * turn * turn, baseBias * 0.25f * turn);
             Hit hBlocker;
             float effCone = sunCone;
             float vSum = 0.0f;
@@ -414,13 +423,15 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float ang0 = ign(px + float2(17.0f * float(k), 31.0f)) * 6.2831853f;
             float vAcc = 0.0f;
             const uint nSpp = (rtTier <= 1u) ? 1u : 2u;   // Adaptive Vogel-Disk Area RT shadows (1-spp on 3060, 2-spp on 4070-5090)
+            const float turnP = saturate(1.0f - dot(ng, lDir) / 0.38f);
+            const float tMinP = (isSkinnedMesh ? 0.55f : 0.28f) * baseBias * turnP * turnP;
             [loop] for (uint si = 0u; si < nSpp; si++) {
                 const float rv = sqrt((float(si) + 0.5f) / float(nSpp));
                 const float av = float(si) * 2.3999632f + ang0;
                 const float3 ci = lPos + (lTan * cos(av) + lBit * sin(av)) * (rv * radK);
                 const float3 toi = ci - o;
                 const float liLen = length(toi);
-                vAcc += liLen > fixClear ? visible(o, toi / max(liLen, 1.0e-4f), 0.0f, liLen - fixClear) : 1.0f;
+                vAcc += liLen > (fixClear + tMinP) ? visible(o, toi / max(liLen, 1.0e-4f), tMinP, liLen - fixClear) : 1.0f;
             }
             vis[k + 1u] = vAcc * (1.0f / float(nSpp));
             idx[k] = float(best[k] + 1u) / 255.0f;
@@ -551,7 +562,8 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 0.85f), 0.10f, rain.wet), 0.025f, rain.puddle);
             const float2 rr0 = stbnR2(px, frameIndex + 37.0f);
             const float3 ng = geometricNormal(px, p, n);
-            const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
+            const float reflViewDist = length(p - eyeAt());
+            const float3 o = p + ng * clamp(reflViewDist * 0.0018f, 0.30f, 4.0f);
             // Adaptive Stratified Bounded-VNDF Glossy RT Reflections (1-spp on RTX 3060-4070, 2-spp on RTX 4080/4090/5090):
             const uint rtTierR = (giFlags >> 8u) & 7u;
             const uint reflSpp = (rtTierR >= 3u && (base == 2u || base == 13u || wetGloss)) ? 2u : 1u;

@@ -6,6 +6,7 @@
 #include "RawBindlessHeap.h"
 #include "RawMeshHost.h"
 #include "RawFluidSimHost.h"
+#include "RawFluidCompositeHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -70,6 +71,7 @@ struct D3D12Bridge::Impl
     RawBindlessHeap          bindless;     // RAW-LUMEN 65K SM 6.6 ResourceDescriptorHeap[] pool
     RawMeshHost              meshHost;     // RAW-MESH Hardware DX12 AS+MS PN-Triangle subdivision & terrain host
     RawFluidSimHost          fluidSim;     // Live GPU 64^3 3D Navier-Stokes Fire/Smoke + 256^2 SWE Water solver
+    RawFluidCompositeHost    fluidComposite; // Live GPU 64^3 NS Fire/Smoke volumetric compositor onto colorOut
     bool                     fluidReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
@@ -79,6 +81,7 @@ struct D3D12Bridge::Impl
     uint64_t                          fluidSlotVal[kRing] = {};
     uint32_t                          fluidSlot = 0;
     uint64_t                          fluidStepFrames = 0;
+    uint64_t                          fluidCompFrames = 0;
     uint64_t                          fluidLastMs = 0;
     bool InitFluidSim();
     void ShutdownFluidSim();

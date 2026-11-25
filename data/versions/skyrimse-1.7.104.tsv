@@ -5706,3 +5706,6 @@ off:NiAVObject::localRotate	offset	0x48	high	binary disassembly 0xEEBF40 3x3 flo
 off:NiAVObject::localTranslate	offset	0x6C	high	binary disassembly 0xEEBF40 float[3] (SkyrimSE 1.7.104)
 off:NiAVObject::worldRotate	offset	0x7C	high	binary disassembly 0xEEBF40 3x3 float (SkyrimSE 1.7.104)
 off:NiAVObject::worldTranslate	offset	0xA0	high	binary disassembly 0xEEBF40 float[3] (SkyrimSE 1.7.104)
+fn:Actor::CalculateDetection	function	0x6A33B0	high	binary disassembly caller of SneakDetectionCalc 0x41CD90 at 0x6A3972 (SkyrimSE 1.7.104)
+site:Actor::CalculateDetection::SneakCalcCall	site	0x6A3972	high	binary disassembly E8 19 94 D7 FF call 0x41CD90 (SkyrimSE 1.7.104)
+off:Actor::actorStateFlags	offset	0xC8	high	binary disassembly 0x41CF4F mov eax, [rdi+0xC8] (SkyrimSE 1.7.104)

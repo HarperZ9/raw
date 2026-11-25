@@ -17,7 +17,25 @@ using namespace rtdetail;
 
 namespace
 {
-constexpr UINT kWaterSlot = 8;   // descriptors a frame in flight: depth, layer, albedo, out, out, coordinates, colour, the frame before the water
+constexpr UINT kWaterSlot = 10;   // descriptors a frame in flight: depth, layer, albedo, out, out, coordinates, colour, preWater, simWaterState, simWaterNormal
+}
+
+void RtScene::SetFluidWaterResources(ID3D12Resource* waterState, ID3D12Resource* waterNormal,
+                                     float originX, float originY, float worldSpanU)
+{
+    if (waterState && waterNormal && worldSpanU > 0.0f) {
+        m_fluidWaterState = waterState;
+        m_fluidWaterNormal = waterNormal;
+        m_fluidWaterOrigin[0] = originX;
+        m_fluidWaterOrigin[1] = originY;
+        m_fluidWaterSpanU = worldSpanU;
+    } else {
+        m_fluidWaterState = nullptr;
+        m_fluidWaterNormal = nullptr;
+        m_fluidWaterOrigin[0] = 0.0f;
+        m_fluidWaterOrigin[1] = 0.0f;
+        m_fluidWaterSpanU = 0.0f;
+    }
 }
 
 void RtScene::CreateWater()
@@ -33,13 +51,71 @@ void RtScene::CreateWater()
          SUCCEEDED(m_dev->CreateCommandList(0, cmdType, m_wAlloc[0].Get(), nullptr, IID_PPV_ARGS(&m_wList))) &&
          SUCCEEDED(m_dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_wFence)));
     if (ok) { m_wList->Close(); m_wList->SetName(L"rt water"); }
+    // Water root signature: extends the RT trace signature (p[0..15]) with live 256x256 GPU SWE water SRVs (t10..t11),
+    // toroidal domain constants (b3), and linear-wrap static sampler (s0).
+    {
+        D3D12_DESCRIPTOR_RANGE srv{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0};
+        D3D12_DESCRIPTOR_RANGE uav{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0};
+        D3D12_DESCRIPTOR_RANGE masks{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, UINT(-1), 0, 1, 0};
+        D3D12_DESCRIPTOR_RANGE skyRaw{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 3, 0, 0};
+        D3D12_DESCRIPTOR_RANGE colour{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5, 0, 0};
+        D3D12_DESCRIPTOR_RANGE refl{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 4, 0, 0};
+        D3D12_DESCRIPTOR_RANGE normals{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 5, 0, 0};
+        D3D12_DESCRIPTOR_RANGE albedo{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, RtAlpha::kMaxAlbedo, 0, 2, 0};
+        D3D12_DESCRIPTOR_RANGE cache{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, RtCache::Descriptors(), 6, 0, 0};
+        D3D12_DESCRIPTOR_RANGE resv[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 9, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 7, 0, 2}};
+        D3D12_DESCRIPTOR_RANGE fluidSrv{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 10, 0, 0};   // t10 SimWaterState, t11 SimWaterNormal
+        D3D12_ROOT_PARAMETER wp[18]{};
+        wp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; wp[0].Descriptor = {0, 0};
+        wp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; wp[1].Constants = {1, 0, 8};
+        wp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; wp[2].Descriptor = {3, 0};
+        wp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[3].DescriptorTable = {1, &srv};
+        wp[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[4].DescriptorTable = {1, &uav};
+        wp[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; wp[5].Descriptor = {4, 0};
+        wp[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[6].DescriptorTable = {1, &masks};
+        wp[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[7].DescriptorTable = {1, &skyRaw};
+        wp[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[8].DescriptorTable = {1, &colour};
+        wp[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[9].DescriptorTable = {1, &refl};
+        wp[10].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[10].DescriptorTable = {1, &normals};
+        wp[11].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[11].DescriptorTable = {1, &albedo};
+        wp[12].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[12].DescriptorTable = {1, &cache};
+        wp[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; wp[13].Descriptor = {6, 0};
+        wp[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; wp[14].Constants = {2, 0, 12};
+        wp[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[15].DescriptorTable = {2, resv};
+        wp[16].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; wp[16].DescriptorTable = {1, &fluidSrv};
+        wp[17].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; wp[17].Constants = {3, 0, 4};
+
+        D3D12_STATIC_SAMPLER_DESC ss{};
+        ss.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        ss.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        ss.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        ss.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        ss.MaxLOD = D3D12_FLOAT32_MAX;
+        ss.ShaderRegister = 0;
+        ss.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        D3D12_FEATURE_DATA_D3D12_OPTIONS o0{};
+        const bool tier3 = SUCCEEDED(m_dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o0, sizeof o0)) &&
+                           o0.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3;
+        D3D12_ROOT_SIGNATURE_DESC wrs{18, wp, 1, &ss,
+                                      tier3 ? D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED
+                                            : D3D12_ROOT_SIGNATURE_FLAG_NONE};
+        ComPtr<ID3DBlob> wBlob, wErr;
+        if (FAILED(D3D12SerializeRootSignature(&wrs, D3D_ROOT_SIGNATURE_VERSION_1, &wBlob, &wErr)) ||
+            FAILED(m_dev->CreateRootSignature(0, wBlob->GetBufferPointer(), wBlob->GetBufferSize(), IID_PPV_ARGS(&m_waterRoot)))) {
+            wrs.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+            wBlob.Reset(); wErr.Reset();
+            ok = ok && SUCCEEDED(D3D12SerializeRootSignature(&wrs, D3D_ROOT_SIGNATURE_VERSION_1, &wBlob, &wErr)) &&
+                 SUCCEEDED(m_dev->CreateRootSignature(0, wBlob->GetBufferPointer(), wBlob->GetBufferSize(), IID_PPV_ARGS(&m_waterRoot)));
+        }
+    }
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-    pd.pRootSignature = m_root.Get();
+    pd.pRootSignature = m_waterRoot.Get();
     pd.CS = {kDxil_rt_water, sizeof kDxil_rt_water};
     pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);   // opacity micromaps where the trace has them
-    ok = ok && SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_waterPso)));
-    if (m_log) m_log(ok ? "[RT] water pass ready (reflection, glint, caustics)" : "[RT] water pass off: its objects or pipeline were refused");
-    if (!ok) { m_waterPso.Reset(); return; }
+    ok = ok && m_waterRoot && SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_waterPso)));
+    if (m_log) m_log(ok ? "[RT] water pass ready (reflection, glint, caustics, live GPU SWE)" : "[RT] water pass off: its objects or pipeline were refused");
+    if (!ok) { m_waterPso.Reset(); m_waterRoot.Reset(); return; }
     // The scattering's own small signature: b0 the lighting uniform, b1 four constants, t0..t2, u0.
     D3D12_DESCRIPTOR_RANGE srv{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0, 0, 0}, uav{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 3};
     D3D12_ROOT_PARAMETER p[4]{};
@@ -149,6 +225,9 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     cd.Buffer.NumElements = UINT(RtAlpha::kPool / 4); cd.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
     m_dev->CreateUnorderedAccessView(m_alpha.Pool(), nullptr, &cd, cpu(5));
     m_dev->CreateUnorderedAccessView(preWater ? preWater : colourOut, nullptr, &ud, cpu(7));   // u4: the frame before the water
+    const bool hasFluidWater = (m_fluidWaterState != nullptr && m_fluidWaterNormal != nullptr && m_fluidWaterSpanU > 0.0f);
+    srv(hasFluidWater ? m_fluidWaterState : nullptr, DXGI_FORMAT_R16G16B16A16_FLOAT, 8);       // t10: live GPU SWE WaterState
+    srv(hasFluidWater ? m_fluidWaterNormal : nullptr, DXGI_FORMAT_R16G16B16A16_FLOAT, 9);      // t11: live GPU SWE WaterNormal
 
     m_wAlloc[slot]->Reset();
     m_wList->Reset(m_wAlloc[slot].Get(), nullptr);
@@ -168,7 +247,7 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     const D3D12_GPU_DESCRIPTOR_HANDLE g = m_heap->GetGPUDescriptorHandleForHeapStart();
     auto gpu = [&](UINT k) { return D3D12_GPU_DESCRIPTOR_HANDLE{g.ptr + UINT64(k) * inc}; };
     if (water) {
-    cl->SetComputeRootSignature(m_root.Get());
+    cl->SetComputeRootSignature(m_waterRoot.Get());
     cl->SetPipelineState(m_waterPso.Get());
     cl->SetComputeRootConstantBufferView(0, m_wCb[slot]->GetGPUVirtualAddress());
     const float rc[8] = {m_tune.sunLength, m_tune.sourceRadius, m_tune.sunCone, float(m_frame & 0xFFFF), m_tune.alphaRef, m_tune.termDist,
@@ -194,6 +273,14 @@ bool RtScene::RecordWater(const void* uniform, size_t bytes, ID3D12Resource* dep
     std::memcpy(gc + 8, m_lodRect, 16);
     cl->SetComputeRoot32BitConstants(14, 12, gc, 0);
     cl->SetComputeRootDescriptorTable(15, gpu(m_skyReady ? m_sky.ReservoirDescriptor(m_frame) : 3));   // not read by the water kernel
+    cl->SetComputeRootDescriptorTable(16, gpu(at + 8));
+    const float fluidWaterConst[4] = {
+        m_fluidWaterOrigin[0],
+        m_fluidWaterOrigin[1],
+        hasFluidWater ? (1.0f / m_fluidWaterSpanU) : 0.0f,
+        hasFluidWater ? 1.0f : 0.0f
+    };
+    cl->SetComputeRoot32BitConstants(17, 4, fluidWaterConst, 0);
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
     }
     if (preWater && water) {
@@ -253,7 +340,7 @@ bool RtScene::ReloadWater(const std::vector<uint8_t>& water, const std::vector<u
     ComPtr<ID3D12PipelineState> w, s;
     if (!water.empty()) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-        pd.pRootSignature = m_root.Get();
+        pd.pRootSignature = m_waterRoot.Get();
         pd.CS = {water.data(), water.size()};
         pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);
         if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&w)))) { err = "the device refused the reloaded RtWater.hlsl"; return false; }

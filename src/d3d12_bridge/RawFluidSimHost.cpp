@@ -502,6 +502,8 @@ void RawFluidSimHost::Reset()
     m_fireResetNext = true;
     m_waterResetNext = true;
     m_hasPrevWaterCam = false;
+    m_fireDomain = {};
+    m_waterDomain = {};
 }
 
 void RawFluidSimHost::Transition(ID3D12GraphicsCommandList* cmd, TrackedTex& tex, D3D12_RESOURCE_STATES target)
@@ -711,9 +713,16 @@ void RawFluidSimHost::StepFire(ID3D12GraphicsCommandList* cmd, const FluidFirePa
     cmd->SetComputeRootDescriptorTable(2, GpuAt(FireUavRad(q)));
     cmd->Dispatch(kGroups, kGroups, kGroups);
 
-    // Leave final outputs in ALL_SHADER_RESOURCE for LightingPass / LightFog sampling
+    // Leave final outputs in ALL_SHADER_RESOURCE for LightingPass / LightFog / RawFluidCompositeHost sampling
     Transition(cmd, m_fireVel[q],   kAllSrv);
     Transition(cmd, m_fireRad[q],   kAllSrv);
+
+    m_fireDomain.originXYZ[0] = params.domainOriginW[0];
+    m_fireDomain.originXYZ[1] = params.domainOriginW[1];
+    m_fireDomain.originXYZ[2] = params.domainOriginW[2];
+    m_fireDomain.worldSpanU   = static_cast<float>(kFireGridRes) * cellSize;
+    m_fireDomain.active       = true;
+    m_fireDomain.emitterCount = cb.counts[0];
 
     m_fireParity = q;
     m_fireResetNext = false;
@@ -790,7 +799,6 @@ void RawFluidSimHost::StepWater(ID3D12GraphicsCommandList* cmd, const FluidWater
 
     constexpr uint32_t kGroups = kWaterGridRes / 8u; // 32 x 32 x 1
     constexpr D3D12_RESOURCE_STATES kCsSrv  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-    constexpr D3D12_RESOURCE_STATES kAllSrv = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     constexpr D3D12_RESOURCE_STATES kUav    = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
     // Pass 1: Wake/Rain/Shoreline Inject (StateA -> StateB)
@@ -810,15 +818,21 @@ void RawFluidSimHost::StepWater(ID3D12GraphicsCommandList* cmd, const FluidWater
     cmd->Dispatch(kGroups, kGroups, 1u);
 
     // Pass 3: Analytical Curl-Free Normals + Jacobian Crest-Folding Foam Mask (StateA -> NormalOut)
-    Transition(cmd, m_waterState[0], kAllSrv);
+    Transition(cmd, m_waterState[0], kCsSrv);
     Transition(cmd, m_waterNormal,   kUav);
     cmd->SetPipelineState(m_psoWaterNormals.Get());
     cmd->SetComputeRootDescriptorTable(1, GpuAt(kSlotWaterSrvA));
     cmd->SetComputeRootDescriptorTable(2, GpuAt(kSlotWaterUavNorm));
     cmd->Dispatch(kGroups, kGroups, 1u);
 
-    // Leave WaterState and WaterNormal in ALL_SHADER_RESOURCE for RtWater binding
-    Transition(cmd, m_waterNormal, kAllSrv);
+    // Leave WaterState and WaterNormal in NON_PIXEL_SHADER_RESOURCE so RtWater (Direct or Async Compute) binds with 0 barrier hazards
+    Transition(cmd, m_waterNormal, kCsSrv);
+
+    const float waterSpan = static_cast<float>(kWaterGridRes) * dx;
+    m_waterDomain.originXY[0] = params.camPosXY[0] - 0.5f * waterSpan;
+    m_waterDomain.originXY[1] = params.camPosXY[1] - 0.5f * waterSpan;
+    m_waterDomain.worldSpanU  = waterSpan;
+    m_waterDomain.active      = true;
 
     m_prevWaterCamXY[0] = params.camPosXY[0];
     m_prevWaterCamXY[1] = params.camPosXY[1];

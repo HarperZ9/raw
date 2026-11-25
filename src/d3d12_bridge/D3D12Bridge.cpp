@@ -250,7 +250,9 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
     bool ok = stage("bridge: before D3D12 device") && (m->attached ? m->AttachLayer() : m->CreateDevice12(dev)) && stage("bridge: after D3D12 device")
         && m->CreateShared(m->colorIn, cfg.colorFormat, kSharedColour, "colour-in")
         && m->CreateShared(m->depthIn, kSharedDepthFormat, kSharedDepth, "depth-in")
-        && m->CreateShared(m->colorOut, cfg.colorFormat, kSharedColour, "colour-out")
+        && m->CreateShared(m->colorOut, cfg.colorFormat,
+                           cfg.lightingPass ? (kSharedColour | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) : kSharedColour,
+                           "colour-out")
         && (cfg.normalFormat == DXGI_FORMAT_UNKNOWN
             || m->CreateShared(m->normalIn, cfg.normalFormat, kSharedColour, "normal-in"))
         && (cfg.motionFormat == DXGI_FORMAT_UNKNOWN
@@ -430,13 +432,17 @@ bool D3D12Bridge::Impl::InitFluidSim()
         ShutdownFluidSim();
         return false;
     }
+    std::string compErr;
+    const bool compOk = fluidComposite.Init(dev12.Get(), &compErr);
     fluidReady = true;
-    log("[FluidSim] live GPU 64^3 NS Fire + 256^2 SWE Water ready");
+    log("[FluidSim] live GPU 64^3 NS Fire + 256^2 SWE Water ready (FireComposite=%s%s)",
+        compOk ? "READY" : "off", (!compOk && !compErr.empty()) ? (": " + compErr).c_str() : "");
     return true;
 }
 
 void D3D12Bridge::Impl::ShutdownFluidSim()
 {
+    fluidComposite.Shutdown();
     if (fluidFence && fluidEvent && fluidFenceVal > 0) {
         if (fluidFence->GetCompletedValue() < fluidFenceVal) {
             fluidFence->SetEventOnCompletion(fluidFenceVal, fluidEvent);

@@ -4,6 +4,7 @@
 // cache (RtCache.h). Needs LightingCommon.hlsli, Records, Coords, Masks and the trace helpers first.
 // Original work, MIT.
 #include "RtCacheCommon.hlsli"
+#include "RawCosmosSky.hlsli"
 
 StructuredBuffer<uint4> Mats : register(t6);              // colour copy + 1 (0 none), first face normal, flags (1 alpha, 2 normals)
 RWByteAddressBuffer FaceNormals : register(u5);           // octahedral, two snorm16, one per triangle
@@ -175,11 +176,24 @@ void cacheInsert(uint s, uint check, uint3 c, uint skyFixed, uint count, uint di
     CacheAccum.InterlockedAdd(a + 28u, skySqFixed, o);
 }
 
+// Conservative energy-conserving single-bounce radiance limiter (soft knee 1.15, hard cap <= 2.15 < 2.2x):
+// Prevents hot fires, torches, spells & HDR sky edges from self-amplifying into glowing GI patches!
+float3 rawCapBounceRadiance(float3 c) {
+    if (any(isnan(c)) || any(isinf(c))) { return 0.0f.xxx; }
+    c = max(c, 0.0f.xxx);
+    const float pk = max(c.r, max(c.g, c.b));
+    if (pk > 1.15f) {
+        const float softPk = 1.15f + (pk - 1.15f) / (1.0f + (pk - 1.15f) * 1.05f);
+        c *= min(softPk, 2.15f) / pk;
+    }
+    return c;
+}
+
 // One sample for the cell: bounce light, sky visibility, and observed free-flight distance.
 void cacheAdd(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0f) {
     uint s, check;
     cellOf(p, n, 0.0f.xxx, s, check);
-    const float3 bc = min(max(bounce, 0.0f), 1.85f);
+    const float3 bc = min(rawCapBounceRadiance(bounce), 1.65f.xxx);
     const float sk = saturate(sky);
     const float lum = dot(bc, float3(0.2126f, 0.7152f, 0.0722f));
     cacheInsert(s, check, uint3(bc * CACHE_FIXED), uint(sk * CACHE_FIXED), 1u,
@@ -192,7 +206,7 @@ void cacheAdd(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0
 void cacheAddWave(float3 p, float3 n, float3 bounce, float sky, float freeDist = 0.0f) {
     uint s, check;
     cellOf(p, n, 0.0f.xxx, s, check);
-    const float3 bc = min(max(bounce, 0.0f), 1.85f);
+    const float3 bc = min(rawCapBounceRadiance(bounce), 1.65f.xxx);
     const float sk = saturate(sky);
     const float lum = dot(bc, float3(0.2126f, 0.7152f, 0.0722f));
     const uint3 c = uint3(bc * CACHE_FIXED);
@@ -221,7 +235,7 @@ void cacheAddWave(float3 p, float3 n, float3 bounce, float sky, float freeDist =
 // with the cell's bounce added (exteriors, as the lighting pass does per pixel).
 float3 shadeHit(float3 hp, float3 n, float3 albedo, float2 r, bool traceSun) {
     float3 light = 0.0f;
-    const float3 o = hp + n * (0.5f + 0.002f * length(hp));
+    const float3 o = hp + n * clamp(length(hp) * 0.0018f, 0.30f, 4.0f);
     float3 uSunH, uSkyZH, uSkyHH, uAmbUpH, uAmbDnH;
     if (sunColour.w > 0.5f) { evalWorldAtmosphere(uSunH, uSkyZH, uSkyHH, uAmbUpH, uAmbDnH); }
     else { uSunH = sunColour.rgb; uAmbUpH = ambientAt(float3(0.0f, 0.0f, 1.0f)); uAmbDnH = ambientAt(float3(0.0f, 0.0f, -1.0f)); }
@@ -232,32 +246,47 @@ float3 shadeHit(float3 hp, float3 n, float3 albedo, float2 r, bool traceSun) {
             light += uSunH * nl * vis;
         }
     }
+    float3 pointLight = 0.0f.xxx;
     [loop] for (uint li = 0u; li < flags.y; li++) {
         const float3 toL = lightPosR[li].xyz - hp;
         const float dist = length(toL);
         const float x = saturate(dist / lightPosR[li].w);
         if (x >= 1.0f) { continue; }
-        light += lightColS[li].rgb * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
+        pointLight += lightColS[li].rgb * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
     }
+    // Conservatively limit single-bounce fire/torch point-light accumulation so hearths never blow out indirect GI:
+    light += rawCapBounceRadiance(pointLight);
     float3 amb = ambientAt(n);
     if (sunColour.w > 0.5f) {
         amb = lerp(amb, lerp(uAmbDnH, uAmbUpH, saturate(n.z * 0.5f + 0.5f)), 0.48f);
+        // Subtle altitude-weighted physical night aurora & Chappuis-ozone twilight sky chromaticity on off-screen snow/stone:
+        const float aElevH = astroSunElev();
+        if (aElevH < 0.14f) {
+            const float upW = saturate(n.z * 0.55f + 0.45f);
+            const float clearH = pow(1.0f - saturate(clouds.x * 1.02f), 1.45f);
+            const float nightH = smoothstep(0.03f, -0.09f, aElevH);
+            const float twH = smoothstep(-0.12f, -0.01f, aElevH) * (1.0f - smoothstep(0.04f, 0.14f, aElevH));
+            const float latW = lerp(0.45f, 1.00f, smoothstep(-30000.0f, 90000.0f, camPosW.y));
+            const float3 auroraTint = float3(0.010f, 0.034f, 0.028f) * (nightH * clearH * latW)
+                                    + float3(0.005f, 0.009f, 0.020f) * (nightH * clearH)
+                                    + float3(0.020f, 0.014f, 0.032f) * (twH * (0.45f + 0.55f * clearH));
+            amb += auroraTint * upW;
+        }
     }
     float4 c;
     const float3 j = float3(r, frac(r.x + r.y * 1.618f)) - 0.5f;
     if ((giFlags & GI_CACHE) != 0u && cacheRead(hp, n, j, c)) {
         if (sunColour.w > 0.5f) { amb *= lerp(1.0f, c.a, cluster.w); }
-        // Strict spectral-radius contraction (< 0.72) prevents multi-bounce positive feedback glow runaway!
-        amb += min(c.rgb * min(proj.w, 0.72f), 0.90f.xxx);
+        // Strict spectral-radius contraction (< 0.65) prevents multi-bounce positive feedback glow runaway!
+        amb += min(c.rgb * min(proj.w, 0.65f), 0.78f.xxx);
     } else if (sunColour.w > 0.5f) {
         amb *= 0.6f;   // no cell yet: a typical sky share
     }
-    // Wave 28 6-Band Hero-Wavelength Spectral Secondary-Bounce GI Radiance:
-    // Off-screen walls, pine forests, red banners, timber & stone bounce physically saturated spectral color!
+    // 6-Band Hero-Wavelength Spectral Secondary-Bounce GI Radiance (strictly energy-conserving <= 2.15x):
     const float3 hitIrrad = light + amb;
     const float warmH = saturate((hitIrrad.r - hitIrrad.b * 1.15f) / max(hitIrrad.r + hitIrrad.b + 0.05f, 0.05f));
     const float hitTempK = (warmH > 0.12f) ? lerp(5800.0f, 2350.0f, saturate(warmH * 1.85f)) : 0.0f;
-    return spectralSurfaceResponse(albedo, hitIrrad, hitTempK, 0.78f);
+    return rawCapBounceRadiance(spectralSurfaceResponse(albedo, hitIrrad, hitTempK, 0.78f));
 }
 
 // The light a hit sends back: the game's frame where the hit is on screen and not hidden; otherwise
@@ -267,7 +296,7 @@ float3 radianceAt(Hit h, float3 o, float3 d, float2 r, bool traceSun, out float3
     float3 c;
     const bool mats = (giFlags & GI_MATERIALS) != 0u;
     n = mats ? hitNormal(h, d) : -d;
-    if (onScreen(hp, c)) { return c; }
+    if (onScreen(hp, c)) { return rawCapBounceRadiance(c); }
     if (!mats) { return 0.25f * float3(ambient[0].w, ambient[1].w, ambient[2].w); }
     return shadeHit(hp, n, hitAlbedo(h), r, traceSun);
 }

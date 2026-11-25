@@ -1,10 +1,10 @@
-// Rawlss5Pass.hlsl: RAWLSS 5.5 Ultra — Native SM 6.6+ FP16 World-Space 3D-Guided Photogrammetry & Temporal Super-Resolution.
-// Engineered to outperform generative neural post-passes (zero temporal boiling, zero face/text hallucination, < 0.7 ms on any DX12 GPU):
-//   1) 5-Tap Jimenez/Karis Catmull-Rom Bicubic History Resampling (preserves sub-pixel sharpness across motion vs bilinear blur)
-//   2) 3x3 Depth-Dilated Closest-Velocity Anti-Ghosting (kills silhouette trailing on moving NPCs, weapons & foliage)
-//   3) World-Space Anchored Tri-Planar Micro-Photogrammetry Relief (exact pW + camPosW.xyz lock -> 0% screen-space swimming!)
-//   4) Dual-Scale 3D Weingarten Curvature Cavity & Bevel Solver (1px micro-crevices + 3px architectural bevel catchlights)
-//   5) Per-Class Artistic Intent & Ellipsoidal YCoCg Variance Clipping (untouched crisp NPC eyes/portraits, silky foliage & RT)
+// Rawlss5Pass.hlsl: RAWLSS 6.0 Ultra — Native SM 6.6+ Perceptual HDR Temporal Super-Resolution & Ray-Reconstruction Kernel.
+// Upgrades over RAWLSS 5.5:
+//   1) Karis-Tonemapped Perceptual YCoCg Space for 5-Tap Jimenez Catmull-Rom & 3x3 Moments (zero HDR highlight ringing/glow!)
+//   2) Ray-to-Mean YCoCg AABB Intersection Clipping (clipAABB) instead of naive box clamp (preserves exact chroma in motion)
+//   3) Material-Aware Reactive Mask + Highlight-Ceiling Guard (zero synthetic noise or sharpen overshoot on glaciers/ice/highlights!)
+//   4) 3x3 Depth-Dilated Closest-Velocity Anti-Ghosting + Isolated Specular Firefly Ray-Reconstruction Filter
+//   5) Dual-Scale 3D Weingarten Curvature + Bounded FP16 Residual Material-Light Harmonizer (6 -> 8 -> 3)
 // Original work, MIT.
 #include "LightingCommon.hlsli"
 
@@ -16,6 +16,18 @@ Texture2D<float4> Layer    : register(t4);
 Texture2D<float4> HistPrev : register(t5);
 SamplerState      Lin      : register(s0);
 
+static const float3 kLumaW = float3(0.2126f, 0.7152f, 0.0722f);
+
+float3 tonemapKaris(float3 c) {
+    const float l = max(dot(max(c, 0.0f.xxx), kLumaW), 0.0f);
+    return max(c, 0.0f.xxx) * rcp(1.0f + l);
+}
+
+float3 invTonemapKaris(float3 c) {
+    const float l = clamp(dot(max(c, 0.0f.xxx), kLumaW), 0.0f, 0.992f);
+    return max(c, 0.0f.xxx) * rcp(max(1.0f - l, 0.008f));
+}
+
 float3 rgbToYCoCg(float3 c) {
     return float3(0.25f * c.r + 0.5f * c.g + 0.25f * c.b,
                   0.5f * c.r - 0.5f * c.b,
@@ -26,8 +38,24 @@ float3 yCoCgToRgb(float3 y) {
     return float3(y.x + y.y - y.z, y.x + y.z, y.x - y.y - y.z);
 }
 
-// Fast 5-tap Jimenez/Karis Catmull-Rom bicubic filter (drops 4 corner taps for ~2x speed, zero ringing, razor-sharp motion):
-float3 sampleCatmullRom5(Texture2D<float4> tex, float2 uv) {
+// Ray-to-mean YCoCg AABB clipping (Playdead / Karis SIGGRAPH 2014): projects out-of-box history along ray toward mean
+// instead of snapping to box corners (eliminates chroma shifting and specular edge shimmer).
+float3 clipAABB(float3 aabbMin, float3 aabbMax, float3 mean, float3 history) {
+    const float3 pClip = 0.5f * (aabbMax + aabbMin);
+    const float3 eClip = max(0.5f * (aabbMax - aabbMin), 1.0e-5f.xxx);
+    const float3 vClip = history - pClip;
+    const float3 vUnit = vClip / eClip;
+    const float3 aUnit = abs(vUnit);
+    const float maUnit = max(aUnit.x, max(aUnit.y, aUnit.z));
+    if (maUnit > 1.0f) {
+        return pClip + vClip / maUnit;
+    }
+    return history;
+}
+
+// Perceptual Karis-tonemapped 5-tap Jimenez Catmull-Rom bicubic history fetch:
+// Resamples in compressed perceptual space so negative Catmull-Rom lobes NEVER ring around HDR highlights or glaciers.
+float3 sampleCatmullRom5Perceptual(Texture2D<float4> tex, float2 uv) {
     const float2 texSize = dims.xy;
     const float2 invSize = dims.zw;
     const float2 pos = uv * texSize;
@@ -46,17 +74,21 @@ float3 sampleCatmullRom5(Texture2D<float4> tex, float2 uv) {
     const float2 tc3 = (tc1 + 2.0f) * invSize;
     const float2 tc12 = (tc1 + w2 / max(w12, 1.0e-4f)) * invSize;
 
-    float3 sum = 0.0f.xxx;
-    sum += max(tex.SampleLevel(Lin, float2(tc12.x, tc0.y),  0.0f).rgb, 0.0f.xxx) * (w12.x * w0.y);
-    sum += max(tex.SampleLevel(Lin, float2(tc0.x,  tc12.y), 0.0f).rgb, 0.0f.xxx) * (w0.x  * w12.y);
-    sum += max(tex.SampleLevel(Lin, float2(tc12.x, tc12.y), 0.0f).rgb, 0.0f.xxx) * (w12.x * w12.y);
-    sum += max(tex.SampleLevel(Lin, float2(tc3.x,  tc12.y), 0.0f).rgb, 0.0f.xxx) * (w3.x  * w12.y);
-    sum += max(tex.SampleLevel(Lin, float2(tc12.x, tc3.y),  0.0f).rgb, 0.0f.xxx) * (w12.x * w3.y);
+    const float3 c0 = tonemapKaris(tex.SampleLevel(Lin, float2(tc12.x, tc0.y),  0.0f).rgb);
+    const float3 c1 = tonemapKaris(tex.SampleLevel(Lin, float2(tc0.x,  tc12.y), 0.0f).rgb);
+    const float3 c2 = tonemapKaris(tex.SampleLevel(Lin, float2(tc12.x, tc12.y), 0.0f).rgb);
+    const float3 c3 = tonemapKaris(tex.SampleLevel(Lin, float2(tc3.x,  tc12.y), 0.0f).rgb);
+    const float3 c4 = tonemapKaris(tex.SampleLevel(Lin, float2(tc12.x, tc3.y),  0.0f).rgb);
+
+    float3 sum = c0 * (w12.x * w0.y) + c1 * (w0.x * w12.y) + c2 * (w12.x * w12.y) + c3 * (w3.x * w12.y) + c4 * (w12.x * w3.y);
     const float wTot = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
-    return max(sum / max(wTot, 1.0e-4f), 0.0f.xxx);
+    // Clamp Catmull-Rom negative overshoot strictly inside the 5-tap convex hull in perceptual space:
+    const float3 hullMin = min(c2, min(min(c0, c1), min(c3, c4)));
+    const float3 hullMax = max(c2, max(max(c0, c1), max(c3, c4)));
+    return clamp(sum / max(wTot, 1.0e-4f), hullMin, hullMax);
 }
 
-// World-space anchored tri-planar micro-photogrammetry hash (100% locked to world coordinates -> ZERO swimming!):
+// World-space anchored tri-planar micro-photogrammetry hash (strictly locked to world coordinates).
 float hash31(float3 p) {
     p = frac(p * 0.1031f);
     p += dot(p, p.yzx + 33.33f);
@@ -75,9 +107,9 @@ float vNoise3(float3 p) {
                 lerp(lerp(n001, n101, u.x), lerp(n011, n111, u.x), u.y), u.z);
 }
 
-// Compact deterministic FP16 2-layer 3D-guided neural material-light harmonizer (6 -> 8 -> 3):
+// Compact deterministic FP16 2-layer 3D-guided residual material-light harmonizer (6 -> 8 -> 3):
 // Inputs: (normalCurvature, signedDivergence, localLumContrast, grazingFresnel, midtoneKey, surfaceUpZ)
-// Outputs: (microReliefGain, bevelSheenGain, indirectBounceWarmth) — strictly bounded & hue-preserving!
+// Outputs: (microReliefGain, bevelSheenGain, indirectBounceWarmth) — strictly highlight-guarded!
 float3 rawlss5Mlp(float4 f0, float2 f1) {
     const float16_t4 x0 = float16_t4(f0);
     const float16_t2 x1 = float16_t2(f1);
@@ -112,17 +144,21 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float3 nC = worldNormal(Normal.Load(ip));
     const float3 pW = worldAt(float2(p), d);
     const float3 vDir = normalize(eyeAt() - pW);
-    const uint base = uint(Layer.Load(ip).z * 255.0f + 0.5f) & 127u;
-    const bool isEye     = (base == 12u);
-    const bool isSkin    = (base == 10u);
-    const bool isHair    = (base == 11u);
-    const bool isFace    = (isSkin || isEye);
-    const bool isMetal   = (base == 2u);
-    const bool isFoliage = (base == 5u);
-    const bool isWater   = (base == 9u);
+    const float4 specTap = Layer.Load(ip);
+    const uint base = uint(specTap.z * 255.0f + 0.5f) & 127u;
+    const bool isEye      = (base == 12u);
+    const bool isSkin     = (base == 10u);
+    const bool isHair     = (base == 11u);
+    const bool isFace     = (isSkin || isEye);
+    const bool isMetal    = (base == 2u);
+    const bool isEmissive = (base == 3u);
+    const bool isFoliage  = (base == 5u);
+    const bool isLod      = (base == 7u);
+    const bool isWater    = (base == 9u);
 
-    // 3x3 Karis-weighted YCoCg neighborhood moments + depth-dilated closest-velocity selection (zero silhouette trails!):
+    // 3x3 Perceptual Karis-Tonemapped YCoCg neighborhood moments + depth-dilated closest-velocity selection:
     float3 m1 = 0.0f.xxx, m2 = 0.0f.xxx;
+    float3 nMinY = 1.0e6f.xxx, nMaxY = -1.0e6f.xxx;
     float3 rgbBlur = 0.0f.xxx;
     float wSum = 0.0f;
     float maxDz = 0.0f;
@@ -136,11 +172,14 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             const float zq = dq < 1.0f ? viewZOf(dq) : 1.0e6f;
             maxDz = max(maxDz, abs(zq - z));
             const float3 cq = max(CurHdr.Load(int3(q, 0)).rgb, 0.0f.xxx);
-            const float lumQ = dot(cq, float3(0.2126f, 0.7152f, 0.0722f));
-            const float kw = 1.0f / (1.0f + lumQ * 0.35f);
-            const float3 yq = rgbToYCoCg(cq);
+            const float3 cqTm = tonemapKaris(cq);
+            const float3 yq = rgbToYCoCg(cqTm);
+            const float lumQ = dot(cq, kLumaW);
+            const float kw = (dx == 0 && dy == 0) ? 1.5f : (1.0f / (1.0f + lumQ * 0.45f));
             m1 += yq * kw;
             m2 += (yq * yq) * kw;
+            nMinY = min(nMinY, yq);
+            nMaxY = max(nMaxY, yq);
             rgbBlur += cq * kw;
             wSum += kw;
         }
@@ -168,67 +207,89 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     const float edgeGate = 1.0f - smoothstep(max(z * 0.028f, 3.5f), max(z * 0.11f, 16.0f), maxDz);
     const float divTotal = divFine * 0.68f + divBroad * 0.32f * edgeGate;
 
-    // Evaluate 3D-Guided FP16 Neural Material-Light Harmonizer (6 -> 8 -> 3) + Specular Firefly Guard:
+    // Ray-Reconstruction Isolated 1-Pixel Specular Firefly Guard (preserves eyes & intentional emissives):
     float3 curRgb = max(curRaw.rgb, 0.0f.xxx);
-    const float curLumRaw = dot(curRgb, float3(0.2126f, 0.7152f, 0.0722f));
-    const float blurLum = dot(rgbBlur, float3(0.2126f, 0.7152f, 0.0722f));
-    // Ray-Reconstruction style isolated 1-pixel specular firefly clamp (keeps crisp highlights while killing single-pixel RT spikes):
-    if (curLumRaw > blurLum * 3.8f + 0.65f && !isEye) {
-        curRgb *= (blurLum * 3.8f + 0.65f) / max(curLumRaw, 1.0e-4f);
+    const float curLumRaw = dot(curRgb, kLumaW);
+    const float blurLum = dot(rgbBlur, kLumaW);
+    const float fireflyCap = blurLum * 3.1f + 0.55f;
+    if (curLumRaw > fireflyCap && !isEye && !isEmissive) {
+        curRgb *= fireflyCap / max(curLumRaw, 1.0e-4f);
     }
-    const float curLum = dot(curRgb, float3(0.2126f, 0.7152f, 0.0722f));
+    const float curLum = dot(curRgb, kLumaW);
+
+    // Highlight-ceiling & glacier/ice protection:
+    // Prevents RAWLSS from injecting micro-grain or sharpening bright snow/glaciers/highlights into bloom territory!
+    const float hlGuard = 1.0f - smoothstep(0.75f, 1.75f, curLum);
+    const float isIceLike = ((base == 1u || base == 4u) && curRgb.b > curRgb.r * 1.06f && curLum > 0.22f)
+        ? saturate((curRgb.b - curRgb.r * 1.06f) * 5.0f) : 0.0f;
+
     const float localContrast = saturate(abs(curLum - blurLum) / max(blurLum + 0.05f, 0.05f));
     const float nv = saturate(dot(nC, vDir));
     const float fresnel = pow(1.0f - nv, 3.0f);
-    const float midKey = saturate(curLum * (1.0f / (1.0f + curLum)));
+    const float midKey = saturate(curLum * rcp(1.0f + curLum));
     const float3 mlpOut = rawlss5Mlp(float4(curv, divTotal * 0.5f, localContrast, fresnel), float2(midKey, nC.z * 0.5f + 0.5f));
 
-    // Per-class artistic intent: eyes completely untouched; skin preserves clean pores; stone/wood/metal/foliage get full 3D photogrammetry!
-    const float classGain = isEye ? 0.0f : (isSkin ? 0.18f : (isWater ? 0.25f : (isHair ? 0.45f : (isFoliage ? 0.58f : 1.0f))));
-    const float distFade = smoothstep(5800.0f, 260.0f, z);
+    // Per-class artistic intent: eyes/emissives untouched; glaciers/ice silk-smooth; stone/wood/metal get clean 3D micro-relief!
+    const float rawClassGain = isEye || isEmissive ? 0.0f
+        : (isSkin ? 0.16f : (isWater ? 0.18f : (isLod ? 0.25f : (isHair ? 0.42f : (isFoliage ? 0.48f : 1.0f)))));
+    const float classGain = rawClassGain * (1.0f - isIceLike * 0.85f);
+    const float distFade = smoothstep(5200.0f, 260.0f, z);
 
-    // World-space locked micro-photogrammetry grain (exact pW + camPosW.xyz -> 0% camera swimming, mip-faded by distance!):
+    // World-space locked micro-photogrammetry grain: strictly DISABLED on glaciers/ice, faces, water, emissives, and highlights!
     float worldMicro = 0.0f;
-    if (!isFace && !isWater && z < 1600.0f) {
+    if (!isFace && !isWater && !isEmissive && !isLod && isIceLike < 0.12f && hlGuard > 0.08f && z < 1400.0f) {
         const float3 pAbs = pW + camPosW.xyz;
-        const float microFade = smoothstep(1600.0f, 120.0f, z) * edgeGate;
-        const float freq = isMetal ? 1.85f : (isFoliage ? 1.45f : 0.72f);
+        const float microFade = smoothstep(1400.0f, 120.0f, z) * edgeGate * hlGuard * (1.0f - isIceLike);
+        const float freq = isMetal ? 1.85f : (isFoliage ? 1.35f : 0.72f);
         const float g1 = vNoise3(pAbs * freq) - 0.5f;
         const float g2 = vNoise3(pAbs * (freq * 2.7f) + 17.3f) - 0.5f;
-        worldMicro = (g1 * 0.65f + g2 * 0.35f) * (isMetal ? 0.075f : (isFoliage ? 0.085f : 0.115f)) * microFade;
+        worldMicro = (g1 * 0.65f + g2 * 0.35f) * (isMetal ? 0.055f : (isFoliage ? 0.055f : 0.085f)) * microFade;
     }
 
-    // Dual-scale concave cavity deepening (multi-bounce tinted!) + convex bevel catchlights + neural micro-bounce harmony:
+    // Highlight-guarded dual-scale cavity deepening + bevel catchlights + micro-detail & bounce harmony:
     const float cavNeg = min(divTotal, 0.0f);
     const float bevPos = max(divTotal, 0.0f);
-    const float cavityScale = 1.0f + clamp(cavNeg * 0.22f, -0.24f, 0.0f) * classGain * edgeGate * distFade;
-    const float bevelLift = clamp(bevPos * 0.18f, 0.0f, 0.22f) * (0.45f + 0.55f * fresnel) * classGain * edgeGate * distFade;
-    const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.46f * classGain * edgeGate * distFade);
-    const float3 sheenAdd = curRgb * ((max(mlpOut.y, 0.0f) * fresnel * (isMetal ? 0.16f : (isSkin ? 0.03f : 0.095f)) + bevelLift) * distFade);
-    const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.065f * classGain * distFade);
+    const float cavityScale = 1.0f + clamp(cavNeg * 0.20f, -0.22f, 0.0f) * classGain * edgeGate * distFade;
+    const float bevelLift = clamp(bevPos * 0.14f, 0.0f, 0.16f) * (0.45f + 0.55f * fresnel) * classGain * edgeGate * distFade * hlGuard;
+    const float3 detailDelta = (curRgb - rgbBlur) * (saturate(mlpOut.x * 0.5f + 0.5f) * 0.34f * classGain * edgeGate * distFade * hlGuard);
+    const float3 sheenAdd = curRgb * ((max(mlpOut.y, 0.0f) * fresnel * (isMetal ? 0.12f : (isSkin ? 0.02f : 0.065f)) + bevelLift) * distFade * hlGuard);
+    const float3 bounceHarm = rgbBlur * (max(mlpOut.z, 0.0f) * (1.0f - midKey) * 0.055f * classGain * distFade * hlGuard);
+    // For frosted outdoor glaciers/ice, apply gentle bilateral anti-aliasing blend toward 3x3 Karis neighborhood to erase subpixel stairsteps:
     float3 recon = max(curRgb * (cavityScale + worldMicro) + detailDelta + sheenAdd + bounceHarm, 0.0f.xxx);
+    if (isIceLike > 0.15f) {
+        recon = lerp(recon, rgbBlur, isIceLike * edgeGate * 0.28f);
+    }
 
-    // 5-Tap Catmull-Rom Bicubic + Depth-Dilated Closest-Velocity + Reactive Disocclusion YCoCg Temporal Super-Resolution:
+    // Perceptual Karis-Tonemapped 5-Tap Catmull-Rom + Ray-to-Mean clipAABB Temporal Super-Resolution:
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     const float2 mv = Motion.Load(int3(bestVelPx, 0));
     const float2 puv = uv + mv;
     if (all(puv > 0.004f) && all(puv < 0.996f)) {
-        const float3 prevRgb = sampleCatmullRom5(HistPrev, puv);
-        const float3 prevY = rgbToYCoCg(prevRgb);
+        const float3 prevTm = sampleCatmullRom5Perceptual(HistPrev, puv);
+        const float3 prevY = rgbToYCoCg(prevTm);
+        const float3 curTm = tonemapKaris(recon);
+        const float3 curY = rgbToYCoCg(curTm);
+
         const float speedPx = length(mv * dims.xy);
-        const float lumDelta = abs(dot(prevRgb, float3(0.2126f, 0.7152f, 0.0722f)) - curLum) / max(curLum + 0.12f, 0.12f);
-        const float disocc = saturate((lumDelta - 0.45f) * 1.6f) * (1.0f - edgeGate * 0.5f);
-        // Tighter variance box during fast motion/disocclusion (zero ghosting), wider when still (sub-pixel convergence!):
-        const float boxScale = lerp(1.35f, 0.78f, saturate(speedPx * 0.14f + disocc));
-        const float3 clampedY = clamp(prevY, m1 - stdDev * boxScale, m1 + stdDev * boxScale);
-        const float3 clampedRgb = max(yCoCgToRgb(clampedY), 0.0f.xxx);
-        const float baseAlpha = isFace ? lerp(0.45f, 0.85f, saturate(speedPx * 0.14f))
-                                       : (isWater ? lerp(0.32f, 0.72f, saturate(speedPx * 0.12f))
-                                                  : lerp(0.16f, 0.58f, saturate(speedPx * 0.12f)));
-        // Eliminate 3rd-person player/NPC silhouette double-edge ghosting (21.01.54.98.png) on depth discontinuities:
-        const float silReset = (1.0f - edgeGate) * 0.88f;
-        const float alpha = saturate(max(max(baseAlpha, disocc * 0.88f), silReset));
-        recon = lerp(clampedRgb, recon, alpha);
+        const float lumDelta = abs(prevY.x - curY.x) / max(curY.x + 0.08f, 0.08f);
+        const float disocc = saturate((lumDelta - 0.38f) * 1.8f) * (1.0f - edgeGate * 0.45f);
+        // Material-aware reactive mask (high responsiveness on water, emissives, disoccluded edges & fast specular glints):
+        const float reactive = saturate(max(isWater ? 0.52f : (isEmissive ? 0.65f : 0.0f),
+                                            disocc * 0.85f + (1.0f - edgeGate) * 0.82f));
+        // Tighter perceptual variance AABB during motion/disocclusion, wider when still for sub-pixel convergence:
+        const float boxScale = lerp(1.30f, 0.72f, saturate(speedPx * 0.15f + reactive * 0.75f));
+        const float3 boxMin = max(nMinY, m1 - stdDev * boxScale);
+        const float3 boxMax = min(nMaxY, m1 + stdDev * boxScale);
+        const float3 clippedY = clipAABB(boxMin, boxMax, m1, prevY);
+
+        // Adaptive accumulation weight: silky convergence on glaciers/foliage/stone when still, instant reset on silhouettes:
+        const float baseAlpha = isFace ? lerp(0.42f, 0.85f, saturate(speedPx * 0.14f))
+                                       : (isWater ? lerp(0.32f, 0.75f, saturate(speedPx * 0.12f))
+                                                  : (isIceLike > 0.25f ? lerp(0.11f, 0.52f, saturate(speedPx * 0.12f))
+                                                                       : lerp(0.14f, 0.56f, saturate(speedPx * 0.12f))));
+        const float alpha = saturate(max(baseAlpha, reactive));
+        const float3 blendedY = lerp(clippedY, curY, alpha);
+        recon = invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx));
     }
     return float4(recon, curRaw.a);
 }

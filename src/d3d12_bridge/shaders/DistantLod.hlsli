@@ -49,9 +49,12 @@ float3 distantLit(int3 ip, float2 at, float d) {
     const float3 toCam = normalize(eyeAt() - p);
     const float3 canopy = normalize(right * (0.85f * u) + float3(0.0f, 0.0f, 0.3f + 0.4f * v) + toCam * sqrt(max(1.0f - u * u, 0.15f)));
     // Only on a card: something narrow across the screen (a pixel with LOD on both sides within 24 pixels). Terrain LOD
-    // fills its region, l and r both reach 24 and the canopy normal turned the mountains toward the camera: their faces
-    // read flat beside the game's (far mountains' luma spread 11.3 against 12.7, rt7-far-7).
-    const float cw = 0.7f * saturate((46.0f - float(l + r)) / 12.0f);
+    // fills its region, l and r both reach 24 and the canopy normal turned the mountains toward the camera.
+    // Overlap-resilient forest fallback: when dense pine billboards overlap (l+r >= 44), detect green evergreen foliage
+    // chroma on non-horizontal cards so distant conifer walls keep 3D bough sculpting instead of flattening!
+    const float cardNarrow = saturate((46.0f - float(l + r)) / 12.0f);
+    const float greenForest = saturate((albedo.g - max(albedo.r, albedo.b) * 0.88f) * 5.0f) * smoothstep(0.92f, 0.55f, abs(rawNz));
+    const float cw = max(0.72f * cardNarrow, 0.42f * greenForest * smoothstep(26000.0f, 4500.0f, viewZOf(d)));
     // Reconstruct 3D conical bough relief on flat 2D distant tree LOD billboard cards using world-space noise.
     float3 n = normalize(lerp(worldNormal(Normal.Load(ip)), canopy, cw));
     if (cw > 0.05f) {
@@ -60,7 +63,9 @@ float3 distantLit(int3 ip, float2 at, float d) {
         const float swayT = sin(dot(wpTree.xy, wTree) * 0.0045f - camPosW.w * 1.65f) * 0.18f;
         const float bough = cNoise(wpTree * 0.018f + float3(wTree * swayT, wpTree.z * 0.025f)) * 2.0f - 1.0f;
         const float bough2 = cNoise(wpTree * 0.052f + 7.3f) * 2.0f - 1.0f;
-        n = normalize(n + (right * (bough * 0.34f) + float3(0.0f, 0.0f, bough2 * 0.28f)) * cw);
+        n = normalize(n + (right * (bough * 0.36f) + float3(0.0f, 0.0f, bough2 * 0.30f)) * cw);
+        // Tame chalky snow-pine billboards to match Lighting.hlsl near-field canopy ceiling:
+        albedo = min(albedo, float3(0.58f, 0.62f, 0.60f));
     } else if (viewZOf(d) > 3800.0f) {
         // Seamless Near-to-Far Terrain Continuity: tri-planar geological rock-strata + alpine scree contrast on distant mountain LODs!
         const float3 wpM = p + camPosW.xyz;

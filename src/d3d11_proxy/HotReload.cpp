@@ -34,8 +34,9 @@ struct Compiled {
     raw::bridge::CompileResult vs, fs, fog, rt, sky, water, sss;
     raw::bridge::CompileResult clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     raw::bridge::CompileResult dofFocus, dofCoc, dofGather, dofPost, dofComp;
+    raw::bridge::CompileResult froxelInject, froxelInt;
     bool hasLight = false, hasFog = false, hasRt = false, hasSky = false, hasWater = false, hasSss = false;
-    bool hasClouds = false, hasVol = false, hasBloom = false, hasReflFilt = false, hasRawlss5 = false, hasDof = false;
+    bool hasClouds = false, hasVol = false, hasBloom = false, hasReflFilt = false, hasRawlss5 = false, hasDof = false, hasFroxel = false;
     Clock::time_point seen;
 };
 
@@ -135,6 +136,11 @@ void Start(State& s, std::unordered_set<std::wstring> changed, bool allShaders)
             c.dofPost   = comp(dir + L"\\DofPass.hlsl", L"dof_post",   L"ps_6_6");
             c.dofComp   = comp(dir + L"\\DofPass.hlsl", L"dof_comp",   L"ps_6_6");
         }
+        c.hasFroxel = want(L"FroxelPass.hlsl");
+        if (c.hasFroxel) {
+            c.froxelInject = raw::bridge::CompileHlsl(dir + L"\\FroxelPass.hlsl", L"froxel_inject",    L"ps_6_6", dxc);
+            c.froxelInt    = raw::bridge::CompileHlsl(dir + L"\\FroxelPass.hlsl", L"froxel_integrate", L"ps_6_6", dxc, L"FROXEL_INT=1");
+        }
         return c;
     });
 }
@@ -157,6 +163,7 @@ void Finish(State& s)
     checkRes(c.reflFilter, c.hasReflFilt); checkRes(c.rawlss5, c.hasRawlss5);
     checkRes(c.dofFocus, c.hasDof); checkRes(c.dofCoc, c.hasDof);
     checkRes(c.dofGather, c.hasDof); checkRes(c.dofPost, c.hasDof); checkRes(c.dofComp, c.hasDof);
+    checkRes(c.froxelInject, c.hasFroxel); checkRes(c.froxelInt, c.hasFroxel);
     bool ok = err.empty();
     if (ok) {
         raw::bridge::ExtraShaders ex;
@@ -166,8 +173,9 @@ void Finish(State& s)
         if (c.hasReflFilt) ex.reflFilter = c.reflFilter.dxil;
         if (c.hasRawlss5)  ex.rawlss5 = c.rawlss5.dxil;
         if (c.hasDof)      { ex.dofFocus = c.dofFocus.dxil; ex.dofCoc = c.dofCoc.dxil; ex.dofGather = c.dofGather.dxil; ex.dofPost = c.dofPost.dxil; ex.dofComp = c.dofComp.dxil; }
+        if (c.hasFroxel)   { ex.froxelInject = c.froxelInject.dxil; ex.froxelInt = c.froxelInt.dxil; }
         raw::bridge::D3D12Bridge* b = hook::Bridge();
-        const bool anyRaster = c.hasLight || c.hasFog || c.hasClouds || c.hasVol || c.hasBloom || c.hasReflFilt || c.hasRawlss5 || c.hasDof;
+        const bool anyRaster = c.hasLight || c.hasFog || c.hasClouds || c.hasVol || c.hasBloom || c.hasReflFilt || c.hasRawlss5 || c.hasDof || c.hasFroxel;
         if (anyRaster) {
             ok = b && b->Ready() && raw::bridge::LightingPassReload(b->ActivePass(), c.vs.dxil, c.fs.dxil, c.fog.dxil, err, &ex);
             if (!ok && err.empty()) err = "the bridge is not running the lighting pass";

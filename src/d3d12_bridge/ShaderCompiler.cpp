@@ -34,7 +34,8 @@ DxcCreateInstanceProc Load(const std::wstring& given)
 }
 } // namespace
 
-CompileResult CompileHlsl(const std::wstring& path, const wchar_t* entry, const wchar_t* target, const std::wstring& dxcDll)
+CompileResult CompileHlsl(const std::wstring& path, const wchar_t* entry, const wchar_t* target,
+                          const std::wstring& dxcDll, const wchar_t* define)
 {
     CompileResult r;
     const auto t0 = std::chrono::steady_clock::now();
@@ -52,11 +53,12 @@ CompileResult CompileHlsl(const std::wstring& path, const wchar_t* entry, const 
     utils->CreateDefaultIncludeHandler(&inc);
     const std::wstring dir = path.substr(0, path.find_last_of(L"\\/"));
     // The build's flags (CMakeLists.txt RAW_DXC_FLAGS): HLSL 2021, IEEE strictness, O3, native FP16, no debug/reflect.
-    const wchar_t* args[] = {path.c_str(), L"-E", entry, L"-T", target, L"-HV", L"2021", L"-Gis", L"-O3",
-                             L"-enable-16bit-types", L"-Qstrip_debug", L"-Qstrip_reflect", L"-I", dir.c_str()};
+    std::vector<const wchar_t*> args = {path.c_str(), L"-E", entry, L"-T", target, L"-HV", L"2021", L"-Gis", L"-O3",
+                                        L"-enable-16bit-types", L"-Qstrip_debug", L"-Qstrip_reflect", L"-I", dir.c_str()};
+    if (define && *define) { args.push_back(L"-D"); args.push_back(define); }
     DxcBuffer buf{src->GetBufferPointer(), src->GetBufferSize(), DXC_CP_ACP};
     ComPtr<IDxcResult> res;
-    if (FAILED(compiler->Compile(&buf, args, UINT32(sizeof args / sizeof args[0]), inc.Get(), IID_PPV_ARGS(&res)))) {
+    if (FAILED(compiler->Compile(&buf, args.data(), UINT32(args.size()), inc.Get(), IID_PPV_ARGS(&res)))) {
         r.errors = "Compile call failed";
         return r;
     }

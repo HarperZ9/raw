@@ -1,9 +1,9 @@
-// FroxelPass.hlsl: True 160x90x64 3D Froxel Volumetric Participating Media Pipeline (SM 6.9).
+// FroxelPass.hlsl: True 160x90x64 3D Froxel Volumetric Participating Media Pipeline (SM 6.6+).
 // Implements Wronski (SIGGRAPH 2014) / Hillaire (SIGGRAPH 2015) 3D Frustum-Aligned Voxel (Froxel) Grid
-// packed into a 1280x720 RGBA16F 8x8 slice atlas (64 exponential-Z depth slices from 24u to 14,000u):
-//   froxel_inject    : evaluates 3D heterogeneous world-space alpine mist, valley/river ground fog,
-//                      cascade + cloud shadowed Hillaire sunlight, and all 128 clustered local lights
-//                      (hearths, torches, braziers, 3D window portal lights) into each (x, y, z) froxel.
+// packed into a 1280x720 RGBA16F 8x8 slice atlas (64 exponential-Z depth slices from kFroxNear=24u to kFroxFar=42,000u):
+//   froxel_inject    : evaluates true 3D heterogeneous world-space alpine mist, valley/river ground fog banks,
+//                      cascade + 3D cloud shadowed Hillaire sunlight, dynamically lit ambient sky multi-scattering,
+//                      and all 128 clustered local lights into each (x, y, z) froxel.
 //   froxel_integrate : front-to-back Beer-Lambert analytical scattering & transmittance integration along z = 0..63.
 // Original work, MIT.
 #ifdef FROXEL_INT
@@ -20,17 +20,9 @@ Texture2D<float4> FroxelPrev  : register(t3);
 SamplerState      Lin         : register(s0);
 #endif
 
-static const float kFroxNear = 24.0f;
-static const float kFroxFar  = 14000.0f;
-
-float froxelSliceZ(float s) {
-    return kFroxNear * pow(kFroxFar / kFroxNear, saturate(s / 64.0f));
-}
-
 #ifndef FROXEL_INT
 float4 samplePrevFroxel(float2 uv, float z) {
-    const float zCl = clamp(z, kFroxNear, kFroxFar);
-    const float sF = saturate(log(zCl / kFroxNear) / log(kFroxFar / kFroxNear)) * 63.0f;
+    const float sF = froxelZToSlice(z);
     const uint s0 = min(uint(floor(sF)), 63u);
     const uint s1 = min(s0 + 1u, 63u);
     const float sT = frac(sF);
@@ -90,40 +82,50 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float3 pRel = eye + farDir * rayDist;
     const float3 wp = pRel + camPosW.xyz;
 
-    // 3D heterogeneous world-space participating media density:
-    // true 3-octave wind-advected 3D rolling valley/river ground fog + alpine mountain-collar mist + storm density.
+    // 3D heterogeneous world-space participating media density across 24u..42,000u:
+    // Physically calibrated Beer-Lambert extinction (sigma) so froxel_integrate outputs genuine 3D transmittance
+    // and dynamically lit valley/river fog banks + alpine mountain-collar clouds without foreground washout.
     const bool isInt = (sunColour.w < 0.5f);
-    const float weatherDens = 1.0f + weather.w * 1.55f + weather.z * 1.75f + saturate(clouds.x - 0.30f) * 0.72f;
-    const float3 drift = wp * 0.00042f + float3(cloudWind.xy * camPosW.w * 0.00014f, 0.0f);
-    const float curlWarp = (cNoise(drift * 1.4f + 3.1f) - 0.5f) * 0.45f;
-    const float mist3D = 0.48f + 0.84f * (cNoise(drift + curlWarp) * 0.58f + cNoise(drift * 2.4f + 7.1f) * 0.28f + cNoise(drift * 5.2f - 4.3f) * 0.14f);
-    // Low-lying rolling 3D ground & river-basin fog banks (thickest near water level / dawn / dusk / wet weather):
+    const float weatherDens = 1.0f + weather.w * 1.65f + weather.z * 1.95f + saturate(clouds.x - 0.30f) * 0.85f;
+    const float3 drift = wp * 0.00032f + float3(cloudWind.xy * camPosW.w * 0.00012f, 0.0f);
+    const float curlWarp = (cNoise(drift * 1.35f + 3.1f) - 0.5f) * 0.48f;
+    const float mist3D = 0.42f + 0.92f * (cNoise(drift + curlWarp) * 0.56f + cNoise(drift * 2.4f + 7.1f) * 0.29f + cNoise(drift * 5.0f - 4.3f) * 0.15f);
+    // Low-lying rolling 3D ground & river-basin fog banks (thickest near water level, dawn/dusk, and wet weather):
     const float aElevFog = astroSunElev();
-    const float dawnDuskFog = exp(-pow((aElevFog - 0.04f) / 0.18f, 2.0f));
+    const float dawnDuskFog = exp(-pow((aElevFog - 0.03f) / 0.16f, 2.0f));
     const float basinH = max(wp.z - (waterA.w + 45.0f), 0.0f);
-    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0028f) * (0.45f + 0.55f * cNoise(wp * 0.0014f + float3(cloudWind.xy * camPosW.w * 0.00009f, 0.0f))) * (0.55f + 0.95f * dawnDuskFog + weather.w * 0.85f);
-    const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 4600.0f) / 2800.0f, 2.0f)) * smoothstep(3200.0f, 9500.0f, zMid) * 1.25f;
-    // True world-space altitude falloff (replaces camera-relative pRel.z so 3D froxel fog is 100% world-locked!):
+    const float groundBank = isInt ? 0.0f : exp(-basinH * 0.0024f) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * camPosW.w * 0.00008f, 0.0f))) * (0.48f + 0.85f * dawnDuskFog + weather.w * 0.78f);
+    // True 3D alpine ridge collar clouds hugging mountain flanks (3,800u..7,800u world altitude):
+    const float peakCollar = isInt ? 0.0f : exp(-pow((wp.z - 5000.0f) / 2600.0f, 2.0f)) * smoothstep(3600.0f, 11000.0f, zMid) * (0.55f + 0.65f * cNoise(wp * 0.00022f - float3(cloudWind.xy * camPosW.w * 0.00007f, 0.0f)));
+    // True world-space altitude falloff (100% world-locked, zero camera-height drift!):
     const float worldElevF = max(wp.z - waterA.w, 0.0f);
-    const float valleyFogF = exp(-worldElevF * 0.00046f) * (1.0f + 0.35f * saturate(clouds.x + weather.w));
-    const float heightFalloff = isInt ? 1.0f : (0.28f + 0.78f * valleyFogF + peakCollar * 1.25f + groundBank * 1.15f);
-    float sigma = max(tune.x, 0.00011f) * weatherDens * mist3D * heightFalloff;
+    const float valleyFogF = exp(-worldElevF * 0.00042f) * (1.0f + 0.35f * saturate(clouds.x + weather.w));
+    // Smooth near-camera exterior ramp so foreground (<650u) stays crystal crisp while valleys/mountains gain full 3D depth:
+    const float extNearRamp = isInt ? 1.0f : lerp(smoothstep(220.0f, 1600.0f, rayDist), 1.0f, saturate(weather.w * 0.65f + weather.z * 0.75f));
+    const float heightFalloff = isInt ? 1.0f : (0.24f + 0.66f * valleyFogF + peakCollar * 1.45f + groundBank * 1.25f);
+    const float baseExt = isInt ? clamp(tune.x * 0.35f, 0.000018f, 0.000045f)
+                                : clamp(tune.x * 0.145f, 0.000011f, 0.000024f);
+    float sigma = baseExt * weatherDens * mist3D * heightFalloff * extNearRamp;
 
+    // Radiative-transfer equilibrium in-scattered radiance (units of linear HDR radiance; multiplied by sigma on output
+    // so froxel_integrate computes exact L_scat = integral(T * sigma * inScat * ds) matching physical Beer-Lambert transport!):
     float3 inScat = 0.0f.xxx;
     if (!isInt && sunDir.w > 0.5f && tune2.z > 0.0f) {
         const float4 sc = screenOf(pRel);
         const float cs = (flags.x & FLAG_CLOUDS) != 0u ? cloudShadowN(wp, 1u) : 1.0f;
-        const float sh = cascadeShadow(pRel, sc.z, false) * cs;
+        const float sh = (zMid < 12000.0f ? cascadeShadow(pRel, sc.z, false) : 1.0f) * cs;
         const float3 aSunF = astroSunDir();
         const float aElevF = astroSunElev();
         const float nightW = smoothstep(0.03f, -0.07f, aElevF);
+        const float twilightW = smoothstep(-0.08f, 0.02f, aElevF) * (1.0f - smoothstep(0.08f, 0.26f, aElevF));
         const float3 beamDir = normalize(lerp(aSunF, sunDir.xyz, nightW));
         const float cosT = dot(farDir, beamDir);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        const float ph = min(0.75f * froxelHG(cosT, lerp(0.68f, 0.76f, nightW)) + 0.25f * froxelHG(cosT, -0.20f), 3.2f);
+        // Dual-lobe Henyey-Greenstein Mie phase (crisp forward sun-shaft glow + restrained backscatter):
+        const float ph = min(0.76f * froxelHG(cosT, lerp(0.70f, 0.76f, nightW)) + 0.24f * froxelHG(cosT, -0.22f), 2.8f);
         const float3 hTrans = froxelTransAt(clamp(aElevF, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
-        const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.32f, 0.46f, 0.80f) * 0.85f, nightW);
+        const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.24f, 0.36f, 0.66f) * 0.55f, nightW);
         const float3 hSky = froxelSkyAt(float3(farDir.xy, max(farDir.z, 0.01f)));
         // RDR2-grade suspended 3D golden dust motes & alpine diamond-dust ice crystals catching direct sunlit beams:
         float moteBoost = 1.0f;
@@ -132,15 +134,25 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             const float mCell = cHash(floor(mCoord));
             if (mCell > 0.965f) {
                 const float mCore = exp(-dot(frac(mCoord) - 0.5f, frac(mCoord) - 0.5f) * 28.0f);
-                moteBoost += mCore * (1.0f - zMid / 1800.0f) * (weather.z > 0.15f ? 3.2f : 1.8f);
+                moteBoost += mCore * (1.0f - zMid / 1800.0f) * (weather.z > 0.15f ? 2.8f : 1.6f);
             }
         }
         float3 uSunFr, uSkyZFr, uSkyHFr, uAmbUpFr, uAmbDnFr;
         evalWorldAtmosphere(uSunFr, uSkyZFr, uSkyHFr, uAmbUpFr, uAmbDnFr);
         const float3 syncSunFr = lerp(physSun, uSunFr, 0.65f);
-        const float3 syncSkyFr = lerp(hSky, lerp(uSkyHFr, uSkyZFr, saturate(max(farDir.z, 0.0f) * 2.0f)), 0.58f);
-        inScat += syncSunFr * (sh * ph * tune2.z * lerp(0.55f, 0.95f, nightW) * moteBoost);
-        inScat += syncSkyFr * (0.014f * (0.4f + 0.6f * cs) * (1.0f - nightW * 0.65f));
+        const float overcastFr = saturate(clouds.x * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
+        const float hLumFr = max(dot(hSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
+        const float3 skyDeSat = lerp(hSky, hLumFr.xxx * float3(0.92f, 0.96f, 1.02f), overcastFr * 0.72f);
+        const float3 syncSkyFr = lerp(skyDeSat, lerp(uSkyHFr, uSkyZFr, saturate(max(farDir.z, 0.0f) * 2.2f)), 0.45f) * 0.72f;
+        // Exact night horizon match so night mountain fogs stay deep indigo instead of bright grey-blue:
+        const float3 ambSkyFr = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.025f.xxx);
+        const float3 nightFogCol = lerp(float3(0.026f, 0.042f, 0.074f), ambSkyFr * float3(0.62f, 0.68f, 0.78f), saturate(clouds.x * 0.85f + weather.z * 0.50f) * 0.80f);
+        // Disciplined twilight luminance envelope (prevents bright hazy mountain fogs during sunrise/sunset shifts!):
+        const float todAmbGain = lerp(1.0f, 0.62f, twilightW) * lerp(0.46f, 0.94f, cs);
+        const float3 ambInScat = lerp(syncSkyFr * todAmbGain, nightFogCol, nightW);
+        // Dynamically lit 3D solar in-scattering: sunlit cloud gaps glow warm while shadowed ridges stay deep cool slate!
+        const float sunInGain = tune2.z * lerp(0.36f, 0.16f, twilightW) * (1.0f - nightW * 0.78f) * (1.0f - overcastFr * 0.55f);
+        inScat += ambInScat + syncSunFr * (sh * ph * sunInGain * moteBoost);
         // Pillar 7(b): RDR2-grade Cold-Weather Rhythmic Exhaled Breath Plume in 3D Froxel Space (snow/alpine/freezing nights):
         const float coldAmt = saturate(weather.z * 1.4f + smoothstep(2200.0f, 4500.0f, camPosW.z) * 0.75f + nightW * 0.35f);
         if (coldAmt > 0.25f && zMid > 24.0f && zMid < 105.0f) {
@@ -151,8 +163,8 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 if (bRad < 0.032f) {
                     const float bNoise = cNoise(wp * 0.09f - float3(0.0f, 0.0f, camPosW.w * 1.4f));
                     const float bMask = exp(-bRad * 95.0f) * smoothstep(24.0f, 48.0f, zMid) * (1.0f - smoothstep(68.0f, 105.0f, zMid)) * bNoise * breathPulse * coldAmt;
-                    sigma += bMask * 0.0045f;
-                    inScat += lerp(hSky * 0.45f + 0.14f, physSun * 0.85f + 0.18f, sh) * (bMask * 0.95f);
+                    sigma += bMask * 0.0038f;
+                    inScat += lerp(ambInScat + 0.08f, syncSunFr * 0.65f + 0.12f, sh) * (bMask * 0.85f);
                 }
             }
         }
@@ -174,15 +186,15 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                 const float dL = length(toL);
                 const float rL = lightPosR[li].w;
                 if (dL >= rL) { continue; }
-                // Clear near-camera & flame core (55..220u from eye) so holding a torch on snow/grass never creates a milky fog cloud (vid1_a/b, 14.18.51):
+                // Clear near-camera & flame core (55..220u from eye) so holding a torch never creates a milky fog cloud:
                 const float coreClear = smoothstep(48.0f, 165.0f, dL) * smoothstep(55.0f, 220.0f, rayDist);
                 const float att = pow(saturate(1.0f - dL / rL), 2.2f) * coreClear;
                 const float cosL = dot(farDir, toL / max(dL, 1.0e-3f));
                 const float phL = min(froxelHG(cosL, isInt ? 0.50f : 0.46f) * (isInt ? 1.8f : 1.6f) + 0.20f, 1.5f);
                 const float intSmoke = isInt ? (0.78f + 0.44f * cNoise(wp * 0.0095f - float3(0.0f, 0.0f, camPosW.w * 0.16f))) : 1.0f;
-                // Disciplined interior scatter (0.065 vs old 0.24) kills milky yellow haze in Dragonsreach (16.00.35) & cyan ice cave wash (16.02.00):
-                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.065f : 0.12f)), (isInt ? 0.045f : 0.14f).xxx);
-                // Removed blurry 160x90 froxel fake flame/smoke blob that washed out real hearths & braziers.
+                // Ensure nearby exterior local lights scatter visibly even when extNearRamp keeps daylight air clear:
+                sigma = max(sigma, (isInt ? 0.000024f : 0.000020f) * att * intSmoke);
+                inScat += min(lightColS[li].rgb * (att * phL * tune2.y * intSmoke * (isInt ? 0.16f : 0.28f)), (isInt ? 0.14f : 0.35f).xxx);
             }
         }
     }

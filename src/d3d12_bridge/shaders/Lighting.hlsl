@@ -534,19 +534,29 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float snowLeaf = saturate((s.n.z - 0.25f) * 2.0f);
             albedo = lerp(albedo * float3(0.86f, 0.92f, 1.04f), float3(0.56f, 0.60f, 0.66f), snowLeaf * 0.55f);
         }
-        // Clean, temporally-stable botanical vegetation lighting (zero animated normal-crawl shimmer or plastic tree specular!):
-        if (z < 5200.0f) {
+        // Engine-level 3D Botanical Canopy Volume Transport (base == 5u):
+        // Replaces Skyrim's harsh flat 2011 crossed-card normals with a sculpted 3D spherical + world-space bough-cluster
+        // macro-normal, vertical crown-to-underside depth occlusion, and restrained alpine snow-tip albedo.
+        if (z < 7200.0f) {
             const float3 wpF = p + camPosW.xyz;
-            const float fFade = smoothstep(5200.0f, 260.0f, z);
-            // Subtle static world-space variation only (no time-varying normal crawl!) and natural matte leaf roughness:
+            const float fFade = smoothstep(7200.0f, 240.0f, z);
+            // Multi-scale 3D world-space bough-cluster lobes so crossed pine/leaf cards read as rounded 3D crowns:
+            const float boughX = cNoise(wpF * 0.015f + float3(3.1f, 0.0f, 1.7f)) * 2.0f - 1.0f;
+            const float boughY = cNoise(wpF * 0.015f + float3(0.0f, 5.7f, 2.9f)) * 2.0f - 1.0f;
+            const float boughZ = cNoise(wpF * 0.022f + float3(7.3f, 2.1f, 4.3f)) * 0.45f;
+            const float3 canopyMacroN = normalize(float3(s.n.xy * 0.65f + float2(boughX, boughY) * 0.42f,
+                                                         max(s.n.z, -0.15f) * 0.50f + 0.62f + boughZ));
+            s.n = normalize(lerp(s.n, canopyMacroN, 0.70f * fFade));
             const float leafVar = cNoise(wpF * 0.018f);
-            s.f0 = 0.026f;
-            s.alpha = clamp(lerp(s.alpha, 0.68f, 0.60f * fFade), 0.54f, 0.88f);
+            s.f0 = 0.020f;
+            s.alpha = clamp(lerp(s.alpha, 0.76f, 0.72f * fFade), 0.62f, 0.92f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
             const float3 speciesTint = speciesId < 0.35f
-                ? lerp(float3(0.90f, 0.98f, 0.92f), float3(0.96f, 1.03f, 0.94f), speciesId / 0.35f)
-                : lerp(float3(0.96f, 1.03f, 0.94f), float3(1.04f, 1.00f, 0.88f), (speciesId - 0.35f) / 0.65f);
-            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.94f, 1.06f, leafVar), fFade * 0.45f);
+                ? lerp(float3(0.84f, 0.96f, 0.86f), float3(0.92f, 1.02f, 0.90f), speciesId / 0.35f)
+                : lerp(float3(0.92f, 1.02f, 0.90f), float3(1.02f, 0.97f, 0.84f), (speciesId - 0.35f) / 0.65f);
+            albedo *= lerp(1.0f.xxx, speciesTint * lerp(0.88f, 1.04f, leafVar), fFade * 0.52f);
+            // Tame chalky vanilla snow-dusted pine tips so trees integrate naturally into shadowed alpine forests:
+            albedo = min(albedo, float3(0.56f, 0.60f, 0.58f));
         }
     }
     const float3 nSmooth = s.n;
@@ -827,26 +837,35 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         albedo *= (1.0f - cavity * 0.24f + bevel * 0.07f);
         s.alpha = clamp(s.alpha + cavity * 0.10f - bevel * 0.08f, 0.06f, 0.96f);
     }
-    // Physical Decal Grounding & Glacial Ice/Glacier Internal Subsurface Scattering + Crystal Fractures:
-    if (!match && (base == 1u || base == 4u) && z < 2400.0f) {
-        const float bloodMask = saturate((albedo.r - max(albedo.g, albedo.b) * 1.85f) * 6.0f) * smoothstep(0.06f, 0.22f, albedo.r) * (1.0f - smoothstep(0.38f, 0.55f, albedo.r));
-        if (bloodMask > 0.05f) {
-            s.alpha = lerp(s.alpha, 0.16f, bloodMask * 0.82f);
-            s.f0 = lerp(s.f0, 0.042f, bloodMask * 0.75f);
-            albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
+    // Physical Decal Grounding & Smooth Distance-Filtered Glacial Ice Optical Transport:
+    float iceMask = 0.0f;
+    if (!match && (base == 1u || base == 4u) && z < 12000.0f) {
+        if (z < 2400.0f) {
+            const float bloodMask = saturate((albedo.r - max(albedo.g, albedo.b) * 1.85f) * 6.0f) * smoothstep(0.06f, 0.22f, albedo.r) * (1.0f - smoothstep(0.38f, 0.55f, albedo.r));
+            if (bloodMask > 0.05f) {
+                s.alpha = lerp(s.alpha, 0.16f, bloodMask * 0.82f);
+                s.f0 = lerp(s.f0, 0.042f, bloodMask * 0.75f);
+                albedo *= lerp(1.0f.xxx, float3(0.88f, 0.78f, 0.78f), bloodMask * 0.5f);
+            }
         }
-        // Subtle glacial ice internal crystal veins (skipped on 3D World Map camPosW.z > 18000; avoids neon cyan ice-cave blowout!):
-        const float iceMask = (timeEnv.w < 0.5f && camPosW.z < 18000.0f)
-            ? saturate((albedo.b - albedo.r * 1.12f) * 4.5f) * smoothstep(0.28f, 0.54f, albedo.b) * (1.0f - wet.snow * 0.85f)
+        // Smooth Beer-Lambert glacial ice optical shading (zero high-frequency crack stairsteps, smooth distance fade up to 12,000u,
+        // and explicit damping of noisy half-res RtRefl below so outdoor glaciers never look pixelated or glow!):
+        iceMask = (timeEnv.w < 0.5f && camPosW.z < 18000.0f)
+            ? saturate((albedo.b - albedo.r * 1.10f) * 4.0f) * smoothstep(0.24f, 0.52f, albedo.b) * (1.0f - wet.snow * 0.82f) * saturate(1.0f - z / 12000.0f)
             : 0.0f;
-        if (iceMask > 0.06f) {
-            const float3 wpIce = (p + camPosW.xyz) - s.v * 14.0f;
-            const float crack = abs(cNoise(wpIce * 0.045f) * 2.0f - 1.0f);
-            const float vein = exp(-crack * 14.0f);
-            const float3 glacialTint = float3(0.22f, 0.44f, 0.58f) * (0.25f + 0.45f * vein);
-            albedo = lerp(albedo, lerp(albedo * float3(0.92f, 0.97f, 1.03f), glacialTint, 0.16f), iceMask * 0.38f);
-            s.alpha = lerp(s.alpha, 0.28f, iceMask * 0.48f);
-            s.f0 = lerp(s.f0, 0.032f, iceMask * 0.45f);
+        if (iceMask > 0.04f) {
+            const float iceNear = smoothstep(1100.0f, 120.0f, z);
+            const float3 wpIce = (p + camPosW.xyz) - s.v * (8.0f * iceNear);
+            // Smooth dual-octave low-frequency internal glacial scatter (zero aliased thin crack pixels!):
+            const float depthScatter = cNoise(wpIce * 0.0085f) * 0.65f + cNoise(wpIce * 0.019f + 4.7f) * 0.35f;
+            const float3 beerIce = exp(-float3(0.52f, 0.24f, 0.12f) * (0.65f + 0.55f * depthScatter));
+            const float3 glacialTint = lerp(float3(0.22f, 0.36f, 0.48f), float3(0.36f, 0.52f, 0.64f), depthScatter) * beerIce;
+            albedo = lerp(albedo, lerp(albedo * float3(0.86f, 0.92f, 0.98f), glacialTint, 0.22f + 0.14f * iceNear), iceMask * 0.42f);
+            albedo = min(albedo, float3(0.62f, 0.68f, 0.74f));
+            // Frosted glacier dielectric coat (IOR 1.31 -> F0 ~ 0.018..0.024, smooth frost roughness 0.38..0.52):
+            const float frostSlope = saturate(s.n.z * 0.65f + 0.35f);
+            s.alpha = max(lerp(s.alpha, lerp(0.38f, 0.52f, frostSlope), iceMask * 0.65f), lerp(s.alpha, 0.40f, iceMask));
+            s.f0 = lerp(s.f0, 0.022f, iceMask * 0.55f);
         }
     }
     // Tokuyoshi-Kaplanyan geometric specular anti-aliasing: filters sub-pixel normal variance to kill GGX sparkle in motion.
@@ -1394,9 +1413,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float4 rf = rfW > 0.0f ? (rfSum / rfW) : RtRefl.Load(int3(baseRefl, 0));
-            // Smoothly weight RT reflections by roughness so curved metal bowls/jugs (15.26.44) blend cleanly
-            // with the dynamic cubemap instead of showing blocky 1-spp RT speckles on rough/curved interiors:
-            const float rtReflW = saturate(rf.a) * lerp(0.82f, 0.22f, saturate(envRough * 2.4f));
+            // Smoothly weight RT reflections by roughness AND damp noisy half-res RtRefl on frosted glaciers/ice
+            // so outdoor glaciers reflect the silky prefiltered dynamic cubemap instead of blocky half-res RT pixels:
+            const float rtReflW = saturate(rf.a) * lerp(0.82f, 0.22f, saturate(envRough * 2.4f)) * (1.0f - iceMask * 0.88f);
             const float3 envFinal = lerp(dynEnv * (0.30f + 0.70f * skyVisShaped), rf.rgb, rtReflW);
             lit += evalMultiScatterIBL(F0mat, envRough, nv, envFinal, specOcc) * max(reflMask, metallic);
             if (flags.w == 6u) { return float4(envFinal, game.a); }
@@ -1504,33 +1523,33 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float eyeFr = 0.04f + 0.96f * pow(1.0f - nvEye, 5.0f);
             lit += eyeEnv * eyeFr * 1.25f + eyeKeyCol * (glint1 + glint2);
         } else if (base == 5u && isExterior) {
-            // Single Unified Energy-Conserving Thin-Leaf Foliage Model (zero quadruple-counted chlorophyll glow!):
-            const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 4.0f);
-            const float cloudClear = 1.0f - saturate(clouds.x * 0.85f);
-            const float dayGate = smoothstep(0.02f, 0.12f, astroSunElev());
-            lit += albedo * sunColour.rgb * float3(0.95f, 1.12f, 0.48f) * (back * sunShadow * cloudClear * dayGate * 0.24f);
-            // Rich Nordic evergreen canopy depth (grounds dense pine interiors without chalky wash):
-            lit *= lerp(float3(0.72f, 0.80f, 0.68f), 1.0f.xxx, saturate(skyVis * 0.85f + sunShadow * 0.25f));
+            // Engine-Level 3D Botanical Canopy Volume Transport:
+            // Combines DXR/cloud-gated backlit chlorophyll subsurface scattering, gentle forward-wrap foliage bounce,
+            // and 3D crown-to-underside canopy self-occlusion so vanilla pine/deciduous cards read as lush 3D volumes!
+            const float3 wpCan = p + camPosW.xyz;
+            const float back = pow(saturate(dot(-s.v, sunDir.xyz)), 3.6f);
+            const float wrapL = saturate(dot(s.n, sunDir.xyz) * 0.45f + 0.55f);
+            const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
+            const float dayGate = smoothstep(0.02f, 0.14f, astroSunElev());
+            const float foliageThickness = lerp(0.45f, 1.0f, cNoise(wpCan * 0.024f + 5.1f));
+            // Backlit chlorophyll transmission + thin-leaf warm-emerald side scatter (strictly shadow & day gated):
+            const float3 sssCol = albedo * float3(0.92f, 1.16f, 0.44f);
+            lit += sssCol * sunColour.rgb * ((back * 0.28f + wrapL * 0.06f) * foliageThickness * sunShadow * cloudClear * dayGate);
+            // Vertical crown-to-underside & interior pine self-shadowing (grounds dense canopies with deep Nordic volume):
+            const float crownUp = saturate(s.n.z * 0.55f + 0.52f);
+            const float canopyOcc = saturate(skyVis * 0.72f + sunShadow * 0.20f + crownUp * 0.24f);
+            lit *= lerp(float3(0.56f, 0.66f, 0.54f), 1.0f.xxx, canopyOcc);
         }
         // Grazing micro-Fresnel environmental wrap so vanilla surfaces gain physical material separation.
         const float nvWrap = saturate(dot(s.n, s.v));
-        const float graze = pow(1.0f - nvWrap, 4.5f) * (skin ? 0.14f : base == 5u ? 0.08f : 0.18f);
+        const float graze = pow(1.0f - nvWrap, 4.5f) * (skin ? 0.14f : base == 5u ? 0.06f : 0.18f);
         lit += (amb + bounce * 0.5f) * graze * (0.35f + 0.65f * skyVis);
-        // Exteriors: subtle sun-aligned Mie forward scattering beyond 600u (removed duplicate near-field grey Rayleigh wash;
-        // LightFog.hlsl owns unified Hillaire aerial perspective & height fog so foreground stays razor-crisp!).
-        if (isExterior && z > 600.0f) {
-            const float3 viewDir = normalize(p);
-            const float cosTheta = dot(viewDir, sunDir.xyz);
-            const float g = 0.76f;
-            const float hg = (1.0f - g * g) / (4.0f * 3.14159f * pow(max(1.0f + g * g - 2.0f * g * cosTheta, 0.04f), 1.5f));
-            const float distMie = 1.0f - exp(-max(z - 600.0f, 0.0f) * 0.000024f);
-            const float3 mieCol = sunColour.rgb * min(hg, 1.8f) * (0.15f + 0.85f * sunShadow) * (0.45f + 0.55f * skyVis) * 0.055f;
-            lit += mieCol * saturate(distMie * 0.65f);
-        }
+        // Note: removed redundant 3rd Mie scatter wash in Lighting.hlsl — FroxelPass.hlsl (0..42,000u) + LightFog.hlsl
+        // now own unified engine-level 3D volumetric transmittance and Hillaire aerial perspective with zero double-fogging.
     }
     // Clean Physical HDR Shoulder in native DX12 mode (!match): preserves full 1:1 linear HDR punch up to 1.20
-    // then rolls off smoothly up to ~2.85 so ice caves, snowbanks & close-range torches NEVER blow out into white/yellow neon,
-    // while BloomPass (threshold 1.65) and Tonemap.hlsl (AgX / ACES 2.0) keep crisp dynamic range!
+    // then rolls off smoothly up to ~2.75 so ice caves, snowbanks & bright surfaces stay strictly below BloomPass (2.25),
+    // while true HDR flames/sun/emissives stay crisp through BloomPass and Tonemap.hlsl (AgX / ACES 2.0)!
     const float litPeak = max(lit.r, max(lit.g, lit.b));
     const float3 hdrLit = (litPeak > 1.20f)
         ? lit * ((1.20f + (litPeak - 1.20f) / (1.0f + (litPeak - 1.20f) * 0.62f)) / litPeak)

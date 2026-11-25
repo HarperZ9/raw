@@ -22,9 +22,9 @@ Texture2D<float4> WorldField  : register(t7);
 SamplerState      Lin         : register(s0);
 
 // Hardware-trilinear lookup into our 160x90x64 3D Froxel Volumetric Participating Media Grid (1280x720 8x8 atlas).
+// Uses shared froxelZToSlice() from LightingCommon.hlsli so kFroxNear/kFroxFar never diverge from FroxelPass.hlsl.
 float4 sampleFroxel3D(float2 uv, float z) {
-    const float zCl = clamp(z, 24.0f, 14000.0f);
-    const float sF = saturate(log(zCl / 24.0f) / log(14000.0f / 24.0f)) * 63.0f;
+    const float sF = froxelZToSlice(z);
     const uint s0 = min(uint(floor(sF)), 63u);
     const uint s1 = min(s0 + 1u, 63u);
     const float sT = frac(sF);
@@ -370,53 +370,50 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
     }
     const float3 vol2D = vW > 1.0e-4f ? (vSum / vW) : VolFog.SampleLevel(Lin, uv, 0.0f).rgb;
-    // Live 3D World-Map Depth Isolation + Foreground Contrast Protection:
-    // Keep foreground exterior geometry (<1,400u) crisp and un-washed (matching AAA dappled-forest shadow depth)
-    // while preserving full 3D Froxel mountain/valley mist beyond 1,400u and full local-light mist at night/interiors.
+    // Live 3D World-Map Depth Isolation + True 3D Froxel Transmittance & In-Scatter Composition:
+    // Within 24u..42,000u (kFroxFar), FroxelVol supplies genuine 3D Beer-Lambert transmittance (frox.a) and
+    // dynamically lit 3D in-scattering (frox.rgb); VolFog adds fine crepuscular shafts without double-fogging.
     const float mapScale = (timeEnv.w > 0.5f || camPosW.z > 18000.0f) ? 0.18f : 1.0f;
     const float sunLumFg = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
     const float dayFg = (sunColour.w > 0.5f) ? saturate((sunLumFg - 0.18f) * 3.0f) : 0.0f;
-    const float fgClear = lerp(1.0f, smoothstep(320.0f, 1800.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.65f + weather.z * 0.75f)));
+    const float fgClear = lerp(1.0f, smoothstep(260.0f, 1500.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.65f + weather.z * 0.75f)));
     const float4 frox = sampleFroxel3D(uv, curZ);
-    const float3 scatter = (frox.rgb * 1.10f + vol2D * 0.25f) * (mapScale * fgClear);
+    const float froxT = lerp(1.0f, saturate(frox.a), mapScale);
+    const float3 froxScat = frox.rgb * mapScale;
+    const float3 shaftScatter = vol2D * (0.14f * mapScale * fgClear);
+    const float3 scatter = froxScat + shaftScatter;
     // Engine-native underwater medium (FLAG_UNDERWATER from raw_engine.dll camera_in_water): physical Beer-Lambert absorption.
     if ((flags.x & FLAG_UNDERWATER) != 0u) {
         const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0022f);
         return float4(uw + scatter * float3(0.25f, 0.72f, 0.85f) * 1.4f, lit.a);
     }
-    // Unified sky- and weather-coupled exponential height fog & alpine mountain mist (replaces Skyrim's flat 2011 metric fog).
+    // Engine-level unified 3D froxel (0..42,000u) + Hillaire far-mountain aerial perspective (beyond kFroxFar=42,000u):
     if ((flags.x & FLAG_FOG_REPLACES) != 0u && sunColour.w > 0.5f) {
-        const float weatherDens = 1.0f + weather.w * 2.2f + weather.z * 2.6f + saturate(clouds.x - 0.35f) * 1.1f;
-        const float baseSigma = 0.0000135f * weatherDens;
-        // Smooth C2 elevation weight across w.z = 0 (eliminates the horizontal midpoint fog band at eye horizon).
+        const float weatherDens = 1.0f + weather.w * 2.1f + weather.z * 2.5f + saturate(clouds.x - 0.35f) * 1.05f;
+        const float baseSigma = 0.0000125f * weatherDens;
         const float hStart = max(camPosW.z * 0.00025f, 0.0f);
-        const float elevW = lerp(1.12f, 0.44f, smoothstep(-0.15f, 0.30f, w.z));
-        // 3D rolling alpine mist & high-altitude mountain-collar cloud band (replaces static billboard fog planes).
-        const float3 midPt = camPosW.xyz + eye + w * min(dist * 0.55f, 45000.0f);
+        const float elevW = lerp(1.10f, 0.44f, smoothstep(-0.15f, 0.30f, w.z));
+        // Far-field mountain & horizon continuation strictly BEYOND kFroxFar (zero 2D double-fogging inside the 3D froxel volume!):
+        const float farSpan = min(max(dist - kFroxFar, 0.0f), 220000.0f);
+        const float3 midPt = camPosW.xyz + eye + w * clamp(kFroxFar + farSpan * 0.50f, min(dist * 0.65f, kFroxFar), 120000.0f);
         const float3 windShift = float3(cloudWind.xy * camPosW.w * 0.00006f, 0.0f);
         const float alpineNoise = cNoise(midPt * 0.00014f + windShift) * 0.65f + cNoise(midPt * 0.00042f - windShift * 1.6f + 7.1f) * 0.35f;
-        const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(8000.0f, 28000.0f, dist);
-        const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.45f + 0.55f * alpineNoise));
-        const float od = baseSigma * min(max(dist - 2200.0f, 0.0f), 240000.0f) * elevW * alpineMist * exp(-hStart * 0.15f);
-        // Wavelength-dependent Rayleigh + Mie transmittance + smooth far-horizon aerial melt (eliminates the sharp Sea of Ghosts / Whiterun LOD seam).
-        const float horizonMelt = smoothstep(70000.0f, 145000.0f, dist);
-        float3 T = exp(-od * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
-        // Spectral 1:1 atmospheric gradient locked directly to live skyPalette(sZ, sM, sH) + cloud cover + Mie solar aureole:
-        // eliminates the color discontinuity between mountain haze, horizon sky, sun, and cloud undersides.
+        const float peakCollar = exp(-pow((midPt.z - 5200.0f) / 3600.0f, 2.0f)) * smoothstep(24000.0f, 52000.0f, dist);
+        const float alpineMist = (0.76f + 0.48f * alpineNoise) * (1.0f + peakCollar * (0.42f + 0.50f * alpineNoise));
+        const float odFar = baseSigma * farSpan * elevW * alpineMist * exp(-hStart * 0.15f);
+        const float horizonMelt = smoothstep(75000.0f, 150000.0f, dist);
+        // Wavelength-dependent far aerial transmittance composed multiplicatively with true 3D froxel transmittance froxT:
+        float3 Tfar = exp(-odFar * float3(0.84f, 0.96f, 1.12f)) * (1.0f - horizonMelt);
+        float3 T = froxT * Tfar;
         float3 sZ, sM, sH;
         skyPalette(sZ, sM, sH);
         const float3 aSunFg = astroSunDir();
         const float aElevFg = astroSunElev();
         const float nightF = smoothstep(0.03f, -0.07f, aElevFg);
-        const float lowSunF = saturate(1.0f - max(aElevFg, 0.0f) * 3.0f);
+        const float twilightF = smoothstep(-0.08f, 0.02f, aElevFg) * (1.0f - smoothstep(0.08f, 0.26f, aElevFg));
         const float highSunF = smoothstep(0.20f, 0.48f, aElevFg);
         const float cosSunF = saturate(dot(w, aSunFg));
-        // Unified sky-matched aerial perspective: uses the EXACT same Hillaire + overcastSky formula as the sky branch
-        // (d >= 1.0f) so far mountains and the Sea of Ghosts melt into the sky dome with 0.000 luminance discontinuity
-        // (eliminates the dark curved slate horizon band caught in r257_dawnstar_npc.jpg).
         const float cloudCov = saturate(clouds.x);
-        // Unified World-Space Atmosphere sync: blend Hillaire Sky-View LUT with evalWorldAtmosphere() horizon
-        // so distant mountains, volumetric fogs, clouds, and sky dome share one exact color & luminance gradient!
         float3 uSunF, uSkyZF, uSkyHF, uAmbUpF, uAmbDnF;
         evalWorldAtmosphere(uSunF, uSkyZF, uSkyHF, uAmbUpF, uAmbDnF);
         const float3 hillaireSky = sampleHillaireSky(normalize(float3(w.xy, max(w.z, 0.008f))));
@@ -424,19 +421,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float overcastWF = saturate(cloudCov * 0.85f - 0.12f + weather.w * 0.45f + weather.z * 0.42f);
         const float3 overcastScatterF = lerp(hillaireSky, hLumF.xxx * float3(0.92f, 0.96f, 1.02f), 0.78f);
         float3 atmoCol = lerp(hillaireSky, overcastScatterF, overcastWF * 0.82f);
-        // Exact 1:1 sync with sky dome (d >= 1.0f): apply the same 0.76x scale AND composite live Clouds at t5
-        // so distant mountains & Winterhold (14.20.15) converge seamlessly into the exact sky+cloud color behind them!
-        atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.42f) * 0.76f;
+        // Exact 1:1 sync with sky dome (d >= 1.0f) + twilight luminance discipline so dawn/dusk mountains stay moody & grounded:
+        atmoCol = lerp(atmoCol, lerp(uSkyHF, uSkyZF, saturate(max(w.z, 0.0f) * 2.2f)), 0.42f) * (0.76f * lerp(1.0f, 0.74f, twilightF * (1.0f - horizonMelt)));
         if ((flags.x & FLAG_CLOUDS) != 0u) {
             const float4 clF = Clouds.SampleLevel(Lin, uv, 0.0f);
-            const float clMerge = smoothstep(2500.0f, 22000.0f, dist);
+            const float clMerge = smoothstep(28000.0f, 75000.0f, dist);
             atmoCol = lerp(atmoCol, atmoCol * clF.a + clF.rgb, clMerge);
         }
-        const float3 d65Mie = lerp(float3(1.0f, 0.66f, 0.36f), float3(0.96f, 0.98f, 1.02f), highSunF);
-        const float mieHalo = (pow(cosSunF, 5.0f) * 0.14f + pow(cosSunF, 28.0f) * 0.24f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF);
-        atmoCol += lerp(d65Mie, uSunF, 0.45f) * mieHalo;
-        // Exact 1:1 night horizon sky-dome sync (eliminates dark greenish-grey mountain cutout against indigo night sky
-        // captured in 13.16.31.17.png!): matches LightFog.hlsl:122 nightHor formula identically!
+        // Dynamically lit far mountain aerial perspective: cloud-shadowed directional solar in-scattering vs shadowed ridges!
+        const float fogCloudVis = (flags.x & FLAG_CLOUDS) != 0u ? cloudShadowN(midPt, 1u) : 1.0f;
+        const float fogSunPhase = 0.18f + 0.82f * pow(cosSunF, 3.0f);
+        const float3 d65Mie = lerp(float3(1.0f, 0.62f, 0.30f), float3(0.96f, 0.98f, 1.02f), highSunF);
+        const float mieHalo = (pow(cosSunF, 5.0f) * 0.10f + pow(cosSunF, 28.0f) * 0.16f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF) * fogCloudVis;
+        const float cloudMod = lerp(lerp(0.46f, 0.94f, fogCloudVis * (1.0f - nightF * 0.65f)), 1.0f, horizonMelt);
+        atmoCol = atmoCol * cloudMod + lerp(d65Mie, uSunF, 0.60f) * (mieHalo + fogSunPhase * fogCloudVis * (1.0f - nightF) * (1.0f - horizonMelt) * 0.06f);
         const float3 ambSkyF = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.03f.xxx);
         const float overcastDeckF = saturate(cloudCov * 0.85f + weather.w * 0.45f + weather.z * 0.55f);
         const float3 nightHorF = lerp(float3(0.028f, 0.044f, 0.078f), ambSkyF * float3(0.68f, 0.74f, 0.84f), overcastDeckF * 0.85f);
@@ -582,8 +580,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
-        // Attenuate additive volumetric scatter by transmittance T so far-horizon fog never double-adds into blinding whiteout.
-        return float4(lit.rgb * T + atmoCol * (1.0f.xxx - T) + scatter * saturate(T + 0.20f) * pdeMistBoost + precipAdd, lit.a);
+        // Exact front-to-back Beer-Lambert composition:
+        //   lit * (froxT * Tfar) + froxScat (0..42k 3D volume) + farInScat (42k..horizon, attenuated by froxT) + shafts + precip
+        const float3 farInScat = atmoCol * (1.0f.xxx - Tfar) * froxT;
+        return float4(lit.rgb * T + froxScat * pdeMistBoost + farInScat + shaftScatter * saturate(T + 0.15f) * pdeMistBoost + precipAdd, lit.a);
     }
     // Dungeons, Caves, Nordic Tombs, Dwemer Ruins, Blackreach & Interiors (sunColour.w < 0.5):
     // Controlled world-space subterranean depth mist + True 3D World-Space Rising Blackbody Fire Embers around interior hearths/firepits/braziers!

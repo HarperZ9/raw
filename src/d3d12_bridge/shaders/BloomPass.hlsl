@@ -20,13 +20,13 @@ float16_t karisW(float16_t3 c) {
 
 float16_t3 softThreshold(float16_t3 c) {
     const float16_t br = max(c.r, max(c.g, c.b));
-    // Calibrated strictly above diffuse sunlit snow/ice (<=1.20) and below flames, sun disc, spells & glints (>=1.80):
-    const float16_t thresh = float16_t(1.48h);
-    const float16_t knee = float16_t(0.30h);
+    // Strictly above ALL sunlit diffuse surfaces, glaciers, snow, clouds & plaster (<=1.95); ONLY flames, sun disc, magic & sharp metal glints bloom!
+    const float16_t thresh = float16_t(2.25h);
+    const float16_t knee = float16_t(0.22h);
     float16_t soft = clamp(br - thresh + knee, float16_t(0.0h), float16_t(2.0h) * knee);
     soft = (soft * soft) / max(float16_t(4.0h) * knee, float16_t(1.0e-4h));
     const float16_t contrib = max(soft, br - thresh) / max(br, float16_t(1.0e-4h));
-    return min(c * saturate(contrib), float16_t3(4.0h, 4.0h, 4.0h));
+    return min(c * saturate(contrib), float16_t3(3.2h, 3.2h, 3.2h));
 }
 
 // 13-tap Jimenez downsample pattern in native 16-bit FP16 (2x ALU throughput & half VGPR pressure on RTX 4090/5090):
@@ -92,16 +92,8 @@ float4 up(float4 at : SV_Position) : SV_Target0 {
          SrcA.SampleLevel(Lin, uv + float2( d.x, -d.y), 0.0f).rgb + SrcA.SampleLevel(Lin, uv + float2(-d.x, -d.y), 0.0f).rgb;
     const float3 upCol = s * (1.0f / 16.0f);
     const float3 curCol = SrcB.SampleLevel(Lin, uv, 0.0f).rgb;
-    // Feature 9: 6-Blade Aperture Diffraction Starburst + Panavision Anamorphic Stretch on extreme HDR peaks (>3.5 linear).
-    const float3 anaL = SrcA.SampleLevel(Lin, saturate(uv - float2(d.x * 3.5f, 0.0f)), 0.0f).rgb;
-    const float3 anaR = SrcA.SampleLevel(Lin, saturate(uv + float2(d.x * 3.5f, 0.0f)), 0.0f).rgb;
-    const float3 anaGlow = max((anaL + anaR) * 0.5f - 0.65f.xxx, 0.0f.xxx) * float3(0.72f, 0.88f, 1.12f) * 0.12f;
-    const float2 d60a = float2(d.x * 2.2f, d.y * 3.8f), d60b = float2(d.x * 2.2f, -d.y * 3.8f);
-    const float3 sb = (SrcA.SampleLevel(Lin, saturate(uv + d60a), 0.0f).rgb + SrcA.SampleLevel(Lin, saturate(uv - d60a), 0.0f).rgb +
-                       SrcA.SampleLevel(Lin, saturate(uv + d60b), 0.0f).rgb + SrcA.SampleLevel(Lin, saturate(uv - d60b), 0.0f).rgb) * 0.25f;
-    const float3 starBurst = max(sb - 2.6f.xxx, 0.0f.xxx) * float3(1.04f, 0.96f, 0.90f) * 0.09f;
-    // Energy-conserving achromatic tent upsample (0.50 + 0.50 = 1.00; kills 1.20^5 pyramid runaway & pink halation on cyan ice caves!):
-    return float4(curCol * 0.50f + upCol * 0.50f + anaGlow * 0.45f + starBurst * 0.60f, 1.0f);
+    // Pure energy-conserving achromatic tent upsample (removed low-threshold 0.65 anaGlow leak that made highlights glow!).
+    return float4(curCol * 0.50f + upCol * 0.50f, 1.0f);
 }
 
 // Full-res energy-conserving linear HDR composite: SrcA = pre-bloom linear HDR scene, SrcB = 6-level bloom pyramid mip 0.
@@ -111,7 +103,7 @@ float4 composite(float4 at : SV_Position) : SV_Target0 {
     const float2 uv = at.xy / max(float2(sw, sh), float2(1.0f, 1.0f));
     const float4 scene = SrcA.Load(int3(at.xy, 0));
     const float3 bl = SrcB.SampleLevel(Lin, uv, 0.0f).rgb;
-    // Clean energy-conserving merge: flames/sun/spells glow without washing out snowbanks or ice caves.
-    const float3 outRgb = scene.rgb + bl * (0.11f / (1.0f + max(scene.r, max(scene.g, scene.b)) * 0.55f));
+    // Disciplined linear HDR bloom merge (0.055): genuine emissives glow softly without any surface highlight bleed.
+    const float3 outRgb = scene.rgb + bl * (0.055f / (1.0f + max(scene.r, max(scene.g, scene.b)) * 0.78f));
     return float4(outRgb, scene.a);
 }

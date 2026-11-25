@@ -459,8 +459,10 @@ public:
             if (!trySwap(extra->dofFocus,   "dof focus (reloaded)",  kDofFocusLayout,   m_dofFocusPipe))   return false;
             if (!trySwap(extra->dofCoc,     "dof coc (reloaded)",    kDofCocLayout,     m_dofCocPipe))     return false;
             if (!trySwap(extra->dofGather,  "dof gather (reloaded)", kDofGatherLayout,  m_dofGatherPipe))  return false;
-            if (!trySwap(extra->dofPost,    "dof post (reloaded)",   kDofGatherLayout,  m_dofPostPipe))    return false;
-            if (!trySwap(extra->dofComp,    "dof comp (reloaded)",   kDofCompLayout,    m_dofCompPipe))    return false;
+            if (!trySwap(extra->dofPost,      "dof post (reloaded)",      kDofGatherLayout,    m_dofPostPipe))      return false;
+            if (!trySwap(extra->dofComp,      "dof comp (reloaded)",      kDofCompLayout,      m_dofCompPipe))      return false;
+            if (!trySwap(extra->froxelInject, "froxel inj (reloaded)",    kFroxelInjectLayout, m_froxelInjectPipe)) return false;
+            if (!trySwap(extra->froxelInt,    "froxel int (reloaded)",    kFroxelIntLayout,    m_froxelIntPipe))    return false;
         }
         m_lightPipe = light;
         m_fogPipe = fog;

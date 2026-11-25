@@ -125,6 +125,7 @@ bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes);  
 struct ExtraShaders {
     std::vector<uint8_t> clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     std::vector<uint8_t> dofFocus, dofCoc, dofGather, dofPost, dofComp;
+    std::vector<uint8_t> froxelInject, froxelInt;
 };
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
                         const std::vector<uint8_t>& fogFs, std::string& err, const ExtraShaders* extra = nullptr);

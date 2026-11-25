@@ -17,6 +17,8 @@ struct CompileResult
     double ms = 0;
 };
 
-// path: the .hlsl file; its folder is the include folder. target: "ps_6_0", "vs_6_0", "cs_6_5".
-CompileResult CompileHlsl(const std::wstring& path, const wchar_t* entry, const wchar_t* target, const std::wstring& dxcDll = L"");
+// path: the .hlsl file; its folder is the include folder. target: "ps_6_6", "vs_6_6", "cs_6_6".
+// define: optional preprocessor macro (e.g. L"FROXEL_INT=1").
+CompileResult CompileHlsl(const std::wstring& path, const wchar_t* entry, const wchar_t* target,
+                          const std::wstring& dxcDll = L"", const wchar_t* define = nullptr);
 }

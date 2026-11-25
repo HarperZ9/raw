@@ -46,6 +46,19 @@ static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u,
                   FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u, FLAG_BOUNCE = 4096u, FLAG_REFLECT = 8192u, FLAG_BOUNCE_IN = 16384u, FLAG_CLOUDS = 32768u, FLAG_REST = 65536u, FLAG_LOD = 131072u, FLAG_ENV = 262144u, FLAG_CHAR = 524288u, FLAG_UNDERWATER = 1048576u;
 static const float PI = 3.14159265358979f;
 
+// Shared 160x90x64 3D Froxel volumetric range (single source of truth for FroxelPass.hlsl and LightFog.hlsl).
+static const float kFroxNear = 24.0f;
+static const float kFroxFar  = 42000.0f;
+
+float froxelSliceZ(float s) {
+    return kFroxNear * pow(kFroxFar / kFroxNear, saturate(s / 64.0f));
+}
+
+float froxelZToSlice(float z) {
+    const float zCl = clamp(z, kFroxNear, kFroxFar);
+    return saturate(log(zCl / kFroxNear) / log(kFroxFar / kFroxNear)) * 63.0f;
+}
+
 float4 vs(uint i : SV_VertexID) : SV_Position {
     return float4(i == 1u ? 3.0f : -1.0f, i == 2u ? -3.0f : 1.0f, 0.0f, 1.0f);
 }
@@ -170,10 +183,10 @@ void evalWorldAtmosphere(out float3 outSun, out float3 outSkyZ, out float3 outSk
     // Unified sky zenith, horizon & hemisphere ambient (100% locked across sky dome, fog, clouds, water & terrain!):
     float3 sZ, sM, sH;
     skyPalette(sZ, sM, sH);
-    const float dayLumScale = lerp(0.32f, 0.85f, smoothstep(-0.02f, 0.35f, elev));
-    const float3 overcastZ = float3(0.18f, 0.23f, 0.32f) * dayLumScale;
-    const float3 overcastH = float3(0.36f, 0.42f, 0.50f) * dayLumScale;
-    const float3 snowH = float3(0.44f, 0.49f, 0.56f) * dayLumScale;
+    const float dayLumScale = lerp(0.11f, 0.68f, smoothstep(0.03f, 0.42f, elev));
+    const float3 overcastZ = float3(0.16f, 0.21f, 0.30f) * dayLumScale;
+    const float3 overcastH = float3(0.32f, 0.38f, 0.46f) * dayLumScale;
+    const float3 snowH = float3(0.40f, 0.45f, 0.52f) * dayLumScale;
     const float3 nightZ = lerp(float3(0.012f, 0.022f, 0.048f), float3(0.022f, 0.032f, 0.056f), overcastW);
     const float3 nightH = lerp(float3(0.024f, 0.040f, 0.074f), float3(0.042f, 0.054f, 0.082f), overcastW);
 

@@ -34,6 +34,7 @@
 #include "rt_forensics.h"
 #include "rt_live_config.h"
 #include "rt_memory_guards.h"
+#include "rt_mod_load_audit.h"
 #include "rt_movement_combat.h"
 #include "rt_npc_behavior.h"
 #include "rt_save_papyrus_guard.h"
@@ -381,6 +382,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::LiveConfigInit(g_dir + "raw_engine.ini", g_out + "\\live_status_dump.txt").c_str());
     Log("%s", raw::rt::CrashForensicsInit(g_img, g_dir, g_out).c_str());
     Log("%s", raw::rt::SavePapyrusGuardInit().c_str());
+    Log("%s", raw::rt::ModLoadAuditInit(g_dir).c_str());
     Log("%s", raw::rt::NpcBehaviorInit().c_str());
     Log("%s", raw::rt::AudioBridgeInit().c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
@@ -412,6 +414,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
     }
     raw::rt::AudioBridgeShutdown();
     raw::rt::NpcBehaviorShutdown();
+    raw::rt::ModLoadAuditShutdown();
     raw::rt::SavePapyrusGuardShutdown();
     raw::rt::CrashForensicsShutdown();
     raw::rt::LiveConfigShutdown();

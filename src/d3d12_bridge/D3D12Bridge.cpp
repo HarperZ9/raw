@@ -299,7 +299,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool radOk = m->InitRadianceCascades();
         const bool xpbdOk = m->InitXpbdSim();
         const bool overlayOk = m->InitOverlayHost();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s",
+        const bool cullOk = m->InitGpuCull();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -309,7 +310,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                fluidOk ? "READY" : "off",
                radOk ? "READY" : "off",
                xpbdOk ? "READY" : "off",
-               overlayOk ? "READY(OFF)" : "off");
+               overlayOk ? "READY(OFF)" : "off",
+               cullOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -680,6 +682,118 @@ void D3D12Bridge::Impl::ShutdownOverlayHost()
     overlayHostReady = false;
 }
 
+bool D3D12Bridge::Impl::InitGpuCull()
+{
+    ShutdownGpuCull();
+    if (!dev12) return false;
+    gpuCull = std::make_unique<RawGpuCullHost>();
+    GpuCullDesc desc{};
+    desc.maxInstances     = 4096u;
+    desc.initialHiZWidth  = (cfg.width > 0u) ? cfg.width : 512u;
+    desc.initialHiZHeight = (cfg.height > 0u) ? cfg.height : 512u;
+    std::string cullErr;
+    if (!gpuCull->Init(dev12.Get(), desc, &cullErr)) {
+        log("[GpuCull] off: %s", cullErr.c_str());
+        gpuCull.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        gpuCull->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cullAlloc[i])))) {
+            ShutdownGpuCull();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cullAlloc[0].Get(), nullptr, IID_PPV_ARGS(&cullList))) ||
+        FAILED(cullList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&cullFence)))) {
+        ShutdownGpuCull();
+        return false;
+    }
+    cullEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!cullEvent) {
+        ShutdownGpuCull();
+        return false;
+    }
+
+    constexpr uint32_t kMaxBridgeCullInst = 512u;
+    const uint64_t slotBytes = static_cast<uint64_t>(kMaxBridgeCullInst) * sizeof(GpuCullInstance);
+    D3D12_HEAP_PROPERTIES hpUp{};
+    hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12_RESOURCE_DESC upRd{};
+    upRd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+    upRd.Width            = static_cast<uint64_t>(kRing) * slotBytes;
+    upRd.Height           = 1u;
+    upRd.DepthOrArraySize = 1u;
+    upRd.MipLevels        = 1u;
+    upRd.SampleDesc.Count = 1u;
+    upRd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    D3D12_HEAP_PROPERTIES hpDef{};
+    hpDef.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC gpuRd = upRd;
+    gpuRd.Width = slotBytes;
+
+    if (FAILED(dev12->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &upRd,
+                                              D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&cullInstUploadBuf))) ||
+        FAILED(dev12->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &gpuRd,
+                                              D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cullInstGpuBuf)))) {
+        ShutdownGpuCull();
+        return false;
+    }
+    const D3D12_RANGE zeroRange{0u, 0u};
+    void* mapped = nullptr;
+    if (FAILED(cullInstUploadBuf->Map(0u, &zeroRange, &mapped)) || !mapped) {
+        ShutdownGpuCull();
+        return false;
+    }
+    cullInstUploadMapped = static_cast<uint8_t*>(mapped);
+    cullInstGpuState     = D3D12_RESOURCE_STATE_COMMON;
+    gpuCullReady         = true;
+    log("[GpuCull] GPU Hi-Z Pyramid + Frustum/Occlusion Culler ready (%ux%u, ring=%u x %u instances)",
+        desc.initialHiZWidth, desc.initialHiZHeight, kRing, kMaxBridgeCullInst);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownGpuCull()
+{
+    if (cullFence && cullEvent && cullFenceVal > 0) {
+        if (cullFence->GetCompletedValue() < cullFenceVal) {
+            cullFence->SetEventOnCompletion(cullFenceVal, cullEvent);
+            WaitForSingleObject(cullEvent, 3000);
+        }
+    }
+    if (cullInstUploadBuf && cullInstUploadMapped) {
+        cullInstUploadBuf->Unmap(0u, nullptr);
+        cullInstUploadMapped = nullptr;
+    }
+    cullInstUploadBuf.Reset();
+    cullInstGpuBuf.Reset();
+    cullInstGpuState = D3D12_RESOURCE_STATE_COMMON;
+    cullList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        cullAlloc[i].Reset();
+        cullSlotVal[i] = 0;
+    }
+    cullFence.Reset();
+    if (cullEvent) {
+        CloseHandle(cullEvent);
+        cullEvent = nullptr;
+    }
+    if (gpuCull) {
+        gpuCull->Shutdown();
+        gpuCull.reset();
+    }
+    cullFenceVal         = 0;
+    cullSlot             = 0;
+    cullStepFrames       = 0;
+    lastGpuCullInstances = 0;
+    gpuCullReady         = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -688,6 +802,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownGpuCull();
     m->ShutdownOverlayHost();
     m->ShutdownXpbdSim();
     m->ShutdownRadianceCascades();

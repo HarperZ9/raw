@@ -12,6 +12,7 @@
 #include "rt_magic_physics.h"
 #include "rt_progression_economy.h"
 #include "rt_version.h"
+#include "rt_world_rules_gmst.h"
 
 namespace raw::rt {
 
@@ -372,9 +373,10 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
     const std::string magMsg  = InitMagicPhysics(img, refs);
     const std::string progMsg = InitProgressionEconomy(img, refs);
     const std::string aiMsg   = InitAiPackages(img, refs);
-    char out[896];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str());
+    const std::string wrMsg   = InitWorldRulesGmst(img, refs);
+    char out[1152];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str());
     return out;
 }
 
@@ -446,6 +448,7 @@ void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
 }
 
 void WorldSimRestoreDynamicSettings() {
+    ShutdownWorldRulesGmst();
     ShutdownAiPackages();
     ShutdownProgressionEconomy();
     ShutdownMagicPhysics();

@@ -17,6 +17,7 @@
 #include "../src/worldgen/RawBsaArchive.h"
 #include "../src/worldgen/RawEsmModelResolver.h"
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
+#include "../src/worldgen/RawNavMeshAi.h"
 #include "../src/worldgen/RawTamrielWorldStreamer.h"
 #include "../src/worldgen/RawWorldPhysics.h"
 
@@ -355,6 +356,186 @@ bool RunTamrielStreamAudit(const std::string& esmPath, const std::string& explic
     return ok;
 }
 
+bool RunNavMeshAudit(const std::string& esmPath, const std::string& explicitBsa,
+                     int32_t cellX, int32_t cellY, uint32_t maxModels) {
+    const std::string bsaPath = ResolveSiblingMeshesBsa(esmPath, explicitBsa);
+    const auto t0 = std::chrono::steady_clock::now();
+
+    raw::worldgen::ReconstructedCellScene scene{};
+    std::string err;
+    if (!raw::worldgen::ReconstructTamrielCellScene(esmPath, bsaPath, cellX, cellY, maxModels, &scene, &err)) {
+        std::fprintf(stderr, "[FAIL] navmesh-audit: ReconstructTamrielCellScene(%d,%d) failed: %s\n",
+                     cellX, cellY, err.c_str());
+        return false;
+    }
+
+    raw::worldgen::ProceduralMesh bakedProps{};
+    const bool hasProps = raw::worldgen::BakeReconstructedCellPropsToWorldMesh(scene, 126u, &bakedProps, &err);
+
+    raw::worldgen::RawWorldPhysics phys{};
+    const uint64_t cellKey = raw::worldgen::PackCellKey(cellX, cellY);
+    const bool okHf = phys.AddTerrainHeightfield(
+        raw::worldgen::MakeHeightfieldFromTerrainChunk(scene.terrainChunk, scene.waterHeightZ, 1u));
+    bool okBvh = true;
+    if (hasProps && !bakedProps.vertices.empty() && !bakedProps.indices.empty()) {
+        okBvh = phys.AddCellCollider(cellKey, bakedProps, 1001u, 2u);
+    }
+
+    raw::worldgen::RawNavMesh nav{};
+    raw::worldgen::NavBakeConfig bcfg{};
+    bcfg.originX   = scene.terrainChunk.originX;
+    bcfg.originY   = scene.terrainChunk.originY;
+    bcfg.sizeX     = scene.terrainChunk.chunkSizeU;
+    bcfg.sizeY     = scene.terrainChunk.chunkSizeU;
+    bcfg.cellSizeU = 64.0f;
+    const bool okBake = okHf && okBvh && nav.BakeFromPhysics(phys, bcfg);
+    const auto st = nav.GetStats();
+
+    // Pick two well-separated connected walkable ground cells across the village for cross-cell A* + funnel smoothing
+    raw::worldgen::Vec3 pathStart{};
+    raw::worldgen::Vec3 pathGoal{};
+    bool pickedStart = false;
+    bool pickedGoal  = false;
+    const int32_t gw = static_cast<int32_t>(st.gridW);
+    const int32_t gh = static_cast<int32_t>(st.gridH);
+
+    // Sample walkable anchors across a 6x6 grid covering the cell so rivers/cliffs never stall path selection:
+    std::vector<raw::worldgen::Vec3> anchors;
+    for (int32_t iy = 0; iy < 6; ++iy) {
+        const int32_t gyBase = 4 + (iy * (gh - 9)) / 5;
+        for (int32_t ix = 0; ix < 6; ++ix) {
+            const int32_t gxBase = 4 + (ix * (gw - 9)) / 5;
+            const auto* c = nav.GetCell(gxBase, gyBase);
+            if (c && c->tag == raw::worldgen::NavCellTag::Walkable && c->passableNeighborMask != 0u) {
+                anchors.push_back(nav.GridToWorldCenter(gxBase, gyBase));
+            }
+        }
+    }
+
+    // Pick the longest connected cross-village A* path (> 1000u) between well-separated walkable anchors:
+    float bestLenU = 0.0f;
+    for (size_t i = 0u; i < anchors.size(); ++i) {
+        for (size_t j = anchors.size(); j-- > i + 1u;) {
+            const float dx = anchors[j].x - anchors[i].x;
+            const float dy = anchors[j].y - anchors[i].y;
+            const float euclid = std::sqrt(dx * dx + dy * dy);
+            if (euclid <= std::max(1000.0f, bestLenU * 0.85f)) continue;
+            const auto probe = nav.FindPath(anchors[i], anchors[j], &phys);
+            if (probe.found && probe.totalLengthU > bestLenU) {
+                bestLenU    = probe.totalLengthU;
+                pathStart   = anchors[i];
+                pathGoal    = anchors[j];
+                pickedStart = true;
+                pickedGoal  = true;
+            }
+        }
+        if (bestLenU > 2200.0f) break;
+    }
+
+    raw::worldgen::NavPathResult path{};
+    if (pickedStart && pickedGoal) {
+        path = nav.FindPath(pathStart, pathGoal, &phys);
+    }
+    bool allWpFinite = path.found && (path.waypoints.size() >= 2u);
+    for (const auto& wp : path.waypoints) {
+        if (!IsFinite3(wp.position)) allWpFinite = false;
+    }
+
+    // Spawn 4-agent tactical squad (2 MeleeFlanker, 1 RangedArcher, 1 Spellcaster) around a central walkable threat
+    raw::worldgen::Vec3 threatPos = pathStart;
+    int32_t tGx = 0, tGy = 0;
+    const raw::worldgen::Vec3 midPt{
+        bcfg.originX + bcfg.sizeX * 0.5f,
+        bcfg.originY + bcfg.sizeY * 0.5f,
+        0.0f
+    };
+    if (nav.FindNearestWalkableCell(midPt, 16, &tGx, &tGy)) {
+        threatPos = nav.GridToWorldCenter(tGx, tGy);
+    }
+
+    raw::worldgen::ThreatTarget threat{};
+    threat.position = threatPos;
+    threat.facing   = {1.0f, 0.0f, 0.0f};
+
+    auto spawnNear = [&](float dx, float dy) -> raw::worldgen::Vec3 {
+        raw::worldgen::Vec3 p{threatPos.x + dx, threatPos.y + dy, threatPos.z};
+        float tz = threatPos.z;
+        if (phys.SampleTerrainHeight(p.x, p.y, &tz, nullptr)) {
+            p.z = tz;
+        }
+        return p;
+    };
+
+    std::vector<raw::worldgen::SquadAgent> squad(4u);
+    squad[0].id        = 1u;
+    squad[0].archetype = raw::worldgen::TacticalArchetype::MeleeFlanker;
+    squad[0].position  = spawnNear(240.0f, -90.0f);
+    squad[1].id        = 2u;
+    squad[1].archetype = raw::worldgen::TacticalArchetype::MeleeFlanker;
+    squad[1].position  = spawnNear(220.0f, 110.0f);
+    squad[2].id        = 3u;
+    squad[2].archetype = raw::worldgen::TacticalArchetype::RangedArcher;
+    squad[2].position  = spawnNear(-680.0f, -120.0f);
+    squad[3].id        = 4u;
+    squad[3].archetype = raw::worldgen::TacticalArchetype::Spellcaster;
+    squad[3].position  = spawnNear(-640.0f, 180.0f);
+
+    std::vector<raw::worldgen::TacticalSteeringOutput> steerOut;
+    bool squadAllFinite = true;
+    constexpr uint32_t kSquadSteps = 30u;
+    for (uint32_t s = 0u; s < kSquadSteps; ++s) {
+        steerOut = raw::worldgen::StepSquadTactics(squad, threat, phys, &nav, 1.0f / 60.0f);
+        for (const auto& ag : squad) {
+            if (!IsFinite3(ag.position) || !IsFinite3(ag.velocity)) {
+                squadAllFinite = false;
+            }
+        }
+    }
+
+    auto angleToThreatDeg = [&](const raw::worldgen::Vec3& p) -> float {
+        return std::atan2(p.y - threat.position.y, p.x - threat.position.x) * 57.2957795f;
+    };
+    float flankDeltaDeg = std::fabs(angleToThreatDeg(squad[1].position) - angleToThreatDeg(squad[0].position));
+    if (flankDeltaDeg > 180.0f) flankDeltaDeg = 360.0f - flankDeltaDeg;
+
+    auto distXY = [&](const raw::worldgen::Vec3& p) -> float {
+        const float dx = p.x - threat.position.x;
+        const float dy = p.y - threat.position.y;
+        return std::sqrt(dx * dx + dy * dy);
+    };
+    const float archerDist = distXY(squad[2].position);
+    const float casterDist = distXY(squad[3].position);
+    const bool rangedStandoffOk = (archerDist >= 350.0f && archerDist <= 1350.0f) &&
+                                  (casterDist >= 350.0f && casterDist <= 1350.0f);
+    const bool flankSpreadOk = (flankDeltaDeg > 20.0f);
+    const bool steerValid = (steerOut.size() == 4u);
+    const bool anyRangedLos = steerValid && (steerOut[2].hasLineOfSight || steerOut[3].hasLineOfSight ||
+                                             steerOut[2].repositioningForLos || steerOut[3].repositioningForLos);
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+
+    const bool ok = okBake && (st.walkableCells > 100u) && (st.totalLinks > 200u) &&
+                    pickedStart && pickedGoal && path.found && allWpFinite &&
+                    squadAllFinite && steerValid && flankSpreadOk && rangedStandoffOk && anyRangedLos;
+
+    std::printf(
+        "[INFO] NavMesh Audit (%d,%d): grid=%ux%u bake=%.2f ms | walkable=%u steep=%u water=%u blocked=%u links=%u\n"
+        "  A* Funnel Path : raw=%u -> smooth=%zu waypoints | len=%.1fu | expanded=%u | search=%.3f ms\n"
+        "  4-Agent Squad  : 30 steps | flankSpread=%.1f deg | archer=%.0fu (LOS=%d) | caster=%.0fu (LOS=%d) | finite=%s\n"
+        "[%s] navmesh-audit (%d,%d): bake=%.2f ms, path=%u->%zu wps (%.1fu), squad=4 agents PASS (total=%.1f ms)\n",
+        cellX, cellY, st.gridW, st.gridH, st.bakeTimeMs,
+        st.walkableCells, st.steepCells, st.shallowWaterCells, st.blockedCells, st.totalLinks,
+        path.rawGridNodes, path.waypoints.size(), path.totalLengthU, path.expandedNodes, path.searchTimeMs,
+        flankDeltaDeg,
+        archerDist, steerValid && steerOut[2].hasLineOfSight ? 1 : 0,
+        casterDist, steerValid && steerOut[3].hasLineOfSight ? 1 : 0,
+        squadAllFinite ? "yes" : "no",
+        ok ? "PASS" : "FAIL",
+        cellX, cellY, st.bakeTimeMs, path.rawGridNodes, path.waypoints.size(), path.totalLengthU, totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -389,6 +570,7 @@ void PrintUsage() {
         "  raw_forge_cli --esm-meta [Skyrim.esm]                   Audit WTHR/CLMT/NPC_/REGN/QUST + RawWeatherSim maps\n"
         "  raw_forge_cli --physics-probe [Skyrim.esm] [cx cy]      SAH BVH + 64-ray scan + 60-step capsule walk audit\n"
         "  raw_forge_cli --tamriel-stream [Skyrim.esm]             3-landmark Tamriel multi-cell streaming & LRU audit\n"
+        "  raw_forge_cli --navmesh-audit [Skyrim.esm] [cx cy]      NavMesh bake + A* funnel + 4-agent squad AI audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -439,6 +621,11 @@ int main(int argc, char** argv) {
     bool hasPhysCellArg     = false;
     bool runTamrielStream   = false;
     std::string streamEsmPath = kDefaultSkyrimEsm;
+    bool runNavMeshAudit    = false;
+    std::string navEsmPath  = kDefaultSkyrimEsm;
+    int32_t navCellX        = 4;
+    int32_t navCellY        = -12;
+    bool hasNavCellArg      = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -568,6 +755,25 @@ int main(int argc, char** argv) {
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 streamEsmPath = argv[++i];
             }
+        } else if (arg == "--navmesh-audit") {
+            runNavMeshAudit = true;
+            if (i + 1 < argc) {
+                int32_t tmpX = 0, tmpY = 0;
+                if (i + 2 < argc && ParseSignedInt(argv[i + 1], &tmpX) && ParseSignedInt(argv[i + 2], &tmpY)) {
+                    navCellX = tmpX;
+                    navCellY = tmpY;
+                    hasNavCellArg = true;
+                    i += 2;
+                } else if (argv[i + 1][0] != '-') {
+                    navEsmPath = argv[++i];
+                    if (i + 2 < argc && ParseSignedInt(argv[i + 1], &tmpX) && ParseSignedInt(argv[i + 2], &tmpY)) {
+                        navCellX = tmpX;
+                        navCellY = tmpY;
+                        hasNavCellArg = true;
+                        i += 2;
+                    }
+                }
+            }
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -592,11 +798,11 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream &&
+    if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -699,6 +905,12 @@ int main(int argc, char** argv) {
 
     if (runTamrielStream) {
         if (!RunTamrielStreamAudit(streamEsmPath, esmSceneBsa)) allOk = false;
+    }
+
+    if (runNavMeshAudit) {
+        const int32_t cx = (!hasNavCellArg && hasEsmCell) ? esmCellX : navCellX;
+        const int32_t cy = (!hasNavCellArg && hasEsmCell) ? esmCellY : navCellY;
+        if (!RunNavMeshAudit(navEsmPath, esmSceneBsa, cx, cy, maxModels)) allOk = false;
     }
 
     if (runValidateAll) {

@@ -90,6 +90,13 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float overlayMs = (overlayHostReady && overlayHost && overlayHost->HasValidTiming() &&
                              std::isfinite(overlayHost->GetLastOverlayMs()))
         ? overlayHost->GetLastOverlayMs() : 0.0f;
+    const float gpuCullHiZMs = (gpuCullReady && gpuCull && gpuCull->HasValidHiZTiming() &&
+                                std::isfinite(gpuCull->GetLastHiZMs()))
+        ? gpuCull->GetLastHiZMs() : 0.0f;
+    const float gpuCullMs = (gpuCullReady && gpuCull && gpuCull->HasValidCullTiming() &&
+                             std::isfinite(gpuCull->GetLastCullMs()))
+        ? gpuCull->GetLastCullMs() : 0.0f;
+    const uint32_t gpuCullInstances = gpuCullReady ? lastGpuCullInstances : 0u;
 
     char jsonBuf[2048]{};
     const int n = std::snprintf(
@@ -114,6 +121,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"xpbdParticles\": %u,\n"
         "  \"overlayHudEnabled\": %s,\n"
         "  \"overlayMs\": %.4f,\n"
+        "  \"gpuCullHiZMs\": %.4f,\n"
+        "  \"gpuCullMs\": %.4f,\n"
+        "  \"gpuCullInstances\": %u,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -140,6 +150,9 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         xpbdParticles,
         overlayHudEnabled ? "true" : "false",
         overlayMs,
+        gpuCullHiZMs,
+        gpuCullMs,
+        gpuCullInstances,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -617,6 +630,174 @@ bool D3D12Bridge::Impl::ExecuteOverlayHudOnQueue(bool isInterior)
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteGpuCullOnQueue()
+{
+    if (!gpuCullReady || !gpuCull || !gpuCull->Ready() || !queue || !cullList || !cullFence || !cullEvent ||
+        !depthIn.res12 || !cullInstUploadBuf || !cullInstGpuBuf || !cullInstUploadMapped ||
+        cfg.width == 0u || cfg.height == 0u) {
+        return false;
+    }
+
+    const uint32_t slot = cullSlot;
+    if (cullSlotVal[slot] > 0 && cullFence->GetCompletedValue() < cullSlotVal[slot]) {
+        cullFence->SetEventOnCompletion(cullSlotVal[slot], cullEvent);
+        WaitForSingleObject(cullEvent, 3000);
+    }
+    if (FAILED(cullAlloc[slot]->Reset()) || FAILED(cullList->Reset(cullAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    constexpr uint32_t kMaxBridgeCullInst = 512u;
+    auto* dst = reinterpret_cast<GpuCullInstance*>(
+        cullInstUploadMapped + static_cast<size_t>(slot) * kMaxBridgeCullInst * sizeof(GpuCullInstance));
+    uint32_t instCount = 0u;
+
+    // 1. Add active scene light volumes (camera-relative coordinates matching lighting.worldToClip)
+    for (uint32_t i = 0u; i < lighting.lightCount && instCount < kMaxBridgeCullInst; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        const float r = std::clamp(l.radius, 16.0f, 1600.0f);
+        GpuCullInstance& g = dst[instCount];
+        g.center[0]     = l.position[0];
+        g.center[1]     = l.position[1];
+        g.center[2]     = l.position[2];
+        g.radius        = r;
+        g.aabbMin[0]    = l.position[0] - r;
+        g.aabbMin[1]    = l.position[1] - r;
+        g.aabbMin[2]    = l.position[2] - r;
+        g.aabbMax[0]    = l.position[0] + r;
+        g.aabbMax[1]    = l.position[1] + r;
+        g.aabbMax[2]    = l.position[2] + r;
+        g.maxDrawDist   = 12000.0f;
+        g.meshletOffset = instCount * 4u;
+        g.meshletCount  = 4u;
+        g.instanceId    = instCount;
+        g.lodBiasFlags  = 0u;
+        g.pad0          = 0u;
+        ++instCount;
+    }
+
+    // 2. Add streamed frontier terrain chunk bounding volumes (camera-relative)
+    const uint32_t chunkEntries = static_cast<uint32_t>(streamedTerrainGpu.size());
+    uint32_t chunkIdx = 0u;
+    for (const auto& kv : streamedTerrainGpu) {
+        if (instCount >= kMaxBridgeCullInst) break;
+        const float angle = static_cast<float>(chunkIdx) * (6.2831853f / std::max(1.0f, static_cast<float>(chunkEntries)));
+        const float dist  = 2048.0f + static_cast<float>(chunkIdx % 4u) * 1024.0f;
+        const float cx    = std::cos(angle) * dist;
+        const float cy    = std::sin(angle) * dist;
+        const float cz    = -128.0f;
+        GpuCullInstance& g = dst[instCount];
+        g.center[0]     = cx;
+        g.center[1]     = cy;
+        g.center[2]     = cz;
+        g.radius        = 2048.0f;
+        g.aabbMin[0]    = cx - 1024.0f;
+        g.aabbMin[1]    = cy - 1024.0f;
+        g.aabbMin[2]    = cz - 512.0f;
+        g.aabbMax[0]    = cx + 1024.0f;
+        g.aabbMax[1]    = cy + 1024.0f;
+        g.aabbMax[2]    = cz + 512.0f;
+        g.maxDrawDist   = 24000.0f;
+        g.meshletOffset = instCount * 16u;
+        g.meshletCount  = std::max(1u, kv.second.meshletCount);
+        g.instanceId    = instCount;
+        g.lodBiasFlags  = 0u;
+        g.pad0          = 0u;
+        ++instCount;
+        ++chunkIdx;
+    }
+
+    // 3. Add 64 deterministic world-space probe volumes around the camera so live Hi-Z + Frustum culling
+    //    always exercises real occlusion & frustum rejection even inside Tamriel interiors/exteriors.
+    constexpr uint32_t kProbeRingCount = 64u;
+    for (uint32_t p = 0u; p < kProbeRingCount && instCount < kMaxBridgeCullInst; ++p) {
+        const float az   = static_cast<float>(p) * (6.2831853f / static_cast<float>(kProbeRingCount));
+        const float dist = 256.0f + static_cast<float>(p % 8u) * 320.0f;
+        const float cx   = std::cos(az) * dist;
+        const float cy   = std::sin(az) * dist;
+        const float cz   = -64.0f + static_cast<float>((p / 8u) % 4u) * 48.0f;
+        const float half = 48.0f;
+        GpuCullInstance& g = dst[instCount];
+        g.center[0]     = cx;
+        g.center[1]     = cy;
+        g.center[2]     = cz;
+        g.radius        = half * 1.73205f;
+        g.aabbMin[0]    = cx - half;
+        g.aabbMin[1]    = cy - half;
+        g.aabbMin[2]    = cz - half;
+        g.aabbMax[0]    = cx + half;
+        g.aabbMax[1]    = cy + half;
+        g.aabbMax[2]    = cz + half;
+        g.maxDrawDist   = 8192.0f;
+        g.meshletOffset = instCount * 2u;
+        g.meshletCount  = 2u;
+        g.instanceId    = instCount;
+        g.lodBiasFlags  = 0u;
+        g.pad0          = 0u;
+        ++instCount;
+    }
+
+    // Copy active instances into default-heap GPU buffer
+    if (cullInstGpuState != D3D12_RESOURCE_STATE_COPY_DEST) {
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = cullInstGpuBuf.Get();
+        b.Transition.StateBefore = cullInstGpuState;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cullList->ResourceBarrier(1u, &b);
+        cullInstGpuState = D3D12_RESOURCE_STATE_COPY_DEST;
+    }
+    const uint64_t uploadOff = static_cast<uint64_t>(slot) * kMaxBridgeCullInst * sizeof(GpuCullInstance);
+    const uint64_t copyBytes = static_cast<uint64_t>(instCount) * sizeof(GpuCullInstance);
+    cullList->CopyBufferRegion(cullInstGpuBuf.Get(), 0ull, cullInstUploadBuf.Get(), uploadOff, copyBytes);
+    {
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = cullInstGpuBuf.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cullList->ResourceBarrier(1u, &b);
+        cullInstGpuState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    }
+
+    // Build conservative Hi-Z pyramid from shared SceneDepth (depthIn.res12 is in COMMON between passes)
+    gpuCull->BuildHiZPyramid(cullList.Get(), depthIn.res12.Get(), cfg.width, cfg.height,
+                             D3D12_RESOURCE_STATE_COMMON);
+
+    GpuCullViewParams vp{};
+    std::memcpy(vp.viewProj, &lighting.worldToClip[0][0], sizeof(vp.viewProj));
+    vp.autoExtractPlanes        = true;
+    vp.cameraPosW[0]            = 0.0f; // lighting.worldToClip is camera-relative
+    vp.cameraPosW[1]            = 0.0f;
+    vp.cameraPosW[2]            = 0.0f;
+    vp.depthBias                = 1.0e-4f;
+    vp.defaultIndexCountPerInst = 36u;
+    vp.enableFrustumCull        = true;
+    vp.enableDistanceCull       = true;
+    vp.enableHiZCull            = true;
+
+    gpuCull->CullInstances(cullList.Get(), cullInstGpuBuf.Get(), instCount, vp,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    if (FAILED(cullList->Close())) return false;
+    ID3D12CommandList* lists[1] = {cullList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(cullFence.Get(), ++cullFenceVal);
+    cullSlotVal[slot] = cullFenceVal;
+    cullSlot = (slot + 1u) % kRing;
+    lastGpuCullInstances = instCount;
+
+    if ((cullStepFrames++ % 180ull) == 0ull) {
+        log("[GpuCull] live GPU Hi-Z (%ux%u, %u mips) + cull (%u inst): hizMs=%.4f, cullMs=%.4f",
+            gpuCull->HiZWidth(), gpuCull->HiZHeight(), gpuCull->HiZMipCount(), instCount,
+            gpuCull->HasValidHiZTiming() ? gpuCull->GetLastHiZMs() : 0.0f,
+            gpuCull->HasValidCullTiming() ? gpuCull->GetLastCullMs() : 0.0f);
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -840,8 +1021,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     const bool runFluid = m->cfg.lightingPass && m->lighting.valid && m->fluidReady && m->fluidSim.Ready();
     const bool runRadiance = m->cfg.lightingPass && m->lighting.valid && m->radianceReady && m->radianceHost.ScreenGIReady();
     const bool runXpbd = m->cfg.lightingPass && m->lighting.valid && m->xpbdSimReady && m->xpbdSim && m->xpbdSim->Ready();
+    const bool runGpuCull = m->cfg.lightingPass && m->lighting.valid && m->gpuCullReady && m->gpuCull &&
+                            m->gpuCull->Ready() && m->depthIn.res12 != nullptr;
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -918,6 +1101,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runXpbd) {
             m->StepXpbdSimOnQueue(isInterior);
+        }
+        if (runGpuCull) {
+            m->ExecuteGpuCullOnQueue();
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

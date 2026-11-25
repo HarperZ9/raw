@@ -21,6 +21,7 @@
 #include "rt_combat_ai.h"
 #include "rt_combat_impact.h"
 #include "rt_economy_ledger.h"
+#include "rt_mod_load_audit.h"
 #include "rt_movement_combat.h"
 #include "rt_npc_behavior.h"
 #include "rt_save_papyrus_guard.h"
@@ -194,7 +195,9 @@ std::string FormatDefaultLiveConfigIni(const LiveEngineConfig& inCfg) {
        << "LiveAudioGain=" << fmtF(c.liveAudioGain, 2) << "\n\n"
        << "[Stability]\n"
        << "; Enable/disable .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)\n"
-       << "SavePapyrusGuard=" << (c.savePapyrusGuardEnabled ? 1 : 0) << "\n\n"
+       << "SavePapyrusGuard=" << (c.savePapyrusGuardEnabled ? 1 : 0) << "\n"
+       << "; Enable/disable TES4 plugin load-order, master-dependency & ESL slot auditor (0/1, default 1)\n"
+       << "ModLoadAudit=" << (c.modLoadAuditEnabled ? 1 : 0) << "\n\n"
        << "[WorldAI]\n"
        << "; Enable/disable weather/season/economy-driven NPC daily behavior & crowd ecology (0/1, default 1)\n"
        << "DynamicNpcBehavior=" << (c.dynamicNpcBehaviorEnabled ? 1 : 0) << "\n\n"
@@ -274,6 +277,7 @@ bool ParseLiveConfigIni(const std::string& iniText, LiveEngineConfig& outCfg) {
         }
         if (section.empty() || section == "stability") {
             if (key == "savepapyrusguard" && ParseBoolVal(val, b))        cfg.savePapyrusGuardEnabled = b;
+            else if (key == "modloadaudit" && ParseBoolVal(val, b))       cfg.modLoadAuditEnabled = b;
         }
         if (section.empty() || section == "worldai") {
             if (key == "dynamicnpcbehavior" && ParseBoolVal(val, b))      cfg.dynamicNpcBehaviorEnabled = b;
@@ -400,9 +404,10 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
                   d.config.weatherStealthEnabled ? 1u : 0u, d.config.thermalSurvivalEnabled ? 1u : 0u);
     os << buf;
     std::snprintf(buf, sizeof buf,
-                  "  Audio   : LiveAmbience=%u LiveGain=%.2f | Stability: SaveGuard=%u | WorldAI: DynamicNpc=%u\n\n",
+                  "  Audio   : LiveAmbience=%u LiveGain=%.2f | Stability: SaveGuard=%u ModAudit=%u | WorldAI: DynamicNpc=%u\n\n",
                   d.config.liveAudioAmbience ? 1u : 0u, d.config.liveAudioGain,
                   d.config.savePapyrusGuardEnabled ? 1u : 0u,
+                  d.config.modLoadAuditEnabled ? 1u : 0u,
                   d.config.dynamicNpcBehaviorEnabled ? 1u : 0u);
     os << buf;
 
@@ -466,10 +471,18 @@ std::string FormatLiveStatusDump(const LiveStatusDumpData& d) {
 
     os << "[NPC Behavior Ecology]\n";
     std::snprintf(buf, sizeof buf,
-                  "  DynamicNpc=%u ShelterPressure=%.2f TorchRatio=%.2f GuardAlert=%.2fx MarketAct=%.2f BanditElem=%u MageElem=%u\n",
+                  "  DynamicNpc=%u ShelterPressure=%.2f TorchRatio=%.2f GuardAlert=%.2fx MarketAct=%.2f BanditElem=%u MageElem=%u\n\n",
                   d.config.dynamicNpcBehaviorEnabled ? 1u : 0u,
                   d.npcShelterPressure01, d.npcTorchDeployRatio, d.npcGuardAlertnessMult,
                   d.npcMarketActivity01, d.npcPreferredBanditElem, d.npcPreferredMageElem);
+    os << buf;
+
+    os << "[Mod Load-Order Integrity Audit]\n";
+    std::snprintf(buf, sizeof buf,
+                  "  ModAudit=%u Severity=%u Full=%u/254 LightESL=%u/4096 MissingMast=%u OutOfOrder=%u Corrupt=%u OversizedESL=%u\n",
+                  d.config.modLoadAuditEnabled ? 1u : 0u, d.modAuditSeverity,
+                  d.modFullPlugins, d.modLightEsls, d.modMissingMasters,
+                  d.modOutOfOrderMasters, d.modCorruptHeaders, d.modOversizedEsls);
     os << buf;
     return os.str();
 }
@@ -689,6 +702,17 @@ bool LiveConfigWriteStatusDump(std::string* outPathWritten) {
         d.npcMarketActivity01    = nbs.marketActivity01;
         d.npcPreferredBanditElem = nbs.preferredBanditElement;
         d.npcPreferredMageElem   = nbs.preferredMageElement;
+    }
+
+    RawModAuditSummary mas{};
+    if (RAW_GetModAuditSummary(&mas)) {
+        d.modAuditSeverity     = mas.severity;
+        d.modFullPlugins       = mas.fullPluginCount;
+        d.modLightEsls         = mas.lightEslCount;
+        d.modMissingMasters    = mas.missingMasterCount;
+        d.modOutOfOrderMasters = mas.outOfOrderMasterCount;
+        d.modCorruptHeaders    = mas.corruptHeaderCount;
+        d.modOversizedEsls     = mas.oversizedEslCount;
     }
 
     const bool ok = WriteLiveStatusDumpToFile(outPath, d);

@@ -10,6 +10,7 @@
 #include "RawRadianceHost.h"
 #include "RawXpbdSimHost.h"
 #include "RawOverlayHost.h"
+#include "RawGpuCullHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -78,6 +79,7 @@ struct D3D12Bridge::Impl
     RawRadianceHost          radianceHost; // Live GPU 4-cascade penumbra-exact Radiance Cascades Screen GI
     std::unique_ptr<RawXpbdSimHost> xpbdSim; // Live GPU XPBD soft-body/hair/cloth/bush-bone solver
     std::unique_ptr<RawOverlayHost> overlayHost; // Opt-in F9 <0.02ms GPU Compute Telemetry & Sparkline HUD
+    std::unique_ptr<RawGpuCullHost> gpuCull;     // Live GPU Hi-Z Pyramid + Frustum/Occlusion/Distance Culler
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -85,6 +87,7 @@ struct D3D12Bridge::Impl
     bool                     overlayHostReady = false;
     bool                     overlayHudEnabled = false; // Strictly OFF by default (zero viewport clutter; F9 toggles)
     bool                     overlayPrevF9Down = false;
+    bool                     gpuCullReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -121,6 +124,19 @@ struct D3D12Bridge::Impl
     uint64_t                          overlayFenceVal = 0;
     uint64_t                          overlaySlotVal[kRing] = {};
     uint32_t                          overlaySlot = 0;
+    ComPtr<ID3D12CommandAllocator>    cullAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> cullList;
+    ComPtr<ID3D12Fence>               cullFence;
+    HANDLE                            cullEvent = nullptr;
+    uint64_t                          cullFenceVal = 0;
+    uint64_t                          cullSlotVal[kRing] = {};
+    uint32_t                          cullSlot = 0;
+    uint64_t                          cullStepFrames = 0;
+    ComPtr<ID3D12Resource>            cullInstUploadBuf;
+    uint8_t*                          cullInstUploadMapped = nullptr;
+    ComPtr<ID3D12Resource>            cullInstGpuBuf;
+    D3D12_RESOURCE_STATES             cullInstGpuState = D3D12_RESOURCE_STATE_COMMON;
+    uint32_t                          lastGpuCullInstances = 0;
     float                             frameMsHistory[64] = {};
     uint32_t                          frameMsHistoryHead = 0;
     uint32_t                          frameMsHistoryCount = 0;
@@ -137,6 +153,9 @@ struct D3D12Bridge::Impl
     bool InitXpbdSim();
     void ShutdownXpbdSim();
     bool StepXpbdSimOnQueue(bool isInterior);
+    bool InitGpuCull();
+    void ShutdownGpuCull();
+    bool ExecuteGpuCullOnQueue();
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

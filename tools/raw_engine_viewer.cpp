@@ -8,7 +8,9 @@
 //   Right-Mouse Drag    : Smooth Freelook Yaw / Pitch
 //   P                   : Toggle Playable Grounded Walk Mode <-> Free-Fly Camera (RawWorldPhysics!)
 //   C / Left-Click      : Fire Real Physics Raycast Against .NIF Buildings & Terrain (+ Destruction Burst!)
+//   N                   : Compute Live 3D NavMesh Octile A* Funnel-Smoothed Path (RawNavMeshAi!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
+//   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
 //   1 / 2 / 3 / 4       : Live Season Switch (Spring / Summer / Autumn / Winter)
 //   F                   : Toggle Live 64^3 3D Navier-Stokes Fire + Smoke
 //   G                   : Toggle Live 4-Cascade Radiance Cascades Screen GI
@@ -56,6 +58,7 @@
 #include "RawRadianceHost.h"
 #include "RawXpbdSimHost.h"
 #include "RawOverlayHost.h"
+#include "RawGpuCullHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -64,6 +67,7 @@
 #include "RawTamrielWorldStreamer.h"
 #include "RawEsmNpcWeatherLoader.h"
 #include "RawWorldPhysics.h"
+#include "RawNavMeshAi.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -396,12 +400,22 @@ public:
         if (!m_overlayOk) {
             std::printf("[Viewer] RawOverlayHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        GpuCullDesc cdesc{};
+        cdesc.maxInstances     = kMaxCullInstances;
+        cdesc.initialHiZWidth  = m_width;
+        cdesc.initialHiZHeight = m_height;
+        m_gpuCullOk = m_gpuCull.Init(m_dev.Get(), cdesc, &err) && CreateGpuCullInstanceBuffers();
+        if (!m_gpuCullOk) {
+            std::printf("[Viewer] RawGpuCullHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)   m_fluidSim.SetTimestampFrequency(tsFreq);
             if (m_radOk)     m_radianceHost.SetTimestampFrequency(tsFreq);
             if (m_xpbdOk)    m_xpbdSim.SetTimestampFrequency(tsFreq);
             if (m_overlayOk) m_overlayHost.SetTimestampFrequency(tsFreq);
+            if (m_gpuCullOk) m_gpuCull.SetTimestampFrequency(tsFreq);
         }
 
         // Enable real hydraulic & thermal erosion + D8 rivers for procedural frontier terrain!
@@ -571,6 +585,12 @@ public:
         m_camYaw    = 0.24f;
         m_camPitch  = -0.34f;
         m_esmLoaded = (st.activeCells > 0u);
+        if (m_esmLoaded) {
+            m_navMeshDirty = true;
+            BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
+                             float(lm.cellY) * raw::worldgen::kEsmCellSizeU,
+                             true);
+        }
         return m_esmLoaded;
     }
 
@@ -670,6 +690,273 @@ public:
         return p;
     }
 
+    bool BakeLocalNavMesh(float originOrCenterX, float originOrCenterY, bool isOriginCorner = false)
+    {
+        if (m_worldPhysics.GetStats().heightfieldCount == 0u) return false;
+        raw::worldgen::NavBakeConfig cfg{};
+        cfg.sizeX     = 4096.0f;
+        cfg.sizeY     = 4096.0f;
+        cfg.cellSizeU = 64.0f;
+        cfg.originX   = isOriginCorner ? originOrCenterX : (originOrCenterX - cfg.sizeX * 0.5f);
+        cfg.originY   = isOriginCorner ? originOrCenterY : (originOrCenterY - cfg.sizeY * 0.5f);
+        if (!m_navMesh.BakeFromPhysics(m_worldPhysics, cfg)) return false;
+        m_navMeshDirty = false;
+        ++m_navMeshBakeCount;
+        InitTacticalSquadAround(cfg.originX + cfg.sizeX * 0.5f, cfg.originY + cfg.sizeY * 0.5f);
+        return true;
+    }
+
+    void ComputeLiveNavPath()
+    {
+        if (!m_navMesh.IsBaked()) {
+            if (m_mode == WorldMode::RiverwoodEsm) {
+                const auto& lm = kTamrielLandmarks[m_landmarkIdx % 4u];
+                BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
+                                 float(lm.cellY) * raw::worldgen::kEsmCellSizeU, true);
+            } else {
+                BakeLocalNavMesh(m_camPos[0], m_camPos[1], false);
+            }
+        }
+        if (!m_navMesh.IsBaked()) return;
+
+        const auto& cfg = m_navMesh.Config();
+        const int32_t gw = static_cast<int32_t>(m_navMesh.GetStats().gridW);
+        const int32_t gh = static_cast<int32_t>(m_navMesh.GetStats().gridH);
+        const float cy = std::cos(m_camYaw), sy = std::sin(m_camYaw);
+
+        // Pick walkable start near camera (fallback to SW quadrant of baked 64x64 tile)
+        raw::worldgen::Vec3 startW{m_camPos[0], m_camPos[1], m_camPos[2]};
+        int32_t sgx = 0, sgy = 0;
+        bool hasStart = m_navMesh.FindNearestWalkableCell(startW, 12, &sgx, &sgy);
+        if (hasStart) {
+            startW = m_navMesh.GridToWorldCenter(sgx, sgy);
+        } else {
+            for (int32_t gy = 4; gy < gh / 2 && !hasStart; ++gy) {
+                for (int32_t gx = 4; gx < gw / 2 && !hasStart; ++gx) {
+                    const auto* c = m_navMesh.GetCell(gx, gy);
+                    if (c && c->tag == raw::worldgen::NavCellTag::Walkable && c->passableNeighborMask != 0u) {
+                        startW = m_navMesh.GridToWorldCenter(gx, gy);
+                        hasStart = true;
+                    }
+                }
+            }
+        }
+
+        // Pick a well-separated walkable goal ahead of camera (fallback to opposite NE quadrant)
+        raw::worldgen::Vec3 goalW{
+            std::clamp(startW.x + sy * 1800.0f, cfg.originX + 192.0f, cfg.originX + cfg.sizeX - 192.0f),
+            std::clamp(startW.y + cy * 1800.0f, cfg.originY + 192.0f, cfg.originY + cfg.sizeY - 192.0f),
+            startW.z
+        };
+        int32_t ggx = 0, ggy = 0;
+        raw::worldgen::NavPathResult res{};
+        if (hasStart && m_navMesh.FindNearestWalkableCell(goalW, 14, &ggx, &ggy)) {
+            const raw::worldgen::Vec3 cand = m_navMesh.GridToWorldCenter(ggx, ggy);
+            res = m_navMesh.FindPath(startW, cand, &m_worldPhysics);
+        }
+        if (hasStart && (!res.found || res.waypoints.size() < 2u || res.totalLengthU < 300.0f)) {
+            for (int32_t gy = gh - 6; gy >= gh / 2 && !res.found; --gy) {
+                for (int32_t gx = gw - 6; gx >= gw / 2 && !res.found; --gx) {
+                    const auto* c = m_navMesh.GetCell(gx, gy);
+                    if (c && c->tag == raw::worldgen::NavCellTag::Walkable && c->passableNeighborMask != 0u) {
+                        const raw::worldgen::Vec3 cand = m_navMesh.GridToWorldCenter(gx, gy);
+                        const auto probe = m_navMesh.FindPath(startW, cand, &m_worldPhysics);
+                        if (probe.found && probe.waypoints.size() >= 2u && probe.totalLengthU > 600.0f) {
+                            res = probe;
+                        }
+                    }
+                }
+            }
+        }
+        m_lastNavPath = res;
+        const auto st = m_navMesh.GetStats();
+        std::printf("[NavMesh] A* Path: found=%d waypoints=%zu (raw=%u) len=%.1fu search=%.3fms | walkable=%u bake=%.2fms\n",
+                    int(res.found), res.waypoints.size(), res.rawGridNodes, res.totalLengthU, res.searchTimeMs,
+                    st.walkableCells, st.bakeTimeMs);
+    }
+
+    struct NavMeshSquadProbe {
+        bool     baked          = false;
+        uint32_t walkableCells  = 0u;
+        double   bakeMs         = 0.0;
+        bool     pathFound      = false;
+        size_t   pathWaypoints  = 0u;
+        float    pathLengthU    = 0.0f;
+        double   pathSearchMs   = 0.0;
+        bool     squadAllFinite = true;
+        size_t   squadSize      = 0u;
+    };
+
+    NavMeshSquadProbe RunNavMeshSquadSelfTest()
+    {
+        NavMeshSquadProbe p{};
+        const auto& lm = kTamrielLandmarks[m_landmarkIdx % 4u];
+        const float ox = float(lm.cellX) * raw::worldgen::kEsmCellSizeU;
+        const float oy = float(lm.cellY) * raw::worldgen::kEsmCellSizeU;
+        p.baked = m_navMesh.IsBaked() || BakeLocalNavMesh(ox, oy, true);
+        const auto st = m_navMesh.GetStats();
+        p.walkableCells = st.walkableCells;
+        p.bakeMs        = st.bakeTimeMs;
+
+        // Compute cross-village A* path across Riverwood (4, -12)
+        const int32_t gw = static_cast<int32_t>(st.gridW);
+        const int32_t gh = static_cast<int32_t>(st.gridH);
+        raw::worldgen::Vec3 startW{}, goalW{};
+        bool pickedStart = false;
+        for (int32_t gy = 6; gy < std::min(26, gh) && !pickedStart; ++gy) {
+            for (int32_t gx = 6; gx < std::min(28, gw) && !pickedStart; ++gx) {
+                const auto* c = m_navMesh.GetCell(gx, gy);
+                if (c && c->tag == raw::worldgen::NavCellTag::Walkable && c->passableNeighborMask != 0u) {
+                    startW = m_navMesh.GridToWorldCenter(gx, gy);
+                    pickedStart = true;
+                }
+            }
+        }
+        raw::worldgen::NavPathResult bestPath{};
+        if (pickedStart) {
+            for (int32_t gy = std::max(0, gh - 8); gy >= gh / 2 && !bestPath.found; --gy) {
+                for (int32_t gx = std::max(0, gw - 8); gx >= gw / 2 && !bestPath.found; --gx) {
+                    const auto* c = m_navMesh.GetCell(gx, gy);
+                    if (c && c->tag == raw::worldgen::NavCellTag::Walkable && c->passableNeighborMask != 0u) {
+                        goalW = m_navMesh.GridToWorldCenter(gx, gy);
+                        const auto probe = m_navMesh.FindPath(startW, goalW, &m_worldPhysics);
+                        if (probe.found && probe.waypoints.size() >= 2u && probe.totalLengthU > 800.0f) {
+                            bestPath = probe;
+                        }
+                    }
+                }
+            }
+        }
+        m_lastNavPath  = bestPath;
+        p.pathFound    = bestPath.found;
+        p.pathWaypoints = bestPath.waypoints.size();
+        p.pathLengthU  = bestPath.totalLengthU;
+        p.pathSearchMs = bestPath.searchTimeMs;
+
+        // Run 10 steps of StepSquadTactics on the 4-agent tactical squad with zero NaNs
+        if (m_tacticalSquad.size() != 4u) {
+            InitTacticalSquadAround(ox + 2048.0f, oy + 2048.0f);
+        }
+        p.squadSize = m_tacticalSquad.size();
+        raw::worldgen::ThreatTarget threat{};
+        threat.position = pickedStart ? startW : raw::worldgen::Vec3{ox + 2048.0f, oy + 2048.0f, 0.0f};
+        threat.facing   = {0.0f, 1.0f, 0.0f};
+        for (int s = 0; s < 10; ++s) {
+            const auto out = raw::worldgen::StepSquadTactics(
+                m_tacticalSquad, threat, m_worldPhysics, m_navMesh.IsBaked() ? &m_navMesh : nullptr, 1.0f / 60.0f);
+            for (const auto& a : m_tacticalSquad) {
+                if (!std::isfinite(a.position.x) || !std::isfinite(a.position.y) || !std::isfinite(a.position.z) ||
+                    !std::isfinite(a.velocity.x) || !std::isfinite(a.velocity.y) || !std::isfinite(a.velocity.z)) {
+                    p.squadAllFinite = false;
+                }
+            }
+            for (const auto& o : out) {
+                if (!std::isfinite(o.desiredPosition.x) || !std::isfinite(o.desiredPosition.y) ||
+                    !std::isfinite(o.desiredPosition.z) || !std::isfinite(o.desiredSpeedU)) {
+                    p.squadAllFinite = false;
+                }
+            }
+        }
+        return p;
+    }
+
+    bool CaptureScreenshotBmp(std::string* outFilename = nullptr)
+    {
+        if (!m_ready || !m_displayLdr || m_width == 0u || m_height == 0u) return false;
+        WaitGpuIdle();
+
+        const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
+        D3D12_HEAP_PROPERTIES rbHp{D3D12_HEAP_TYPE_READBACK};
+        D3D12_RESOURCE_DESC rbDesc{};
+        rbDesc.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rbDesc.Width            = static_cast<UINT64>(dispPitch) * m_height;
+        rbDesc.Height           = 1u;
+        rbDesc.DepthOrArraySize = 1u;
+        rbDesc.MipLevels        = 1u;
+        rbDesc.SampleDesc.Count = 1u;
+        rbDesc.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> rbDisp;
+        if (FAILED(m_dev->CreateCommittedResource(&rbHp, D3D12_HEAP_FLAG_NONE, &rbDesc,
+                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rbDisp)))) {
+            return false;
+        }
+
+        if (FAILED(m_alloc[0]->Reset()) || FAILED(m_cmd->Reset(m_alloc[0].Get(), nullptr))) return false;
+        auto bIn = MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        m_cmd->ResourceBarrier(1u, &bIn);
+        D3D12_TEXTURE_COPY_LOCATION dDst{};
+        dDst.pResource = rbDisp.Get();
+        dDst.Type      = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dDst.PlacedFootprint.Footprint = {DXGI_FORMAT_R8G8B8A8_UNORM, m_width, m_height, 1u, dispPitch};
+        D3D12_TEXTURE_COPY_LOCATION dSrc{};
+        dSrc.pResource = m_displayLdr.Get();
+        dSrc.Type      = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        m_cmd->CopyTextureRegion(&dDst, 0u, 0u, 0u, &dSrc, nullptr);
+        auto bOut = MakeBarrier(m_displayLdr.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+        m_cmd->ResourceBarrier(1u, &bOut);
+        if (FAILED(m_cmd->Close())) return false;
+
+        ID3D12CommandList* lists[1] = {m_cmd.Get()};
+        m_queue->ExecuteCommandLists(1u, lists);
+        WaitGpuIdle();
+
+        void* mapped = nullptr;
+        if (FAILED(rbDisp->Map(0u, nullptr, &mapped)) || !mapped) return false;
+
+        const uint32_t rowStride = ((m_width * 3u) + 3u) & ~3u;
+        const uint32_t imgBytes  = rowStride * m_height;
+        const uint32_t fileBytes = 54u + imgBytes;
+
+        uint8_t hdr[54]{};
+        hdr[0] = 'B'; hdr[1] = 'M';
+        auto putU32 = [&](size_t off, uint32_t v) {
+            hdr[off + 0] = static_cast<uint8_t>(v & 0xFFu);
+            hdr[off + 1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+            hdr[off + 2] = static_cast<uint8_t>((v >> 16) & 0xFFu);
+            hdr[off + 3] = static_cast<uint8_t>((v >> 24) & 0xFFu);
+        };
+        auto putU16 = [&](size_t off, uint16_t v) {
+            hdr[off + 0] = static_cast<uint8_t>(v & 0xFFu);
+            hdr[off + 1] = static_cast<uint8_t>((v >> 8) & 0xFFu);
+        };
+        putU32(2u, fileBytes);
+        putU32(10u, 54u);
+        putU32(14u, 40u);
+        putU32(18u, m_width);
+        putU32(22u, m_height);
+        putU16(26u, 1u);
+        putU16(28u, 24u);
+        putU32(34u, imgBytes);
+
+        char fname[64]{};
+        std::snprintf(fname, sizeof(fname), "raw_viewer_shot_%u.bmp", ++m_screenshotCounter);
+        FILE* fp = nullptr;
+        bool ok = false;
+        if (fopen_s(&fp, fname, "wb") == 0 && fp) {
+            ok = (std::fwrite(hdr, 1u, sizeof(hdr), fp) == sizeof(hdr));
+            std::vector<uint8_t> rowBuf(rowStride, 0u);
+            for (UINT y = 0u; ok && y < m_height; ++y) {
+                const UINT srcY = m_height - 1u - y; // BMP bottom-up scanline order
+                const uint8_t* srcRow = static_cast<const uint8_t*>(mapped) + static_cast<size_t>(srcY) * dispPitch;
+                for (UINT x = 0u; x < m_width; ++x) {
+                    rowBuf[x * 3u + 0u] = srcRow[x * 4u + 2u]; // B
+                    rowBuf[x * 3u + 1u] = srcRow[x * 4u + 1u]; // G
+                    rowBuf[x * 3u + 2u] = srcRow[x * 4u + 0u]; // R
+                }
+                ok = (std::fwrite(rowBuf.data(), 1u, rowStride, fp) == rowStride);
+            }
+            std::fclose(fp);
+        }
+        rbDisp->Unmap(0u, nullptr);
+
+        if (ok) {
+            m_lastShotName = fname;
+            if (outFilename) *outFilename = fname;
+            std::printf("[Viewer] Saved 24-bit screenshot: %s (%ux%u, %u bytes)\n", fname, m_width, m_height, fileBytes);
+        }
+        return ok;
+    }
+
     void ToggleAudio()
     {
         if (m_opt.headlessFrames > 0u) return; // Strictly OFF in headless CI mode
@@ -699,6 +986,7 @@ public:
         m_camPos[2] = m_frontierCenter[2] + 1150.0f;
         m_camYaw    = 0.0f;
         m_camPitch  = -0.50f;
+        m_navMeshDirty = true;
         TriggerFreshFracture();
     }
 
@@ -841,6 +1129,31 @@ public:
                 UploadDebrisChunk();
                 m_destructionDirty = false;
             }
+        }
+
+        // 3b. Lazily bake 64x64 local 3D NavMesh on newly loaded terrain/NIF physics & step 4-agent Tactical Squad AI!
+        if (m_navMeshDirty && m_worldPhysics.GetStats().heightfieldCount > 0u) {
+            if (m_mode == WorldMode::RiverwoodEsm) {
+                const auto& lm = kTamrielLandmarks[m_landmarkIdx % 4u];
+                BakeLocalNavMesh(float(lm.cellX) * raw::worldgen::kEsmCellSizeU,
+                                 float(lm.cellY) * raw::worldgen::kEsmCellSizeU, true);
+            } else {
+                BakeLocalNavMesh(m_frontierCenter[0], m_frontierCenter[1], false);
+            }
+        }
+        if (!m_tacticalSquad.empty() && m_worldPhysics.GetStats().heightfieldCount > 0u) {
+            raw::worldgen::ThreatTarget threat{};
+            float groundZ = m_camPos[2] - 120.0f;
+            if (m_walkMode) {
+                threat.position = m_playerBody.position;
+            } else {
+                float hz = 0.0f;
+                if (m_worldPhysics.SampleTerrainHeight(m_camPos[0], m_camPos[1], &hz)) groundZ = hz;
+                threat.position = {m_camPos[0], m_camPos[1], groundZ};
+            }
+            threat.facing = {std::sin(m_camYaw), std::cos(m_camYaw), 0.0f};
+            m_lastSquadOut = raw::worldgen::StepSquadTactics(
+                m_tacticalSquad, threat, m_worldPhysics, m_navMesh.IsBaked() ? &m_navMesh : nullptr, dtClamped);
         }
 
         // 4. Build camera & LightingCommon.hlsli cbuffer P.
@@ -986,11 +1299,75 @@ public:
             }
         }
 
-        // 8. Execute Live 4-Cascade Radiance Cascades Screen GI + RawAgxDisplay + RawOverlayHost HUD + Copy to SwapChain!
+        // 8. Execute Live GPU Hi-Z + Instance Culler + 4-Cascade Radiance Cascades Screen GI + RawAgxDisplay + RawOverlayHost HUD + Copy to SwapChain!
         const UINT dispSlot = static_cast<UINT>(m_frameCount % kRingFrames);
         WaitFenceVal(m_dispFenceVal[dispSlot]);
         if (FAILED(m_dispAlloc[dispSlot]->Reset()) || FAILED(m_dispCmd->Reset(m_dispAlloc[dispSlot].Get(), nullptr))) {
             return false;
+        }
+
+        if (m_gpuCullOk && m_cullInstBuf && m_cullInstUpload && m_cullInstMapped) {
+            std::vector<GpuCullInstance> insts;
+            insts.reserve(std::min<size_t>(activeMap.size(), kMaxCullInstances));
+            uint32_t idCounter = 0u;
+            uint32_t meshletOff = 0u;
+            for (const auto& kv : activeMap) {
+                if (insts.size() >= kMaxCullInstances) break;
+                const auto& ch = kv.second;
+                const float r = std::max(ch.boundSphere[3], 64.0f);
+                GpuCullInstance gi{};
+                gi.center[0]     = ch.boundSphere[0];
+                gi.center[1]     = ch.boundSphere[1];
+                gi.center[2]     = ch.boundSphere[2];
+                gi.radius        = r;
+                gi.aabbMin[0]    = ch.boundSphere[0] - r;
+                gi.aabbMin[1]    = ch.boundSphere[1] - r;
+                gi.aabbMin[2]    = ch.boundSphere[2] - r;
+                gi.maxDrawDist   = 250000.0f;
+                gi.aabbMax[0]    = ch.boundSphere[0] + r;
+                gi.aabbMax[1]    = ch.boundSphere[1] + r;
+                gi.aabbMax[2]    = ch.boundSphere[2] + r;
+                gi.meshletOffset = meshletOff;
+                gi.meshletCount  = std::max(1u, ch.meshletCount);
+                gi.instanceId    = idCounter++;
+                gi.lodBiasFlags  = 0u;
+                meshletOff      += gi.meshletCount;
+                insts.push_back(gi);
+            }
+            const uint32_t instCount = static_cast<uint32_t>(insts.size());
+            if (instCount > 0u) {
+                const uint64_t slotByteOff = static_cast<uint64_t>(dispSlot) * kMaxCullInstances * sizeof(GpuCullInstance);
+                std::memcpy(m_cullInstMapped + slotByteOff, insts.data(), instCount * sizeof(GpuCullInstance));
+                auto bCullCopyIn = MakeBarrier(m_cullInstBuf.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+                m_dispCmd->ResourceBarrier(1u, &bCullCopyIn);
+                m_dispCmd->CopyBufferRegion(m_cullInstBuf.Get(), 0ull, m_cullInstUpload.Get(), slotByteOff,
+                                            static_cast<uint64_t>(instCount) * sizeof(GpuCullInstance));
+                auto bCullCopyOut = MakeBarrier(m_cullInstBuf.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+                                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                m_dispCmd->ResourceBarrier(1u, &bCullCopyOut);
+
+                m_gpuCull.BuildHiZPyramid(m_dispCmd.Get(), m_depthIn.Get(), m_width, m_height,
+                                          D3D12_RESOURCE_STATE_COMMON);
+
+                GpuCullViewParams cvp{};
+                BuildWorldRowVectorViewProj(u.worldToClip, m_camPos, cvp.viewProj);
+                cvp.autoExtractPlanes        = true;
+                cvp.cameraPosW[0]            = m_camPos[0];
+                cvp.cameraPosW[1]            = m_camPos[1];
+                cvp.cameraPosW[2]            = m_camPos[2];
+                cvp.depthBias                = 1.0e-4f;
+                cvp.defaultIndexCountPerInst = 36u;
+                cvp.enableFrustumCull        = true;
+                cvp.enableDistanceCull       = true;
+                cvp.enableHiZCull            = true;
+                m_gpuCull.CullInstances(m_dispCmd.Get(), m_cullInstBuf.Get(), instCount, cvp,
+                                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+                auto bCullDone = MakeBarrier(m_cullInstBuf.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                                             D3D12_RESOURCE_STATE_COMMON);
+                m_dispCmd->ResourceBarrier(1u, &bCullDone);
+                m_lastCullInstCount = instCount;
+            }
         }
 
         if (m_radOk && m_giEnabled) {
@@ -1093,6 +1470,11 @@ public:
         bool     overlayActive    = false;
         float    overlayMs        = 0.0f;
         uint32_t hudNonZeroPx     = 0u;
+        bool     gpuCullActive    = false;
+        float    gpuHiZMs         = 0.0f;
+        float    gpuCullMs        = 0.0f;
+        uint32_t gpuHiZMips       = 0u;
+        uint32_t gpuCullInstances = 0u;
         uint32_t biomesFound      = 0u;
     };
 
@@ -1115,6 +1497,11 @@ public:
         out->xpbdParticles = m_xpbdSim.ParticleCount();
         out->overlayActive = m_overlayOk && m_hudEnabled;
         out->overlayMs = m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f;
+        out->gpuCullActive = m_gpuCullOk && m_gpuCull.Ready() && m_lastCullInstCount > 0u;
+        out->gpuHiZMs = m_gpuCull.HasValidHiZTiming() ? m_gpuCull.GetLastHiZMs() : 0.0f;
+        out->gpuCullMs = m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f;
+        out->gpuHiZMips = m_gpuCull.HiZMipCount();
+        out->gpuCullInstances = m_lastCullInstCount;
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -1243,10 +1630,20 @@ public:
             m_tamrielStreamer.Shutdown(&sink);
         }
         m_tamrielCellHandles.clear();
+        m_navMesh.Clear();
+        m_tacticalSquad.clear();
+        m_lastSquadOut.clear();
         m_worldPhysics.Clear();
 
         m_frontierChunks.clear();
         m_esmChunks.clear();
+        if (m_cullInstUpload && m_cullInstMapped) {
+            m_cullInstUpload->Unmap(0u, nullptr);
+            m_cullInstMapped = nullptr;
+        }
+        m_cullInstUpload.Reset();
+        m_cullInstBuf.Reset();
+        m_gpuCull.Shutdown();
         m_overlayHost.Shutdown();
         m_xpbdSim.Shutdown();
         m_fluidComposite.Shutdown();
@@ -1303,9 +1700,18 @@ public:
             std::snprintf(hitBuf, sizeof(hitBuf), " | Hit:%.0fu(%s)",
                           m_lastRayHit.distance, m_lastRayHit.hitTerrain ? "Terrain" : "NIF");
         }
-        char buf[512]{};
+        char navBuf[80]{};
+        if (m_lastNavPath.found && !m_lastNavPath.waypoints.empty()) {
+            std::snprintf(navBuf, sizeof(navBuf), " | Nav:%zuwp(%.0fu,%.2fms)",
+                          m_lastNavPath.waypoints.size(), m_lastNavPath.totalLengthU, m_lastNavPath.searchTimeMs);
+        } else if (m_navMesh.IsBaked()) {
+            std::snprintf(navBuf, sizeof(navBuf), " | Nav:%uw", m_navMesh.GetStats().walkableCells);
+        }
+        const float cullTotalMs = (m_gpuCull.HasValidHiZTiming() ? m_gpuCull.GetLastHiZMs() : 0.0f) +
+                                  (m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f);
+        char buf[640]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms HUD:%.3fms%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms HUD:%.3fms%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -1313,8 +1719,9 @@ public:
                       ft.valid ? ft.waterStepMs : 0.0f,
                       rt.valid ? rt.giPassMs : 0.0f,
                       m_xpbdSim.HasValidTiming() ? m_xpbdSim.GetLastStepMs() : 0.0f,
+                      cullTotalMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
-                      hitBuf,
+                      hitBuf, navBuf,
                       m_activeShards);
         return buf;
     }
@@ -1540,6 +1947,7 @@ private:
                 auto hf = raw::worldgen::MakeHeightfieldFromTerrainChunk(entry.terrain, sc.terrain.seaLevelZ, 3u);
                 hf.cellKey = raw::worldgen::PackCellKey(entry.key.x, entry.key.y);
                 v->m_worldPhysics.AddTerrainHeightfield(hf);
+                if (!v->m_navMesh.IsBaked()) v->m_navMeshDirty = true;
                 return h;
             }
             void OnChunkEvicted(raw::worldgen::ChunkKey key, uint64_t h) override {
@@ -1729,6 +2137,29 @@ private:
         snap.historyCount   = count;
 
         FormatEngineTelemetryLines(snap, outHud);
+        // Append Wave 50 live GPU Hi-Z Cull timing on line 3 and NavMesh / Squad AI telemetry on line 7!
+        const float hizMs  = m_gpuCull.HasValidHiZTiming() ? m_gpuCull.GetLastHiZMs() : 0.0f;
+        const float cullMs = m_gpuCull.HasValidCullTiming() ? m_gpuCull.GetLastCullMs() : 0.0f;
+        std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "SOLVERS GI:%s FL:%s XPBD:%s | CULL %.3fMS",
+                      snap.giEnabled ? "ON" : "OFF",
+                      snap.fluidEnabled ? "ON" : "OFF",
+                      snap.xpbdEnabled ? "ON" : "OFF",
+                      static_cast<double>(hizMs + cullMs));
+
+        const auto nst = m_navMesh.GetStats();
+        std::memset(outHud.lines[7], 0, sizeof(outHud.lines[7]));
+        if (m_lastNavPath.found && !m_lastNavPath.waypoints.empty()) {
+            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u | A* %zuWP %.0fU %.2fMS | SQ:%zu",
+                          nst.walkableCells, m_lastNavPath.waypoints.size(),
+                          static_cast<double>(m_lastNavPath.totalLengthU),
+                          m_lastNavPath.searchTimeMs, m_tacticalSquad.size());
+        } else {
+            std::snprintf(outHud.lines[7], sizeof(outHud.lines[7]), "NAV W:%u BAKE:%.1fMS | SQ:%zu | N=PATH F12=BMP",
+                          nst.walkableCells, nst.bakeTimeMs, m_tacticalSquad.size());
+        }
+        outHud.lineColorTag[7] = kOverlayColorCyan;
+        outHud.lineCount       = 8u;
         outHud.enabled    = m_hudEnabled;
         outHud.srgbOutput = true; // m_displayLdr holds sRGB-encoded AgX output in R8G8B8A8_UNORM
     }
@@ -1944,6 +2375,88 @@ private:
         m_audio.UpdateSceneState(as);
     }
 
+    bool CreateGpuCullInstanceBuffers()
+    {
+        const UINT64 instBytes = static_cast<UINT64>(kMaxCullInstances) * sizeof(GpuCullInstance);
+        D3D12_HEAP_PROPERTIES defHp{D3D12_HEAP_TYPE_DEFAULT};
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width            = (instBytes + 255ull) & ~255ull;
+        rd.Height           = 1u;
+        rd.DepthOrArraySize = 1u;
+        rd.MipLevels        = 1u;
+        rd.SampleDesc.Count = 1u;
+        rd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(m_dev->CreateCommittedResource(&defHp, D3D12_HEAP_FLAG_NONE, &rd,
+                                                  D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&m_cullInstBuf)))) {
+            return false;
+        }
+        D3D12_HEAP_PROPERTIES upHp{D3D12_HEAP_TYPE_UPLOAD};
+        rd.Width = static_cast<UINT64>(kRingFrames) * instBytes;
+        if (FAILED(m_dev->CreateCommittedResource(&upHp, D3D12_HEAP_FLAG_NONE, &rd,
+                                                  D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_cullInstUpload)))) {
+            return false;
+        }
+        const D3D12_RANGE zeroR{0u, 0u};
+        void* mapped = nullptr;
+        if (FAILED(m_cullInstUpload->Map(0u, &zeroR, &mapped)) || !mapped) return false;
+        m_cullInstMapped = static_cast<uint8_t*>(mapped);
+        return true;
+    }
+
+    static void BuildWorldRowVectorViewProj(const float camRelColMajor[16], const float camPos[3], float outRowVec[16])
+    {
+        // Convert camera-relative column-vector matrix M (clip = M * float4(p - cam, 1))
+        // into absolute world-space row-vector matrix V (clip = float4(p, 1) * V) for RawGpuCullHost.
+        for (int r = 0; r < 4; ++r) {
+            const float m0 = camRelColMajor[r * 4 + 0];
+            const float m1 = camRelColMajor[r * 4 + 1];
+            const float m2 = camRelColMajor[r * 4 + 2];
+            const float m3 = camRelColMajor[r * 4 + 3];
+            outRowVec[0 * 4 + r] = m0;
+            outRowVec[1 * 4 + r] = m1;
+            outRowVec[2 * 4 + r] = m2;
+            outRowVec[3 * 4 + r] = m3 - (m0 * camPos[0] + m1 * camPos[1] + m2 * camPos[2]);
+        }
+    }
+
+    void InitTacticalSquadAround(float centerX, float centerY)
+    {
+        m_tacticalSquad.clear();
+        m_tacticalSquad.reserve(4u);
+        static constexpr raw::worldgen::TacticalArchetype kArchetypes[4] = {
+            raw::worldgen::TacticalArchetype::MeleeFlanker,
+            raw::worldgen::TacticalArchetype::MeleeFlanker,
+            raw::worldgen::TacticalArchetype::RangedArcher,
+            raw::worldgen::TacticalArchetype::Spellcaster,
+        };
+        static constexpr float kOffsets[4][2] = {
+            { 280.0f,  160.0f},
+            {-260.0f,  180.0f},
+            { 640.0f, -240.0f},
+            {-640.0f, -220.0f},
+        };
+        for (uint32_t i = 0u; i < 4u; ++i) {
+            raw::worldgen::SquadAgent a{};
+            a.id        = i + 1u;
+            a.archetype = kArchetypes[i];
+            float sx    = centerX + kOffsets[i][0];
+            float sy    = centerY + kOffsets[i][1];
+            float sz    = 0.0f;
+            int32_t gx = 0, gy = 0;
+            if (m_navMesh.IsBaked() && m_navMesh.FindNearestWalkableCell({sx, sy, 0.0f}, 12, &gx, &gy)) {
+                a.position = m_navMesh.GridToWorldCenter(gx, gy);
+            } else {
+                m_worldPhysics.SampleTerrainHeight(sx, sy, &sz);
+                a.position = {sx, sy, sz};
+            }
+            a.hpRatio = 1.0f;
+            m_tacticalSquad.push_back(a);
+        }
+    }
+
+    static constexpr uint32_t kMaxCullInstances = 1024u;
+
     ViewerOptions m_opt{};
     HWND          m_hwnd = nullptr;
     UINT          m_width = 1280u;
@@ -1955,6 +2468,7 @@ private:
     bool          m_xpbdOk = false;
     bool          m_xpbdUploaded = false;
     bool          m_overlayOk = false;
+    bool          m_gpuCullOk = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -1991,6 +2505,11 @@ private:
     RawRadianceHost                    m_radianceHost;
     RawXpbdSimHost                     m_xpbdSim;
     RawOverlayHost                     m_overlayHost;
+    RawGpuCullHost                     m_gpuCull;
+    ComPtr<ID3D12Resource>             m_cullInstBuf;
+    ComPtr<ID3D12Resource>             m_cullInstUpload;
+    uint8_t*                           m_cullInstMapped = nullptr;
+    uint32_t                           m_lastCullInstCount = 0u;
     raw::audio::RawAudioOutput         m_audio;
     raw::worldgen::RawWeatherSim          m_weatherSim;
     raw::worldgen::RawWorldShowcase       m_showcase;
@@ -2002,6 +2521,14 @@ private:
     std::string                           m_activeEsmWeatherEdid;
     raw::worldgen::EsmPhysicalWeatherParams m_activeEsmWeatherParams{};
     raw::worldgen::RawWorldPhysics        m_worldPhysics;
+    raw::worldgen::RawNavMesh             m_navMesh;
+    std::vector<raw::worldgen::SquadAgent> m_tacticalSquad;
+    std::vector<raw::worldgen::TacticalSteeringOutput> m_lastSquadOut;
+    raw::worldgen::NavPathResult          m_lastNavPath{};
+    bool                                  m_navMeshDirty = false;
+    uint64_t                              m_navMeshBakeCount = 0u;
+    uint32_t                              m_screenshotCounter = 0u;
+    std::string                           m_lastShotName;
     raw::worldgen::CharacterBody          m_playerBody{};
     raw::worldgen::RayHit                 m_lastRayHit{};
     raw::worldgen::DestructionSimulation  m_destSim;
@@ -2107,8 +2634,10 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case '4': st->viewer->ApplySeason(SeasonChoice::Winter); break;
                     case 'P': st->viewer->ToggleWalkMode(); break;
                     case 'C': st->viewer->FireRaycastStrike(); break;
+                    case 'N': st->viewer->ComputeLiveNavPath(); break;
                     case 'H':
                     case VK_F9: st->viewer->ToggleHud(); break;
+                    case VK_F12: st->viewer->CaptureScreenshotBmp(); break;
                     case 'F': st->viewer->ToggleFire(); break;
                     case 'G': st->viewer->ToggleGI(); break;
                     case 'B': st->viewer->CycleBiome(); break;
@@ -2181,7 +2710,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, F9/H HUD, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -2205,11 +2734,13 @@ int main(int argc, char** argv)
         bool allFramesOk = true;
         raw::worldgen::TamrielStreamStats riverwoodStats{};
         RawEngineViewer::PhysicsWalkProbe riverwoodPhys{};
+        RawEngineViewer::NavMeshSquadProbe riverwoodNav{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u && opt.startEsm) {
                 riverwoodStats = viewer.GetTamrielStats();
                 riverwoodPhys = viewer.RunPhysicsWalkSelfTest();
+                riverwoodNav  = viewer.RunNavMeshSquadSelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -2232,17 +2763,22 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
                     audit.fireStepMs, audit.waterStepMs,
                     audit.xpbdActive ? "ON" : "off", audit.xpbdParticles, audit.xpbdStepMs,
+                    audit.gpuCullActive ? "ON" : "off", audit.gpuCullInstances, audit.gpuHiZMips, audit.gpuHiZMs, audit.gpuCullMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
         check(audit.xpbdActive && audit.xpbdParticles == 4096u && std::isfinite(audit.xpbdStepMs) && audit.xpbdStepMs >= 0.0f,
               "Live GPU XPBD soft-body/hair/bush solver (4,096 particles / 256 chains) stepped cleanly");
+        check(audit.gpuCullActive && audit.gpuHiZMips > 1u &&
+              std::isfinite(audit.gpuHiZMs) && audit.gpuHiZMs >= 0.0f &&
+              std::isfinite(audit.gpuCullMs) && audit.gpuCullMs >= 0.0f,
+              "Live GPU Hi-Z Pyramid + Instance Culler (RawGpuCullHost) ran cleanly with finite timings");
         check(audit.overlayActive && std::isfinite(audit.overlayMs) && audit.overlayMs >= 0.0f && audit.hudNonZeroPx > 500u,
               "Live GPU Telemetry & Sparkline HUD (RawOverlayHost) rendered cleanly onto LDR display buffer");
         if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -2257,6 +2793,10 @@ int main(int argc, char** argv)
             std::printf("       Riverwood Walk Physics: hfs=%u, bvhTris=%u, rayHit=%d (dist=%.1fu), walkGrounded=%d, feetZ=%.1f, finite=%d\n",
                         riverwoodPhys.hfCount, riverwoodPhys.bvhTriangles, int(riverwoodPhys.rayHit), riverwoodPhys.rayDist,
                         int(riverwoodPhys.walkGrounded), riverwoodPhys.finalFeetZ, int(riverwoodPhys.walkAllFinite));
+            std::printf("       Riverwood NavMesh+Squad: baked=%d walkable=%u bake=%.2fms | A* found=%d wp=%zu len=%.1fu search=%.3fms | squad=%zu finite=%d\n",
+                        int(riverwoodNav.baked), riverwoodNav.walkableCells, riverwoodNav.bakeMs,
+                        int(riverwoodNav.pathFound), riverwoodNav.pathWaypoints, riverwoodNav.pathLengthU, riverwoodNav.pathSearchMs,
+                        riverwoodNav.squadSize, int(riverwoodNav.squadAllFinite));
             check(riverwoodStats.activeCells >= 1u && teleportedToWhiterun && whStats.activeCells >= 1u &&
                   viewer.TotalTamrielEvictions() > 0u && audit.drawnMeshlets > 500u,
                   "RawTamrielWorldStreamer streamed Riverwood 3x3 ring, evicted & reloaded Whiterun 3x3 ring live on GPU");
@@ -2264,6 +2804,10 @@ int main(int argc, char** argv)
                   "RawEsmNpcWeatherLoader loaded >= 50 authentic Skyrim.esm WTHR records and cycled live");
             check(riverwoodPhys.rayHit && riverwoodPhys.walkGrounded && riverwoodPhys.walkAllFinite,
                   "RawWorldPhysics RayCast + 24-step grounded capsule walk succeeded over real Riverwood terrain & NIF BVH");
+            check(riverwoodNav.baked && riverwoodNav.walkableCells > 1000u &&
+                  riverwoodNav.pathFound && riverwoodNav.pathWaypoints >= 2u &&
+                  riverwoodNav.squadSize == 4u && riverwoodNav.squadAllFinite,
+                  "RawNavMeshAi baked Riverwood 64x64 NavMesh (>1000 walkable), found cross-village A* path & stepped 4-agent squad cleanly");
         }
         check(rbOk && audit.drawnMeshlets > 0u && audit.activeShards >= 10u && audit.radianceActive && audit.biomesFound == 6u,
               "Rendered terrain + flora + 20-shard destruction + 64^3 NS fire + 4-cascade Radiance GI (6/6 biomes discovered)");

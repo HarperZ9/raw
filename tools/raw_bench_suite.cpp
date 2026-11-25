@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 8 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 9 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -8,6 +8,7 @@
 //   6. Biomechanical 3D Flora & Hydraulic Terrain Erosion (RawFloraEngine + RawHydrologyGen + RawAssetValidator)
 //   7. Multi-Cell Tamriel Streaming (RawTamrielWorldStreamer, graceful skip if Skyrim.esm absent)
 //   8. GPU XPBD Soft-Body / Hair / Cloth / Bush-Bone Solver (RawXpbdSimHost, 256 chains / 4,096 particles)
+//   9. GPU Conservative Hi-Z Pyramid + 16,384-Instance Frustum/Occlusion Culler (RawGpuCullHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -28,6 +29,7 @@
 #include "../src/d3d12_bridge/RawFluidSimHost.h"
 #include "../src/d3d12_bridge/RawRadianceHost.h"
 #include "../src/d3d12_bridge/RawXpbdSimHost.h"
+#include "../src/d3d12_bridge/RawGpuCullHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -595,6 +597,116 @@ struct BenchDx12Rig {
         rbBuf->Unmap(0, &wr);
         return true;
     }
+
+    bool UploadR32Tex2D(ComPtr<ID3D12Resource>& tex, uint32_t w, uint32_t h, const std::vector<float>& data)
+    {
+        D3D12_HEAP_PROPERTIES hpDef{};
+        hpDef.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rd.Width            = w;
+        rd.Height           = h;
+        rd.DepthOrArraySize = 1u;
+        rd.MipLevels        = 1u;
+        rd.Format           = DXGI_FORMAT_R32_FLOAT;
+        rd.SampleDesc.Count = 1u;
+        if (FAILED(dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &rd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex)))) {
+            return false;
+        }
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+        UINT numRows = 0u;
+        UINT64 rowBytes = 0ull, totalBytes = 0ull;
+        dev->GetCopyableFootprints(&rd, 0u, 1u, 0ull, &fp, &numRows, &rowBytes, &totalBytes);
+
+        D3D12_HEAP_PROPERTIES hpUp{};
+        hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC ubd{};
+        ubd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        ubd.Width            = totalBytes;
+        ubd.Height           = 1u;
+        ubd.DepthOrArraySize = 1u;
+        ubd.MipLevels        = 1u;
+        ubd.SampleDesc.Count = 1u;
+        ubd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> upBuf;
+        if (FAILED(dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &ubd,
+                                                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upBuf)))) {
+            return false;
+        }
+        void* mapped = nullptr;
+        D3D12_RANGE rr{0u, 0u};
+        if (FAILED(upBuf->Map(0u, &rr, &mapped)) || !mapped) return false;
+        auto* base = static_cast<uint8_t*>(mapped) + fp.Offset;
+        for (uint32_t y = 0u; y < h; ++y) {
+            std::memcpy(base + static_cast<size_t>(y) * fp.Footprint.RowPitch,
+                        data.data() + static_cast<size_t>(y) * w,
+                        static_cast<size_t>(w) * sizeof(float));
+        }
+        upBuf->Unmap(0u, nullptr);
+
+        if (!BeginFrame()) return false;
+        D3D12_TEXTURE_COPY_LOCATION dstLoc{};
+        dstLoc.pResource        = tex.Get();
+        dstLoc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dstLoc.SubresourceIndex = 0u;
+        D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+        srcLoc.pResource       = upBuf.Get();
+        srcLoc.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        srcLoc.PlacedFootprint = fp;
+        cmd->CopyTextureRegion(&dstLoc, 0u, 0u, 0u, &srcLoc, nullptr);
+
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = tex.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cmd->ResourceBarrier(1u, &b);
+        return FlushAndWait();
+    }
+
+    bool UploadDefaultBuffer(ComPtr<ID3D12Resource>& dstBuf, const void* data, uint64_t byteSize)
+    {
+        const uint64_t aligned = (byteSize + 255ull) & ~255ull;
+        D3D12_HEAP_PROPERTIES hpDef{};
+        hpDef.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC rd{};
+        rd.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width            = aligned;
+        rd.Height           = 1u;
+        rd.DepthOrArraySize = 1u;
+        rd.MipLevels        = 1u;
+        rd.SampleDesc.Count = 1u;
+        rd.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        if (FAILED(dev->CreateCommittedResource(&hpDef, D3D12_HEAP_FLAG_NONE, &rd,
+                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&dstBuf)))) {
+            return false;
+        }
+        D3D12_HEAP_PROPERTIES hpUp{};
+        hpUp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        ComPtr<ID3D12Resource> upBuf;
+        if (FAILED(dev->CreateCommittedResource(&hpUp, D3D12_HEAP_FLAG_NONE, &rd,
+                                                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upBuf)))) {
+            return false;
+        }
+        void* mapped = nullptr;
+        D3D12_RANGE rr{0u, 0u};
+        if (FAILED(upBuf->Map(0u, &rr, &mapped)) || !mapped) return false;
+        std::memcpy(mapped, data, static_cast<size_t>(byteSize));
+        upBuf->Unmap(0u, nullptr);
+
+        if (!BeginFrame()) return false;
+        cmd->CopyBufferRegion(dstBuf.Get(), 0ull, upBuf.Get(), 0ull, byteSize);
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = dstBuf.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cmd->ResourceBarrier(1u, &b);
+        return FlushAndWait();
+    }
 };
 
 // ----------------------------------------------------------------------------
@@ -709,6 +821,26 @@ struct XpbdBenchResult {
     float       maxStretchRatio = 0.0f;
     float       minColliderSD   = 0.0f;
     float       hostStepMs      = 0.0f;
+    std::string note;
+};
+
+struct GpuCullBenchResult {
+    bool        passed              = false;
+    Percentiles hizGpuMs{};
+    Percentiles cullGpuMs{};
+    Percentiles combinedGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    depthWidth          = 512u;
+    uint32_t    depthHeight         = 512u;
+    uint32_t    instanceCount       = 16384u;
+    uint32_t    visibleCount        = 0u;
+    uint32_t    visibleMeshlets     = 0u;
+    uint32_t    frustumCulled       = 0u;
+    uint32_t    distanceCulled      = 0u;
+    uint32_t    hizCulled           = 0u;
+    uint32_t    falseOcclusionCount = 0u;
+    float       hostHiZMs           = 0.0f;
+    float       hostCullMs          = 0.0f;
     std::string note;
 };
 
@@ -1521,6 +1653,244 @@ XpbdBenchResult RunXpbdBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint3
 }
 
 // ----------------------------------------------------------------------------
+// 9. GPU Conservative Hi-Z Pyramid + 16,384-Instance Culler (RawGpuCullHost)
+// ----------------------------------------------------------------------------
+GpuCullBenchResult RunGpuCullBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    GpuCullBenchResult res{};
+    raw::bridge::RawGpuCullHost host;
+    raw::bridge::GpuCullDesc desc{};
+    desc.maxInstances     = 65536u;
+    desc.initialHiZWidth  = res.depthWidth;
+    desc.initialHiZHeight = res.depthHeight;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawGpuCullHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    // Build 512x512 depth buffer with giant z=0.25 occluder wall covering UV [0.15, 0.85]^2
+    std::vector<float> depthImg(static_cast<size_t>(res.depthWidth) * res.depthHeight, 1.0f);
+    const uint32_t wallMinPx = static_cast<uint32_t>(0.15f * res.depthWidth);
+    const uint32_t wallMaxPx = static_cast<uint32_t>(0.85f * res.depthWidth);
+    for (uint32_t y = wallMinPx; y <= wallMaxPx; ++y) {
+        for (uint32_t x = wallMinPx; x <= wallMaxPx; ++x) {
+            depthImg[static_cast<size_t>(y) * res.depthWidth + x] = 0.25f;
+        }
+    }
+    ComPtr<ID3D12Resource> depthTex;
+    if (!rig.UploadR32Tex2D(depthTex, res.depthWidth, res.depthHeight, depthImg)) {
+        res.note = "Upload 512x512 Hi-Z occluder depth failed";
+        return res;
+    }
+
+    constexpr uint32_t kFrustumOut = 4096u;
+    constexpr uint32_t kDistCull   = 1024u;
+    constexpr uint32_t kBehindWall = 6144u;
+    constexpr uint32_t kInFront    = 2560u;
+    constexpr uint32_t kPeeking    = 1536u;
+    constexpr uint32_t kNearStrad  = 1024u;
+    constexpr uint32_t kTotalInst  = kFrustumOut + kDistCull + kBehindWall + kInFront + kPeeking + kNearStrad;
+    constexpr uint32_t kExpVis     = kInFront + kPeeking + kNearStrad; // 5,120
+
+    std::vector<raw::bridge::GpuCullInstance> instances;
+    instances.reserve(kTotalInst);
+    std::vector<uint8_t> expectedVis(kTotalInst, 0u);
+    uint32_t expectedMeshlets = 0u;
+
+    auto pushBox = [&](float x0, float y0, float z0, float x1, float y1, float z1, float maxDist, bool vis) {
+        const uint32_t id = static_cast<uint32_t>(instances.size());
+        const uint32_t mc = (id % 7u) + 1u;
+        raw::bridge::GpuCullInstance g{};
+        g.aabbMin[0] = x0; g.aabbMin[1] = y0; g.aabbMin[2] = z0;
+        g.aabbMax[0] = x1; g.aabbMax[1] = y1; g.aabbMax[2] = z1;
+        g.center[0]  = 0.5f * (x0 + x1);
+        g.center[1]  = 0.5f * (y0 + y1);
+        g.center[2]  = 0.5f * (z0 + z1);
+        const float hx = 0.5f * (x1 - x0), hy = 0.5f * (y1 - y0), hz = 0.5f * (z1 - z0);
+        g.radius        = std::sqrt(hx * hx + hy * hy + hz * hz);
+        g.maxDrawDist   = maxDist;
+        g.meshletOffset = id * 8u;
+        g.meshletCount  = mc;
+        g.instanceId    = id;
+        expectedVis[id] = vis ? 1u : 0u;
+        if (vis) expectedMeshlets += mc;
+        instances.push_back(g);
+    };
+
+    for (uint32_t i = 0u; i < kFrustumOut; ++i) {
+        const float t = static_cast<float>(i % 64u) / 64.0f;
+        const uint32_t side = i % 6u;
+        float cx = 0.0f, cy = 0.0f, cz = 10.0f;
+        if (side == 0u)      cz = -10.0f - t * 20.0f;
+        else if (side == 1u) cx = -25.0f - t * 10.0f;
+        else if (side == 2u) cx =  25.0f + t * 10.0f;
+        else if (side == 3u) cy =  25.0f + t * 10.0f;
+        else if (side == 4u) cy = -25.0f - t * 10.0f;
+        else                 cz = 1150.0f + t * 200.0f;
+        pushBox(cx - 0.5f, cy - 0.5f, cz - 0.5f, cx + 0.5f, cy + 0.5f, cz + 0.5f, 5000.0f, false);
+    }
+    for (uint32_t i = 0u; i < kDistCull; ++i) {
+        const float cz = 50.0f + static_cast<float>(i % 32u);
+        const float cx = 0.85f * cz;
+        const float cy = 0.85f * cz;
+        pushBox(cx - 0.5f, cy - 0.5f, cz - 0.5f, cx + 0.5f, cy + 0.5f, cz + 0.5f, 15.0f, false);
+    }
+    for (uint32_t i = 0u; i < kBehindWall; ++i) {
+        const float u  = (static_cast<float>(i % 64u) / 63.0f) * 2.0f - 1.0f;
+        const float v  = (static_cast<float>((i / 64u) % 64u) / 63.0f) * 2.0f - 1.0f;
+        const float cz = 3.0f + static_cast<float>((i / 4096u) % 8u) * 4.0f + static_cast<float>(i % 13u) * 0.2f;
+        const float cx = u * 0.50f * cz;
+        const float cy = v * 0.50f * cz;
+        const float h  = 0.04f * cz;
+        pushBox(cx - h, cy - h, cz - 0.1f, cx + h, cy + h, cz + 0.1f, 5000.0f, false);
+    }
+    for (uint32_t i = 0u; i < kInFront; ++i) {
+        const float u  = (static_cast<float>(i % 64u) / 63.0f) * 2.0f - 1.0f;
+        const float v  = (static_cast<float>((i / 64u) % 40u) / 39.0f) * 2.0f - 1.0f;
+        const float cz = 1.10f + static_cast<float>(i % 10u) * 0.01f;
+        const float cx = u * 0.50f * cz;
+        const float cy = v * 0.50f * cz;
+        pushBox(cx - 0.02f, cy - 0.02f, cz - 0.02f, cx + 0.02f, cy + 0.02f, cz + 0.02f, 5000.0f, true);
+    }
+    for (uint32_t i = 0u; i < kPeeking; ++i) {
+        const float cz = 4.0f + static_cast<float>(i % 32u) * 0.5f;
+        const float cy = ((static_cast<float>(i % 48u) / 47.0f) * 2.0f - 1.0f) * 0.60f * cz;
+        const float sx = ((i & 1u) != 0u) ? 1.0f : -1.0f;
+        const float cx = sx * 0.72f * cz;
+        const float hx = 0.12f * cz;
+        pushBox(cx - hx, cy - 0.1f, cz - 0.1f, cx + hx, cy + 0.1f, cz + 0.1f, 5000.0f, true);
+    }
+    for (uint32_t i = 0u; i < kNearStrad; ++i) {
+        const float u  = (static_cast<float>(i % 32u) / 31.0f) * 2.0f - 1.0f;
+        const float v  = (static_cast<float>((i / 32u) % 32u) / 31.0f) * 2.0f - 1.0f;
+        const float cx = u * 0.45f;
+        const float cy = v * 0.45f;
+        pushBox(cx - 0.05f, cy - 0.05f, 0.70f, cx + 0.05f, cy + 0.05f, 1.30f, 5000.0f, true);
+    }
+
+    ComPtr<ID3D12Resource> instBuf;
+    if (!rig.UploadDefaultBuffer(instBuf, instances.data(), instances.size() * sizeof(raw::bridge::GpuCullInstance))) {
+        res.note = "Upload 16,384 GpuCullInstance buffer failed";
+        return res;
+    }
+
+    raw::bridge::GpuCullViewParams vp{};
+    const float nearZ = 1.0f, farZ = 1000.0f, q = farZ / (farZ - nearZ);
+    vp.viewProj[0 * 4 + 0] = 1.0f;
+    vp.viewProj[1 * 4 + 1] = 1.0f;
+    vp.viewProj[2 * 4 + 2] = q;
+    vp.viewProj[2 * 4 + 3] = 1.0f;
+    vp.viewProj[3 * 4 + 2] = -nearZ * q;
+    vp.autoExtractPlanes        = true;
+    vp.depthBias                = 1.0e-4f;
+    vp.defaultIndexCountPerInst = 36u;
+    vp.enableFrustumCull        = true;
+    vp.enableDistanceCull       = true;
+    vp.enableHiZCull            = true;
+
+    std::vector<double> hizSamples, cullSamples, combSamples, cpuSamples;
+    hizSamples.reserve(measuredFrames);
+    cullSamples.reserve(measuredFrames);
+    combSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.BuildHiZPyramid(rig.cmd.Get(), depthTex.Get(), res.depthWidth, res.depthHeight);
+        rig.MarkTimestamp(1u);
+        host.CullInstances(rig.cmd.Get(), instBuf.Get(), kTotalInst, vp);
+        rig.MarkTimestamp(2u);
+        rig.ResolveTimestamps(0u, 3u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double hMs = 0.0, cMs = 0.0, totMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, hMs);
+            rig.ReadTimestampRangeMs(1u, 2u, cMs);
+            rig.ReadTimestampRangeMs(0u, 2u, totMs);
+            hizSamples.push_back(hMs);
+            cullSamples.push_back(cMs);
+            combSamples.push_back(totMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.hizGpuMs      = ComputePercentiles(hizSamples);
+    res.cullGpuMs     = ComputePercentiles(cullSamples);
+    res.combinedGpuMs = ComputePercentiles(combSamples);
+    res.cpuRecordMs   = ComputePercentiles(cpuSamples);
+    res.hostHiZMs     = host.HasValidHiZTiming() ? host.GetLastHiZMs() : 0.0f;
+    res.hostCullMs    = host.HasValidCullTiming() ? host.GetLastCullMs() : 0.0f;
+
+    std::vector<uint8_t> cntBytes, argBytes, visBytes;
+    if (!rig.ReadbackBuffer(host.GetVisibleCountBuffer(), host.VisibleCountResourceState(), sizeof(raw::bridge::GpuCullStats), cntBytes) ||
+        !rig.ReadbackBuffer(host.GetIndirectArgsBuffer(), host.IndirectArgsResourceState(), sizeof(raw::bridge::GpuCullIndirectArgsLayout), argBytes) ||
+        !rig.ReadbackBuffer(host.GetVisibleInstancesBuffer(), host.VisibleInstancesResourceState(),
+                            static_cast<uint64_t>(kTotalInst) * sizeof(uint32_t), visBytes)) {
+        res.note = "GPU Cull readback failed";
+        return res;
+    }
+
+    raw::bridge::GpuCullStats stats{};
+    raw::bridge::GpuCullIndirectArgsLayout args{};
+    std::memcpy(&stats, cntBytes.data(), sizeof(stats));
+    std::memcpy(&args, argBytes.data(), sizeof(args));
+
+    res.visibleCount    = stats.visibleInstances;
+    res.visibleMeshlets = stats.visibleMeshlets;
+    res.frustumCulled   = stats.frustumCulled;
+    res.distanceCulled  = stats.distanceCulled;
+    res.hizCulled       = stats.hizCulled;
+
+    std::vector<uint8_t> seen(kTotalInst, 0u);
+    uint32_t falseSurv = 0u, dupCount = 0u;
+    const uint32_t checkN = std::min(stats.visibleInstances, kTotalInst);
+    const auto* visIds = reinterpret_cast<const uint32_t*>(visBytes.data());
+    for (uint32_t i = 0u; i < checkN; ++i) {
+        const uint32_t id = visIds[i];
+        if (id >= kTotalInst) { ++falseSurv; continue; }
+        if (seen[id]) ++dupCount;
+        seen[id] = 1u;
+        if (!expectedVis[id]) ++falseSurv;
+    }
+    uint32_t missed = 0u;
+    for (uint32_t i = 0u; i < kTotalInst; ++i) {
+        if (expectedVis[i] && !seen[i]) ++missed;
+    }
+    res.falseOcclusionCount = missed;
+
+    const bool countsOk = (stats.visibleInstances == kExpVis) &&
+                          (stats.frustumCulled == kFrustumOut) &&
+                          (stats.distanceCulled == kDistCull) &&
+                          (stats.hizCulled == kBehindWall) &&
+                          (args.drawIndexed.InstanceCount == kExpVis) &&
+                          (args.dispatchMeshX == expectedMeshlets) &&
+                          (falseSurv == 0u) && (dupCount == 0u) && (missed == 0u);
+    const bool budgetOk = rig.isWarp ? true : (res.combinedGpuMs.mean < 0.15);
+    res.passed = countsOk && budgetOk;
+    if (!countsOk) {
+        res.note = "Hi-Z/Frustum cull count or zero-false-occlusion invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU Hi-Z + Cull combined mean exceeded 0.15 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP exact 5120/4096/1024/6144 & 0% false occlusion PASS"
+                              : "HW GPU < 0.15 ms & 0% false occlusion PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -1537,7 +1907,8 @@ void WriteBenchJson(const std::string& path,
                     const DestructionBenchResult& destr,
                     const FloraHydroBenchResult& flora,
                     const TamrielBenchResult& tamriel,
-                    const XpbdBenchResult& xpbd)
+                    const XpbdBenchResult& xpbd,
+                    const GpuCullBenchResult& gpuCull)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -1677,6 +2048,27 @@ void WriteBenchJson(const std::string& path,
     os << "      \"minColliderSD\": " << xpbd.minColliderSD << ",\n";
     os << "      \"nanCount\": " << xpbd.nanCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(xpbd.note) << "\"\n";
+    os << "    },\n";
+
+    // 9. GPU Conservative Hi-Z Pyramid + 16,384-Instance Culler
+    os << "    \"gpuCull\": {\n";
+    os << "      \"passed\": " << (gpuCull.passed ? "true" : "false") << ",\n";
+    os << "      \"depthWidth\": " << gpuCull.depthWidth << ",\n";
+    os << "      \"depthHeight\": " << gpuCull.depthHeight << ",\n";
+    os << "      \"instanceCount\": " << gpuCull.instanceCount << ",\n";
+    os << "      \"hizGpuMs\": "; pctObj(gpuCull.hizGpuMs); os << ",\n";
+    os << "      \"cullGpuMs\": "; pctObj(gpuCull.cullGpuMs); os << ",\n";
+    os << "      \"combinedGpuMs\": "; pctObj(gpuCull.combinedGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(gpuCull.cpuRecordMs); os << ",\n";
+    os << "      \"hostHiZMs\": " << gpuCull.hostHiZMs << ",\n";
+    os << "      \"hostCullMs\": " << gpuCull.hostCullMs << ",\n";
+    os << "      \"visibleCount\": " << gpuCull.visibleCount << ",\n";
+    os << "      \"visibleMeshlets\": " << gpuCull.visibleMeshlets << ",\n";
+    os << "      \"frustumCulled\": " << gpuCull.frustumCulled << ",\n";
+    os << "      \"distanceCulled\": " << gpuCull.distanceCulled << ",\n";
+    os << "      \"hizCulled\": " << gpuCull.hizCulled << ",\n";
+    os << "      \"falseOcclusionCount\": " << gpuCull.falseOcclusionCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(gpuCull.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -1701,7 +2093,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const DestructionBenchResult& destr,
                     const FloraHydroBenchResult& flora,
                     const TamrielBenchResult& tamriel,
-                    const XpbdBenchResult& xpbd)
+                    const XpbdBenchResult& xpbd,
+                    const GpuCullBenchResult& gpuCull)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -1771,6 +2164,12 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   xpbd.minColliderSD, xpbd.maxRootDrift, xpbd.nanCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "8. GPU XPBD Soft-Body (4096p)", xpbd.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "HiZ %.4f + Cull %.4f ms", gpuCull.hizGpuMs.mean, gpuCull.cullGpuMs.mean);
+    std::snprintf(detail, sizeof(detail), "Comb p50=%.4f p95=%.4f ms | vis=%u hiz=%u fr=%u | fOcc=%u",
+                  gpuCull.combinedGpuMs.p50, gpuCull.combinedGpuMs.p95,
+                  gpuCull.visibleCount, gpuCull.hizCulled, gpuCull.frustumCulled, gpuCull.falseOcclusionCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "9. GPU Hi-Z + 16k Cull", gpuCull.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -1829,17 +2228,19 @@ int main(int argc, char** argv)
     const FloraHydroBenchResult  flora   = RunFloraAndHydrologyBenchmark(quickMode);
     const TamrielBenchResult     tamriel = RunTamrielStreamerBenchmark(esmPath, bsaPath);
     const XpbdBenchResult        xpbd    = RunXpbdBenchmark(rig, warmupFrames, measuredFrames);
+    const GpuCullBenchResult     gpuCull = RunGpuCullBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
-                           destr.passed && flora.passed && tamriel.passed && xpbd.passed && (debugErrors == 0u);
+                           destr.passed && flora.passed && tamriel.passed && xpbd.passed &&
+                           gpuCull.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

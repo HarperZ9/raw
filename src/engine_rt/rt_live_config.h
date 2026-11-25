@@ -38,6 +38,7 @@ struct LiveEngineConfig {
 
     // [Stability]
     bool  savePapyrusGuardEnabled = true;   // .ESS save-file health auditor & Papyrus frame-hitch watchdog (0/1, default 1)
+    bool  modLoadAuditEnabled     = true;   // TES4 master-dependency & ESL/ESP slot integrity auditor (0/1, default 1)
 
     // [WorldAI]
     bool  dynamicNpcBehaviorEnabled = true; // Weather/season/economy-driven NPC daily behavior & ecology (0/1, default 1)
@@ -162,6 +163,15 @@ struct LiveStatusDumpData {
     float    npcMarketActivity01    = 1.0f;
     uint8_t  npcPreferredBanditElem = 0u;
     uint8_t  npcPreferredMageElem   = 1u;
+
+    // Mod Load-Order Integrity Audit
+    uint8_t  modAuditSeverity       = 0u;
+    uint16_t modFullPlugins         = 0u;
+    uint16_t modLightEsls           = 0u;
+    uint16_t modMissingMasters      = 0u;
+    uint16_t modOutOfOrderMasters   = 0u;
+    uint16_t modCorruptHeaders      = 0u;
+    uint16_t modOversizedEsls       = 0u;
 };
 
 std::string FormatLiveStatusDump(const LiveStatusDumpData& d);

@@ -481,11 +481,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float3 froxScat = frox.rgb * mapScale;
     const float3 shaftScatter = vol2D * (0.14f * mapScale * fgClear);
     const float3 scatter = froxScat + shaftScatter;
-    // Engine-native underwater medium: gate strictly on pixels below the live water plane so half-submerged cameras
-    // NEVER tint above-water mountains or sky into harsh underwater cyan!
-    if ((flags.x & FLAG_UNDERWATER) != 0u && (engineWorld.z < 0.5f || (p.z + camPosW.z) <= engineWorld.x + 10.0f)) {
-        const float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0016f);
-        return float4(uw + scatter * float3(0.22f, 0.68f, 0.82f) * 1.15f, lit.a);
+    // Engine-native underwater medium + Wave 34 EasyWaterscape Rising Buoyant Bubble Plumes (coupled to planetary gravity!):
+    const float tideWaterZ = engineWorld.x + physWorld[0].z;
+    if ((flags.x & FLAG_UNDERWATER) != 0u && (engineWorld.z < 0.5f || (p.z + camPosW.z) <= tideWaterZ + 12.0f)) {
+        float3 uw = elderUnderwaterMedium(lit.rgb, dist, 0.0016f);
+        // Buoyancy-driven rising aerated micro-bubbles near surface/waterline (rise speed proportional to gravity!):
+        const float wtBub = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+        const float gNorm = clamp(physWorld[0].y / 9.80665f, 0.2f, 2.5f);
+        float3 bubAdd = 0.0f.xxx;
+        [unroll] for (int bl = 0; bl < 4; ++bl) {
+            const float bDist = 42.0f + float(bl) * 58.0f;
+            if (dist <= bDist) { continue; }
+            const float3 wpB = camPosW.xyz + eye + w * bDist;
+            const float subDepth = max(tideWaterZ - wpB.z, 0.0f);
+            const float surfZone = exp(-subDepth / 260.0f);
+            const float bScale = lerp(0.24f, 0.12f, float(bl) / 3.0f);
+            const float3 bCoord = float3((wpB.xy + float2(sin(wtBub * 1.8f + wpB.z * 0.05f), cos(wtBub * 1.5f - wpB.z * 0.04f)) * 4.5f) * bScale,
+                                         wpB.z * bScale - wtBub * (3.2f * gNorm));
+            const float bCell = cHash(floor(bCoord));
+            if (bCell > 0.945f) {
+                const float dB = length(frac(bCoord) - 0.5f);
+                const float bSp = smoothstep(0.945f, 0.998f, bCell) * exp(-dB * dB * 34.0f) * surfZone;
+                bubAdd += float3(0.45f, 0.72f, 0.78f) * (bSp * 0.38f / (1.0f + float(bl) * 0.35f));
+            }
+        }
+        return float4(uw + scatter * float3(0.22f, 0.68f, 0.82f) * 1.15f + bubAdd, lit.a);
     }
     // Engine-level unified 3D froxel (0..42,000u) + Hillaire far-mountain aerial perspective (beyond kFroxFar=42,000u):
     if ((flags.x & FLAG_FOG_REPLACES) != 0u && sunColour.w > 0.5f) {

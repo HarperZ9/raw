@@ -53,6 +53,15 @@ struct RawWorldSimTelemetry {
     float    synopticRain      = 0.0f;
     float    synopticSnow      = 0.0f;
     float    synopticLightning = 0.0f;
+    // Wave 34 Unified Planetary Gravity, Dual-Moon Harmonic Tides & Sea State:
+    float    gravityMps2       = 9.80665f;
+    float    tideHeightU       = 0.0f;
+    float    tideVelocityMs    = 0.0f;
+    float    springTide01      = 0.5f;
+    float    beaufortScale     = 2.0f;
+    float    swellDirX         = 0.866f;
+    float    swellDirY         = 0.500f;
+    float    simClockSec       = 0.0f;
 };
 
 void WorldSimInit(const Image& img, const std::string& gameDir);

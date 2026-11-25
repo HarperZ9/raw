@@ -382,6 +382,7 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
             uint8_t  camLockedOn, saveBloatWarn, squadMstComps, squadMstRounds;
             float    squadSpanLengthU;
             float    synopticHpa, adaptiveQuality, synopticCloud, synopticRain, synopticSnow, synopticLightning;
+            float    gravityMps2, tideHeightU, tideVelocityMs, springTide01, beaufortScale, swellDirX, swellDirY, simClockSec;
         };
         using SimTelFn = int(*)(WorldSimTelPod*);
         static SimTelFn s_simTel = nullptr;
@@ -406,6 +407,7 @@ std::vector<raw::ui::StudioRow> BuildRows(int tab)
             AddCycle(rows, "Hold Economy & Cam", std::string(kMkt[wtel.marketTier & 3u]) + Fmt(" %.2fx | ", wtel.economyBuyMult) + Fmt("FOV %.0f", wtel.lockOnFovDeg), wtel.camLockedOn != 0);
             AddCycle(rows, "Squad Boruvka MST", Fmt("%.0f u | ", wtel.squadSpanLengthU) + FmtI("%d grp / ", int(wtel.squadMstComps)) + FmtI("%d rnd", int(wtel.squadMstRounds)), wtel.squadMstComps > 0);
             AddCycle(rows, "Synoptic Barometer", Fmt("%.1f hPa | ", wtel.synopticHpa) + Fmt("Cld %.0f%% | ", wtel.synopticCloud * 100.0f) + Fmt("R %.0f%%", wtel.synopticRain * 100.0f), wtel.synopticHpa < 1000.0f);
+            AddCycle(rows, "Gravity & Tides", Fmt("%.2fm/s2 | ", wtel.gravityMps2) + Fmt("%+.1fu | ", wtel.tideHeightU) + Fmt("Bft %.1f", wtel.beaufortScale), wtel.springTide01 > 0.70f);
             AddCycle(rows, "Extremum Quality", Fmt("%.2fx | ", wtel.adaptiveQuality) + Fmt("Snw %.0f%% | ", wtel.synopticSnow * 100.0f) + Fmt("Bolt %.0f%%", wtel.synopticLightning * 100.0f), wtel.adaptiveQuality >= 0.90f);
             AddCycle(rows, "Save Health Guard", FmtI("%d saves | ", int(wtel.totalSavesFound)) + Fmt("Max %.1f MB", wtel.largestSaveMb) + (wtel.saveBloatWarn ? " [BLOAT]" : " [OK]"), wtel.saveBloatWarn != 0);
         } else {

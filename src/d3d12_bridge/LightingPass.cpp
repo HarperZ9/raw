@@ -68,10 +68,11 @@ struct LightUniform
     float footTrail[32][4];   // persistent world-space boot-print ring buffer (xyz world abs, w active strength)
     float dofParams[4];       // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
     float timeEnv[4];         // x: gameHour (0..24), y: sunElev (-1..+1), z: lightning, w: menuPaused (0/1)
-    float engineWorld[4];     // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: unused
+    float engineWorld[4];     // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: cameraMode
     float camOptics[2][4];    // [0]: sensorWidthMm, focalLengthMm, apertureFStop, bokehShape; [1]: nearScale, farScale, nearBleed, focusSpeed
+    float physWorld[2][4];    // [0]: simTimeSec (pause-aware, wrap-free), gravityMps2, tideHeightU, tideVelocityMs; [1]: beaufortScale, swellDirX, swellDirY, springTide01
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 80, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 112, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
@@ -607,6 +608,7 @@ private:
             uint8_t  camLockedOn, saveBloatWarn, squadMstComps, squadMstRounds;
             float    squadSpanLengthU;
             float    synopticHpa, adaptiveQuality, synopticCloud, synopticRain, synopticSnow, synopticLightning;
+            float    gravityMps2, tideHeightU, tideVelocityMs, springTide01, beaufortScale, swellDirX, swellDirY, simClockSec;
         };
         using SynTelFn = int (*)(WorldSimSynPod*);
         static HMODULE s_synMod = nullptr;
@@ -617,7 +619,37 @@ private:
         }
         WorldSimSynPod synTel{};
         const bool hasSynTel = (s_synFn != nullptr && s_synFn(&synTel) != 0);
-        u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds (set BEFORE wtSim weather engine!)
+        // Wave 34 Pause-Aware, Wrap-Free Monotonic Simulation Clock (replaces wrapping GetTickCount64() % 3600000):
+        const uint64_t nowMs = GetTickCount64();
+        if (m_lastClockMs != 0 && !s.menuPaused) {
+            const double frameDt = std::clamp(double(nowMs - m_lastClockMs) * 0.001, 0.0, 0.05);
+            m_simTimeSec += frameDt;
+        }
+        m_lastClockMs = nowMs;
+        u.camPos[3] = float(m_simTimeSec);
+        // Wave 34 Unified Planetary Gravity, Dual-Moon Harmonic Tides & Beaufort Sea State (physWorld[0..1]):
+        if (hasSynTel && synTel.gravityMps2 > 1.0f) {
+            u.physWorld[0][0] = float(m_simTimeSec);
+            u.physWorld[0][1] = synTel.gravityMps2;
+            u.physWorld[0][2] = interior ? 0.0f : synTel.tideHeightU;
+            u.physWorld[0][3] = interior ? 0.0f : synTel.tideVelocityMs;
+            u.physWorld[1][0] = interior ? 0.5f : synTel.beaufortScale;
+            u.physWorld[1][1] = synTel.swellDirX;
+            u.physWorld[1][2] = synTel.swellDirY;
+            u.physWorld[1][3] = synTel.springTide01;
+        } else {
+            // Standalone deterministic planetary fallback when raw_engine.dll is absent (WARP / unit tests):
+            const double gh = double(std::clamp(t.gameHour, 0.0f, 24.0f));
+            const double phT = gh * (6.28318530718 / 12.4206);
+            u.physWorld[0][0] = float(m_simTimeSec);
+            u.physWorld[0][1] = 9.80665f;
+            u.physWorld[0][2] = interior ? 0.0f : float(14.0 * std::cos(phT));
+            u.physWorld[0][3] = interior ? 0.0f : float(-0.35 * std::sin(phT));
+            u.physWorld[1][0] = interior ? 0.5f : 3.2f;
+            u.physWorld[1][1] = 0.866f;
+            u.physWorld[1][2] = 0.500f;
+            u.physWorld[1][3] = 0.5f;
+        }
         const float wtSim = u.camPos[3];
         const float spatialPhase = s.posAdjust[0] * 0.000018f + s.posAdjust[1] * 0.000013f;
         const float baroWave = std::sin(wtSim * 0.0037f + spatialPhase) * 0.52f
@@ -778,6 +810,8 @@ private:
     LightUniform m_u{};
     LightingTuning m_tune;
     uint64_t m_frame = 0, m_submissions = 0, m_pendingSubmission = 0;
+    double m_simTimeSec = 0.0;
+    uint64_t m_lastClockMs = 0;
     bool m_havePending = false, m_haveTimings = false;
     int m_skipLogs = 0;
     PassTimings m_timings;

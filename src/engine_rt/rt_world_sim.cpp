@@ -167,7 +167,7 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
         out.squadMstRounds   = 0u;
     }
 
-    // 9. Wave 27/28 Synoptic Barometric Storm Simulator snapshot:
+    // 9. Wave 27/28 Synoptic Barometric Storm Simulator snapshot + Wave 34 Planetary Gravity & Nirn Dual-Moon Tides:
     const auto syn = StepSynopticWeatherSim(playerPos, gameHour * 3600.0f, gameHour);
     out.synopticHpa       = syn.pressureHpa;
     out.adaptiveQuality   = 1.0f;
@@ -175,6 +175,15 @@ RawWorldSimTelemetry StepWorldSimSnapshot(const float playerPos[3], float gameHo
     out.synopticRain      = syn.rainRate01;
     out.synopticSnow      = syn.snowRate01;
     out.synopticLightning = syn.stormLightning;
+    const auto plan = EvaluatePlanetaryPhysics(0.0f, gameHour, playerPos, std::max(windSpeed, syn.windSpeedMs), syn.pressureHpa);
+    out.gravityMps2       = plan.gravityMps2;
+    out.tideHeightU       = inInterior ? 0.0f : plan.tideHeightU;
+    out.tideVelocityMs    = inInterior ? 0.0f : plan.tideVelocityMs;
+    out.springTide01      = plan.springTide01;
+    out.beaufortScale     = inInterior ? 0.5f : plan.beaufortScale;
+    out.swellDirX         = plan.swellDirX;
+    out.swellDirY         = plan.swellDirY;
+    out.simClockSec       = gameHour * 3600.0f;
     return out;
 }
 
@@ -272,7 +281,7 @@ void WorldSimOnPresent() {
     snap.totalSavesFound = g_saveCount;
     snap.largestSaveMb   = g_largestSaveMb;
     snap.saveBloatWarn   = g_saveBloatWarn ? 1u : 0u;
-    // Live Wave 27 Synoptic Barometric Weather + Oscillatory Extremum-Seeking GPU Budget Governor:
+    // Live Wave 27 Synoptic Barometric Weather + Wave 34 Planetary Gravity/Tides + Extremum-Seeking GPU Governor:
     g_simClockSec += tickDtSec;
     const auto synLive = StepSynopticWeatherSim(ev.playerPos, g_simClockSec, ev.gameHour);
     snap.synopticHpa       = synLive.pressureHpa;
@@ -280,6 +289,16 @@ void WorldSimOnPresent() {
     snap.synopticRain      = synLive.rainRate01;
     snap.synopticSnow      = synLive.snowRate01;
     snap.synopticLightning = synLive.stormLightning;
+    const auto planLive = EvaluatePlanetaryPhysics(ev.daysPassed, ev.gameHour, ev.playerPos,
+                                                   std::max(windSpd * 0.014f, synLive.windSpeedMs), synLive.pressureHpa);
+    snap.gravityMps2       = planLive.gravityMps2;
+    snap.tideHeightU       = inInt ? 0.0f : planLive.tideHeightU;
+    snap.tideVelocityMs    = inInt ? 0.0f : planLive.tideVelocityMs;
+    snap.springTide01      = planLive.springTide01;
+    snap.beaufortScale     = inInt ? 0.5f : planLive.beaufortScale;
+    snap.swellDirX         = planLive.swellDirX;
+    snap.swellDirY         = planLive.swellDirY;
+    snap.simClockSec       = g_simClockSec;
     const float targetFrameSec = 1.0f / 120.0f;
     const float frameErr = (tickDtSec * 0.5f) - targetFrameSec;
     const float esCost = frameErr * frameErr * 10000.0f + (1.0f - g_gpuEsState.xHat) * 0.25f;

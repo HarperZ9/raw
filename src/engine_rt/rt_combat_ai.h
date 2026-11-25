@@ -336,4 +336,20 @@ struct CreatureGaitOutput {
 CreatureGaitOutput EvaluateCreatureGaitKinematics(CreatureGaitKind kind, float moveSpeedU, float turnRateRadPerSec,
                                                   float terrainSlopeRad, float simTimeSec);
 
+// Wave 34 Unified Planetary Gravity, Dual-Moon Nirn Harmonic Tides (Masser M2 + Secunda N2 + Magnus S2) & Sea State:
+// Connects Calendar::gameDaysPassed, Sky::currentGameHour, altitude, wind, and synoptic barometric pressure
+// into one physically coherent gravity + tidal potential oracle shared by CPU world simulation and GPU shaders!
+struct PlanetaryPhysicsState {
+    float gravityMps2      = 9.80665f;   // altitude-corrected planetary gravity (m/s^2)
+    float gravityUnitsS2   = 686.466f;   // gravity in Skyrim units/s^2 (70 u/m)
+    float tideHeightU      = 0.0f;       // harmonic lunar-solar tide + inverse-barometer surge (Skyrim units)
+    float tideVelocityMs   = 0.0f;       // signed flood (+)/ebb (-) tidal current speed (m/s)
+    float springTide01     = 0.5f;       // 0 = quadrature neap tide, 1 = Masser/Secunda/Sun syzygy spring tide
+    float beaufortScale    = 2.0f;       // physical Beaufort sea state 0..12
+    float swellDirX        = 0.866f;     // dominant ocean swell propagation direction X
+    float swellDirY        = 0.500f;     // dominant ocean swell propagation direction Y
+};
+PlanetaryPhysicsState EvaluatePlanetaryPhysics(float daysPassed, float gameHour, const float worldPos[3],
+                                               float windSpeedMs, float pressureHpa);
+
 }  // namespace raw::rt

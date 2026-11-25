@@ -51,10 +51,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float hD0 = PrevField.SampleLevel(Lin, frac(uv + float2(0.0f, -invRes.y)), 0.0f).r;
     const float hU0 = PrevField.SampleLevel(Lin, frac(uv + float2(0.0f,  invRes.y)), 0.0f).r;
     const float2 gradH = float2(hR0 - hL0, hU0 - hD0) * 0.5f;
-    // Divergence-free rotational swirl velocity from perpendicular wave gradient + synoptic wind drift:
+    // Divergence-free rotational swirl velocity from perpendicular wave gradient + synoptic wind + live tidal current:
     const float2 windDir = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+    const float2 swellD = length(physWorld[1].yz) > 0.1f ? normalize(physWorld[1].yz) : windDir;
+    const float2 tideAdv = swellD * (physWorld[0].w * 0.22f);
     const float2 swirlVel = float2(-gradH.y, gradH.x) * 0.65f;
-    const float2 advVelUv = (windDir * 0.18f + clamp(swirlVel, -0.45f.xx, 0.45f.xx)) * invRes;
+    const float2 advVelUv = (windDir * 0.18f + tideAdv + clamp(swirlVel, -0.45f.xx, 0.45f.xx)) * invRes;
 
     const float4 c0 = sampleMacCormack(uv, advVelUv, invRes);
     const float2 advUv = frac(uv - advVelUv);

@@ -859,6 +859,28 @@ void main() {
     Check(std::isfinite(vrHorizon) && vrPeak > vrZenith * 1.45f && vrPeak > vrHorizon * 1.30f &&
           ffCaught && glintKept && varR2 < varPer * 0.15,
           "wave30_pioneer_commons_optics_invariants");
+
+    // 19) Wave 34 Unified Planetary Gravity, Dual-Moon Harmonic Tides (Masser M2 + Secunda N2 + Sun S2) & Barometer Surge:
+    const float seaPos[3]  = {0.0f, 0.0f, 0.0f};
+    const float peakPos[3] = {0.0f, 0.0f, 350000.0f};   // 5,000 m mountain altitude
+    const auto pSea  = raw::rt::EvaluatePlanetaryPhysics(10.0f, 12.0f, seaPos,  4.0f, 1013.25f);
+    const auto pPeak = raw::rt::EvaluatePlanetaryPhysics(10.0f, 12.0f, peakPos, 4.0f, 1013.25f);
+    const auto pCyc  = raw::rt::EvaluatePlanetaryPhysics(10.0f, 12.0f, seaPos, 18.0f,  975.0f);
+    const auto pHigh = raw::rt::EvaluatePlanetaryPhysics(10.0f, 12.0f, seaPos,  2.0f, 1032.0f);
+    float minTide = 1e9f, maxTide = -1e9f, minVel = 1e9f, maxVel = -1e9f;
+    for (int h = 0; h < 24; ++h) {
+        const auto pt = raw::rt::EvaluatePlanetaryPhysics(12.0f, float(h), seaPos, 5.0f, 1013.25f);
+        minTide = std::min(minTide, pt.tideHeightU);
+        maxTide = std::max(maxTide, pt.tideHeightU);
+        minVel  = std::min(minVel,  pt.tideVelocityMs);
+        maxVel  = std::max(maxVel,  pt.tideVelocityMs);
+    }
+    Check(std::fabs(pSea.gravityMps2 - 9.80665f) < 1e-4f &&
+          pPeak.gravityMps2 < pSea.gravityMps2 - 0.010f &&
+          pCyc.tideHeightU > pHigh.tideHeightU + 20.0f &&
+          pCyc.beaufortScale > pHigh.beaufortScale + 4.0f &&
+          (maxTide - minTide) > 25.0f && maxVel > 0.20f && minVel < -0.20f,
+          "wave34_planetary_gravity_tides_invariants");
 }
 
 }  // namespace

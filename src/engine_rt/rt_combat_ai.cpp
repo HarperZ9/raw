@@ -903,4 +903,56 @@ CreatureGaitOutput EvaluateCreatureGaitKinematics(CreatureGaitKind kind, float m
     return g;
 }
 
+PlanetaryPhysicsState EvaluatePlanetaryPhysics(float daysPassed, float gameHour, const float worldPos[3],
+                                               float windSpeedMs, float pressureHpa) {
+    PlanetaryPhysicsState p{};
+    constexpr double kTwoPi = 6.283185307179586;
+    constexpr double kPlanetRadiusM = 6360000.0;
+    constexpr double kUnitsPerMeter = 70.0;
+    const double altU = worldPos ? std::max(double(worldPos[2]), -20000.0) : 0.0;
+    const double altM = std::max(altU / kUnitsPerMeter, 0.0);
+    // Exact inverse-square altitude lapse g(h) = g0 * (R / (R + h))^2:
+    const double ratio = kPlanetRadiusM / (kPlanetRadiusM + altM);
+    p.gravityMps2    = static_cast<float>(9.80665 * ratio * ratio);
+    p.gravityUnitsS2 = static_cast<float>(double(p.gravityMps2) * kUnitsPerMeter);
+
+    const double safeDays = std::isfinite(daysPassed) ? std::max(double(daysPassed), 0.0) : 0.0;
+    const double safeHour = std::isfinite(gameHour) ? std::clamp(double(gameHour), 0.0, 24.0) : 12.0;
+    const double totalHours = safeDays * 24.0 + safeHour;
+
+    // Harmonic equilibrium tide from Nirn's twin moons + Sun (Masser M2, Secunda N2, Magnus S2):
+    const double wM2 = kTwoPi / 12.4206;
+    const double wN2 = kTwoPi / 12.6583;
+    const double wS2 = kTwoPi / 12.0000;
+    const double phM2 = totalHours * wM2;
+    const double phN2 = totalHours * wN2 + 0.72;
+    const double phS2 = (safeHour - 12.0) * wS2;
+
+    constexpr double aM2 = 16.5;
+    constexpr double aN2 = 6.2;
+    constexpr double aS2 = 7.4;
+    const double tideAstroU = aM2 * std::cos(phM2) + aN2 * std::cos(phN2) + aS2 * std::cos(phS2);
+    const double dTideUPerHr = -(aM2 * wM2 * std::sin(phM2) + aN2 * wN2 * std::sin(phN2) + aS2 * wS2 * std::sin(phS2));
+    // Inverse barometer effect: 1 hPa drop raises sea surface by ~1 cm (0.70 Skyrim units):
+    const double safeHpa = std::isfinite(pressureHpa) ? std::clamp(double(pressureHpa), 950.0, 1050.0) : 1013.25;
+    const double baroSurgeU = (1013.25 - safeHpa) * 0.70;
+
+    p.tideHeightU    = static_cast<float>(std::clamp(tideAstroU + baroSurgeU, -28.0, 38.0));
+    p.tideVelocityMs = static_cast<float>(std::clamp(dTideUPerHr * 0.042, -1.65, 1.65));
+
+    const double alignMS = 0.5 + 0.5 * std::cos(phM2 - phS2);
+    const double alignMN = 0.5 + 0.5 * std::cos(phM2 - phN2);
+    p.springTide01 = static_cast<float>(std::clamp(alignMS * 0.65 + alignMN * 0.35, 0.0, 1.0));
+
+    const double wMs = std::max(double(windSpeedMs), 0.2);
+    const double bWind = std::pow(wMs / 0.836, 2.0 / 3.0);
+    const double bCyclone = std::max(1010.0 - safeHpa, 0.0) * 0.085;
+    p.beaufortScale = static_cast<float>(std::clamp(bWind + bCyclone, 0.5, 12.0));
+
+    const double swellAng = -1.18 + 0.35 * std::sin(totalHours * 0.045);
+    p.swellDirX = static_cast<float>(std::cos(swellAng));
+    p.swellDirY = static_cast<float>(std::sin(swellAng));
+    return p;
+}
+
 }  // namespace raw::rt

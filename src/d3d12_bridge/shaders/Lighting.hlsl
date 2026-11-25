@@ -515,11 +515,23 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float my = (cNoise(wpDispl * 0.22f + 13.4f) - 0.5f) * 0.22f + (cNoise(wpDispl * 0.68f + 19.3f) - 0.5f) * 0.12f;
             s.n = normalize(s.n + float3(mx, my, 0.0f) * mFade);
         }
-        // Wind-swept glacial sastrugi snowdrift relief + discrete world-locked snow/mud footprints (footTrail[0..31]):
+        // Wind-swept glacial sastrugi snowdrift relief + Wave 34 alexandre196/karynatrychyk Volumetric Snow Overhang Rim & Blue SSS:
         // Linear-RGB snow detection (permSnowGround) works on ALL Skyrim snow biomes even in clear dry weather!
         const float natSnow = permSnowGround;
         const float snowAmt = max(wet.snow, natSnow);
         const float mudAmt = (base == 4u && weather.w > 0.08f) ? max(wet.wet, wet.puddle) * (1.0f - snowAmt) : 0.0f;
+        // Sculpt a puffy rounded snow lip normal + glacial blue subsurface rim wherever snow blankets bare rock/logs!
+        if ((base == 1u || base == 4u) && z < 2400.0f) {
+            const float sDx = ddx(snowAmt), sDy = ddy(snowAmt);
+            const float rimBand = saturate(snowAmt * (1.0f - snowAmt) * 4.0f) * smoothstep(2400.0f, 180.0f, z);
+            if (rimBand > 0.04f) {
+                const float3 dpxS = ddx(p), dpyS = ddy(p);
+                const float3 lipGrad = normalize(dpxS * sDx + dpyS * sDy + float3(0.0f, 0.0f, 1.0e-4f));
+                s.n = normalize(lerp(s.n, normalize(s.n - lipGrad * 0.42f + float3(0.0f, 0.0f, 0.24f)), rimBand * 0.55f));
+                // Cool ice-blue subsurface glow right inside the thick snow overhang edge (alexandre196 snow sphere!):
+                albedo = lerp(albedo, lerp(albedo, float3(0.48f, 0.68f, 0.90f), 0.36f), rimBand * 0.62f);
+            }
+        }
         if (snowAmt > 0.18f && z < 3200.0f && s.n.z > 0.45f) {
             const float3 wpSn = p + camPosW.xyz;
             const float2 wDirS = normalize(cloudWind.xy + float2(1.0f, 0.35f));
@@ -1030,17 +1042,21 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float microSh = (!match && !isActorFeat && base != 5u) ? saturate(2.0f * AoHist.Load(ip).x + saturate(dot(s.n, sunDir.xyz)) - 0.85f) : 1.0f;
         const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.24f, 0.85f, nightDir) : 1.0f;
         addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunPunch), dirCol * sunPunch, diff, spec);
-        // MAT-07 Distributed Microfacet Snow & Hoar-Frost Diamond Glints (Deliot & Belcour 2023):
-        // crisp sunlit crystalline sparkle on snowpacks & frost (<1,600u) with zero temporal shimmer.
-        if (!match && sunColour.w > 0.5f && z < 1600.0f && sunShadow > 0.25f && nightDir < 0.75f &&
-            (wet.snow > 0.25f || (base == 4u && min(albedo.r, min(albedo.g, albedo.b)) > 0.42f && s.n.z > 0.55f))) {
-            const float3 wpGl = (p + camPosW.xyz) * 0.42f;
+        // Wave 34 OverdrawGames UE5 Substrate IOR 1.31 Micro-Facet Snow & Hoar-Frost Diamond Glints:
+        // Dual-tier pinpoint ice-crystal sparkles (F0=0.018, tight pow-220 diamond flash + pow-52 frost twinkle)
+        // on BOTH live snowfall and permanent snowpacks, anchored in world space for natural camera-motion twinkle!
+        if (!match && sunColour.w > 0.5f && z < 1800.0f && sunShadow > 0.20f && nightDir < 0.75f &&
+            (wet.snow > 0.20f || ((base == 4u || base == 1u) && min(albedo.r, min(albedo.g, albedo.b)) > 0.26f && s.n.z > 0.48f))) {
+            const float3 wpGl = (p + camPosW.xyz) * 0.52f;
             const float3 gCell = floor(wpGl);
             const float3 gRand = float3(cHash(gCell), cHash(gCell + 19.3f), cHash(gCell + 47.1f)) - 0.5f;
-            const float3 microN = normalize(s.n + gRand * 0.65f);
+            const float3 microN = normalize(s.n + gRand * 0.72f);
             const float3 hGl = normalize(s.v + sunDir.xyz);
-            const float glint = pow(saturate(dot(microN, hGl)), 96.0f) * step(0.82f, cHash(gCell + 83.7f));
-            spec += dirCol * (glint * sunShadow * saturate(1.0f - z / 1600.0f) * (1.0f - nightDir) * 1.85f);
+            const float nhGl = saturate(dot(microN, hGl));
+            const float fIce = 0.018f + 0.982f * pow(1.0f - saturate(dot(s.v, hGl)), 5.0f);
+            const float diamond = pow(nhGl, 220.0f) * step(0.84f, cHash(gCell + 83.7f)) * 4.5f;
+            const float frost   = pow(nhGl,  52.0f) * step(0.76f, cHash(gCell + 29.1f)) * 0.65f;
+            spec += dirCol * ((diamond + frost) * (0.45f + 2.2f * fIce) * sunShadow * saturate(1.0f - z / 1800.0f) * (1.0f - nightDir));
         }
         // Foliage (base == 5u) single unified energy-conserving backlit transmission runs once at line ~1491
         // (removed duplicate stacked diff/spec glow lobes that quadruple-counted chlorophyll and made trees glow!).
@@ -1343,11 +1359,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 emissiveRim += min(eCol, 2.5f.xxx) * eW;
             }
         }
-        // Live capillary water-meniscus band right above engineWorld.x water plane (VR-1 shoreline wetness!):
+        // Wave 34 Live Tidal Capillary Shoreline Meniscus (anchored to engineWorld.x + live Nirn harmonic tide physWorld[0].z!):
+        // At spring high tide the dark glistening wet shoreline climbs higher up coastal rocks & piers; at low tide it exposes wet stone!
         if ((base == 1u || base == 4u) && engineWorld.z > 0.5f) {
-            const float aboveW = (p.z + camPosW.z) - engineWorld.x;
-            if (aboveW > -6.0f && aboveW < 34.0f) {
-                waterContact = max(waterContact, smoothstep(34.0f, 0.0f, max(aboveW, 0.0f)) * smoothstep(-6.0f, 1.0f, aboveW));
+            const float liveTideWaterZ = engineWorld.x + physWorld[0].z;
+            const float highTideMarkU  = 34.0f + physWorld[1].w * 18.0f;
+            const float aboveW = (p.z + camPosW.z) - liveTideWaterZ;
+            if (aboveW > -8.0f && aboveW < highTideMarkU) {
+                waterContact = max(waterContact, smoothstep(highTideMarkU, 0.0f, max(aboveW, 0.0f)) * smoothstep(-8.0f, 1.0f, aboveW));
             }
         }
         // Removed orange-blotch skinContact ambient dump on neck/collar seams (23.50.29.60.png Hilde neck artifact!).
@@ -1717,9 +1736,11 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
             const float dayGate = smoothstep(0.02f, 0.14f, astroSunElev());
             const float foliageThickness = lerp(0.45f, 1.0f, cNoise(wpCan * 0.024f + 5.1f));
-            // Backlit chlorophyll transmission + thin-leaf warm-emerald side scatter (disciplined 0.18x so sunlit pines stay rich green):
-            const float3 sssCol = albedo * float3(0.84f, 1.14f, 0.42f);
-            lit += sssCol * sunColour.rgb * ((back * 0.18f + wrapL * 0.03f) * foliageThickness * sunShadow * cloudClear * dayGate);
+            // Backlit golden-emerald chlorophyll transmission (NordicCanopy / Scionti backlit sun-through-boughs glow
+            // without bleaching front-lit pine needles!):
+            const float backTight = pow(saturate(dot(-s.v, sunDir.xyz)), 5.0f);
+            const float3 sssCol = albedo * float3(0.96f, 1.24f, 0.36f);
+            lit += sssCol * sunColour.rgb * ((back * 0.16f + backTight * 0.42f + wrapL * 0.025f) * foliageThickness * sunShadow * cloudClear * dayGate);
             // Deep 3D vertical crown-to-underside & interior pine self-shadowing (carves lush 3D volume out of crossed boughs!):
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
             const float canopyOcc = saturate(skyVis * 0.68f + sunShadow * 0.24f + crownUp * 0.20f);

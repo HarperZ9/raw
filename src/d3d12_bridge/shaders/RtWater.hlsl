@@ -31,6 +31,24 @@ Texture2D<float4> SimWaterNormal : register(t11); // RGB = analytical curl-free 
 SamplerState      SimWaterSamp   : register(s0);  // linear wrap for exact toroidal world-locked lookup
 cbuffer FluidWaterDomainCB : register(b3) { float4 fluidWaterDomain; }; // xy = originXY, z = invWorldSpanU, w = active (> 0.5)
 
+// Wave 59: Strict NaN/Inf sanitization & spectral Beer-Lambert water absorption helper (Pope & Fry 1997).
+float3 sanitizeWater3(float3 c) {
+    return all(isfinite(c)) ? max(c, 0.0f.xxx) : 0.0f.xxx;
+}
+
+float3 evalSpectralWaterTransmittance(float pathU, float waterAbsorb, bool isExterior, bool isCoastalSea, float turbidity01) {
+    const float safePath = clamp(isfinite(pathU) ? max(pathU, 0.0f) : 0.0f, 0.0f, 20000.0f);
+    const float safeAbs  = clamp(isfinite(waterAbsorb) ? max(waterAbsorb, 0.0f) : 0.008f, 0.0f, 1.0f);
+    // Pope & Fry spectral pure-water absorption (red 650nm dies ~5.5x faster than blue 465nm)
+    // blended with Nordic coastal CDOM/phytoplankton & storm-runoff turbidity.
+    const float3 pureExt   = isCoastalSea ? float3(2.55f, 0.84f, 0.50f) : float3(2.42f, 0.68f, 0.38f);
+    const float3 turbidExt = float3(2.65f, 1.18f, 0.92f);
+    const float3 extRGB    = isExterior ? lerp(pureExt, turbidExt, saturate(turbidity01) * 0.55f)
+                                        : float3(2.15f, 1.32f, 1.10f);
+    const float3 od = clamp(extRGB * (safeAbs * safePath), 0.0f.xxx, 32.0f.xxx);
+    return exp(-od);
+}
+
 // The distance from a point to the nearest wall between moving cells: 0 on the walls. The walls of
 // a cell field whose centres drift slowly read as the bright net that waves focus onto a bed.
 float cellWalls(float2 q, float t) {
@@ -270,7 +288,7 @@ void water(uint3 id : SV_DispatchThreadID) {
     // Soft 0.25u shoreline depth threshold & sloped aqueduct support (nL.z > 0.25 eliminates camera-angle water drop-out!).
     const bool isWaterPx = (L.a > 1.5f && L.x < 1.0f && zSurfW > 0.5f && zSurfW < zBedW - max(zSurfW * 0.004f, 0.25f) && nL.z > 0.25f && gameDrewWater);
     // SM6.9 Wave-coherent early exit: non-water waves exit immediately with zero RayQuery divergence.
-    if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(col, game.a); return; }
+    if (!WaveActiveAnyTrue(isWaterPx)) { WaterOut[id.xy] = float4(sanitizeWater3(col), isfinite(game.a) ? saturate(game.a) : 1.0f); return; }
     if (isWaterPx) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, L.x);
@@ -603,25 +621,37 @@ void water(uint3 id : SV_DispatchThreadID) {
                     else if (ci == 1) jacFocus.g = flux;
                     else jacFocus.b = flux;
                 }
-                // Flow-advected fine micro-web blended with live physical wave-Jacobian filaments:
+                // Wave 59: Physically-grounded shallow-water refractive RGB caustic shimmer (azimuth-aligned Cauchy dispersion
+                // + high-frequency shallow capillary caustic harmonic + spectral Beer-Lambert depth transmittance).
                 const float2 flowOff = (cloudWind.xy * 0.012f + nL.xy * 5.5f) * camPosW.w;
                 const float3 at = camPosW.xyz + pb - sr * (depthV / max(-sr.z, 0.2f));
                 const float t = camPosW.w * 0.42f;
                 const float sc = max(waterB.y, 1.0f);
-                const float disp = clamp(depthV * 0.025f, 0.30f, 1.65f);
+                const float2 srHorRaw = sr.xy;
+                const float srHorLen = length(srHorRaw);
+                const float2 srDir = (isfinite(srHorLen) && srHorLen > 1.0e-4f) ? (srHorRaw / srHorLen) : float2(0.96f, 0.28f);
+                const float disp = clamp(depthV * 0.028f, 0.24f, 1.75f);
                 const float2 cPos = at.xy + flowOff;
-                const float3 net = float3(causticNet(cPos + float2(disp, 0.25f * disp), t, sc),
+                const float3 net = float3(causticNet(cPos + srDir * disp, t, sc),
                                           causticNet(cPos, t, sc),
-                                          causticNet(cPos - float2(disp, 0.25f * disp), t, sc));
+                                          causticNet(cPos - srDir * disp, t, sc));
+                // Shallow-water capillary shimmer harmonic sparkles crisply over ankle-to-knee cobblestones (0..85u):
+                const float shallowShimW = smoothstep(88.0f, 6.0f, depthV) * smoothstep(0.0f, 3.5f, depthV) * smoothstep(2600.0f, 180.0f, wDist);
+                const float3 shimRGB = (shallowShimW > 0.01f)
+                    ? float3(evalAperiodicCurlCaustic(cPos * 1.65f + srDir * (disp * 0.7f), t * 2.4f, sc * 0.65f),
+                             evalAperiodicCurlCaustic(cPos * 1.65f,                          t * 2.4f, sc * 0.65f),
+                             evalAperiodicCurlCaustic(cPos * 1.65f - srDir * (disp * 0.7f), t * 2.4f, sc * 0.65f)) * (shallowShimW * 0.42f)
+                    : 0.0f.xxx;
                 const float sunVis = sunColour.w > 0.5f ? visible(pb + float3(0.0f, 0.0f, 1.0f + 0.002f * length(pb)), l, 0.0f, sunLength) : 1.0f;
-                const float through = exp(-waterA.z * (depthV + length(pb - p)));
-                const float focus = saturate(depthV / 22.0f) * exp(-depthV / 340.0f);
+                const bool isSeaCaus = (abs((p.z + camPosW.z) - (-14000.0f)) < 450.0f);
+                const float3 throughRGB = evalSpectralWaterTransmittance(depthV + length(pb - p), waterA.z * 0.55f, true, isSeaCaus, saturate(weather.w * 0.5f));
+                const float focus = saturate(depthV / 22.0f) * exp(-min(depthV / 340.0f, 20.0f));
                 const float clearSun = max(1.0f - saturate(clouds.x * 0.80f), 0.22f);
                 // Negative-space caustic trough modulation (< 1.0 where rays diverge, > 1.0 where wave crests converge):
                 const float troughFade = saturate(focus * sunVis * clearSun * (1.0f - smoothstep(2600.0f, 5200.0f, wDist)));
                 causTrough = lerp(1.0f.xxx, clamp(jacFocus, 0.62f.xxx, 1.25f.xxx), troughFade * 0.65f);
-                const float3 jacFilament = max(jacFocus - 1.0f.xxx, 0.0f.xxx) * 0.72f + net * 0.68f;
-                caus = BedAlbedo.Load(ip).rgb * sunColour.rgb * (l.z * sunVis * through * focus * waterA.y * 1.45f * clearSun) * jacFilament;
+                const float3 jacFilament = max(jacFocus - 1.0f.xxx, 0.0f.xxx) * 0.72f + net * 0.68f + shimRGB;
+                caus = sanitizeWater3(BedAlbedo.Load(ip).rgb * sunColour.rgb * throughRGB * (l.z * sunVis * focus * waterA.y * 1.48f * clearSun) * jacFilament);
             }
 
             // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water: the
@@ -681,31 +711,39 @@ void water(uint3 id : SV_DispatchThreadID) {
                 }
                 const int2 qDepthPx = qValid ? q : int2(id.xy);
                 const float path = length(worldAt(float2(qDepthPx), Depth.Load(int3(qDepthPx, 0))) - p);
-                // Wave 34 Pope & Fry (1997) Physical Spectral Beer-Lambert Water Extinction (emiljecreates / EasyWaterscape):
+                // Wave 34 + Wave 59 Pope & Fry (1997) Spectral Beer-Lambert Water Extinction + Turbidity Coupling:
                 // Red light dies ~5.5x faster than blue: shallow stones stay golden-clear, mid-depth turns rich translucent
                 // Nordic jade-emerald, and deep pools drop into dark Atlantic sapphire-indigo!
                 const bool isExtBody = (sunColour.w > 0.5f);
-                const float3 T = exp(-waterA.z * (isExtBody ? float3(2.35f, 0.72f, 0.42f) : float3(2.10f, 1.35f, 1.15f)) * path);
-                const float3 scatterTint = isExtBody ? float3(0.008f, 0.032f, 0.044f) : float3(0.003f, 0.006f, 0.008f);
+                const bool isSeaFoam = (isExtBody && abs((p.z + camPosW.z) - (-14000.0f)) < 450.0f);
+                const float waterTurbidity = saturate(weather.w * 0.52f + riverFlowSpeed * 0.25f * (1.0f - smoothstep(10.0f, 120.0f, depthV)));
+                const float3 T = evalSpectralWaterTransmittance(path, waterA.z, isExtBody, isSeaFoam, waterTurbidity);
+                const float3 scatterTint = isExtBody
+                    ? lerp(float3(0.008f, 0.032f, 0.044f), float3(0.012f, 0.034f, 0.038f), waterTurbidity * 0.5f)
+                    : float3(0.003f, 0.006f, 0.008f);
                 const float3 scatter = scatterTint * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.035f, 0.045f, 0.062f)) * (isExtBody ? 1.25f : 0.65f);
                 const float nearW = 1.0f - smoothstep(3200.0f, 6400.0f, wDist);
-                // Physical Backlit & Top-Lit Translucent Jade-Emerald Wave-Crest Subsurface Scattering (emiljecreates):
+                // Physical Backlit & Top-Lit Translucent Jade-Emerald Wave-Crest Subsurface Scattering:
                 // Sunlight transmits vividly through thin upper wave ridges (waveHeight3D > 0) while troughs stay deep indigo!
                 const float crestThin = saturate(waveHeight3D * 0.12f + (1.0f - n.z) * 4.2f);
                 const float sssVisW = (isExtBody && sunDir.w > 0.5f) ? (0.30f + 0.70f * pow(saturate(dot(-v, sunDir.xyz)), 2.8f) + 0.35f * saturate(dot(n, sunDir.xyz))) : 0.0f;
                 const float3 waveSSS = (isExtBody && sunDir.w > 0.5f)
                     ? float3(0.018f, 0.165f, 0.145f) * sunColour.rgb * (sssVisW * crestThin * (1.0f - saturate(clouds.x * 0.72f)) * 0.68f)
                     : 0.0f.xxx;
-                // Wave 38 Organic Cellular Open-Cell Lacy Foam (Jettelly / 24Ronin inspired):
+                // Wave 38 + Wave 59 Organic Cellular Lacy Foam + Schlick Fresnel Wind-Capillary Foam Breakup:
                 // Sparse wind-blown ocean whitecaps (never parallel zebra stripes!) + organic noise-modulated shoreline
-                // & boulder foam collars (never depth-contour rings!).
+                // & boulder foam collars (never depth-contour rings!) feathered by wind-capillary breakup!
                 const float wtF = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
-                const bool isSeaFoam = (isExtBody && abs((p.z + camPosW.z) - (-14000.0f)) < 450.0f);
                 const float2 foamFlow = normalize(cloudWind.xy + float2(1.0f, 0.35f));
+                const float2 foamPerp = float2(-foamFlow.y, foamFlow.x);
                 const float windSpeedW = saturate(length(cloudWind.xy) / 340.0f + weather.w * 0.45f + saturate((beaufort - 2.0f) / 7.0f) * 0.65f);
+                // Aperiodic anisotropic wind-capillary breakup tears foam edges into organic wisps under strong gusts:
+                const float2 wCapP = float2(dot(wpW.xy, foamFlow) * 0.018f - wtF * (0.28f + windSpeedW * 0.45f), dot(wpW.xy, foamPerp) * 0.056f);
+                const float windCapBreak = smoothstep(0.24f, 0.78f, rawNoise3Grad(float3(wCapP, wtF * 0.24f + 19.7f)).x);
                 // Sparse organic sea-crest foam strictly on steep patch-masked aperiodic crests in choppy sea states:
                 const float crestBreak = isSeaFoam
-                    ? saturate((jacobianFold - lerp(0.54f, 0.28f, windSpeedW)) * 2.25f) * smoothstep(24.0f, 110.0f, depthV) * (0.35f + 0.65f * windSpeedW)
+                    ? saturate((jacobianFold - lerp(0.54f, 0.28f, windSpeedW)) * 2.25f) * smoothstep(24.0f, 110.0f, depthV)
+                      * (0.35f + 0.65f * windSpeedW) * lerp(0.55f, 1.15f, windCapBreak)
                     : 0.0f;
                 // Organic aperiodic shoreline & rock contact collar (modulated by 3D noise instead of periodic sine!):
                 // Wave 47 Wet-Shoreline Capillary Meniscus Darkening, Contact Fresnel Glint & Delicate Lacy Foam Cling
@@ -718,14 +756,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float capillaryRim = (1.0f - smoothstep(0.0f, 0.11f * (0.62f + 0.76f * shoreFine), depthM)) * smoothstep(0.0f, 0.004f, depthM);
                 const float collarReach = (isSeaFoam ? 6.8f : (2.8f + riverFlowSpeed * 2.4f)) * (0.55f + 0.90f * shoreJitter);
                 const float contactCollar = (1.0f - smoothstep(0.0f, collarReach, depthV)) * smoothstep(0.0f, 0.30f, depthV);
-                // Break up micro-foam cling organically with flow speed, boulder deflection & SWE wake foam (ZERO uniform rings!):
-                const float clingBreakup = smoothstep(0.28f, 0.78f, shoreFine * 0.62f + shoreJitter * 0.38f + riverFlowSpeed * 0.22f);
+                // Break up micro-foam cling organically with flow speed, boulder deflection, wind capillary & SWE wake foam:
+                const float clingBreakup = smoothstep(0.26f, 0.78f, shoreFine * 0.54f + shoreJitter * 0.28f + windCapBreak * 0.18f + riverFlowSpeed * 0.20f);
                 const float microFoamCling = contactCollar * clingBreakup * (isSeaFoam ? 0.68f : lerp(0.28f, 0.58f, riverFlowSpeed));
                 const float foamEnergy = saturate(max(max(crestBreak, microFoamCling), max(max(bowHit * 0.66f, eddyLee * 0.40f), simFoamLive * 0.92f)));
                 const float2 foamAdvect = isSeaFoam ? (foamFlow * (wtF * 8.0f)) : (riverFlowDir * (wtF * (7.5f + riverFlowSpeed * 9.5f)));
                 const float foamLace = foamEnergy > 0.02f ? cellularFoamLace(wpW.xy - foamAdvect, wtF, foamEnergy) : 0.0f;
                 const float foamMask = saturate(max(foamLace * smoothstep(0.07f, 0.54f, foamEnergy), simFoamLive * (0.48f + 0.52f * foamLace))) * nearW;
-                // True Underwater Volumetric Sunbeam Shafts (EXTERIORS ONLY — never fire cyan sunbeams inside underground sewers!).
+                // True Underwater Volumetric Sunbeam Shafts (EXTERIORS ONLY; never fire cyan sunbeams inside underground sewers!).
                 float3 uwShaft = 0.0f.xxx;
                 if (isExtBody && sunDir.w > 0.5f && sunDir.z > 0.08f && depthV > 6.0f && wDist < 4200.0f) {
                     const float clearW = 1.0f - saturate(clouds.x * 0.78f);
@@ -738,12 +776,15 @@ void water(uint3 id : SV_DispatchThreadID) {
                         const float tu = (float(ui) + 0.5f) * stepUw;
                         const float3 pu = p - v * tu;
                         const float dCol = max(p.z - pu.z, 0.0f);
-                        uwAcc += exp(-waterA.z * 0.85f * (tu + dCol)) * stepUw;
+                        uwAcc += exp(-min(waterA.z * 0.85f * (tu + dCol), 24.0f)) * stepUw;
                     }
                     uwShaft = sunColour.rgb * float3(0.04f, 0.14f, 0.16f) * (uwAcc * 0.0022f * phUw * clearW);
                 }
                 const float foamSun = (isExtBody && sunDir.w > 0.5f) ? saturate(dot(n, sunDir.xyz) * 0.55f + 0.45f) : 0.0f;
-                const float3 foamLit = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 0.92f + sunColour.rgb * (foamSun * 0.55f)) * float3(0.95f, 0.98f, 1.00f);
+                const float3 foamDiffuse = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 0.92f + sunColour.rgb * (foamSun * 0.55f)) * float3(0.95f, 0.98f, 1.00f);
+                // Schlick Fresnel grazing water-film glaze on aerated foam bubbles (prevents flat chalky white foam at low angles):
+                const float foamFresnel = saturate(0.0204f + 0.9796f * pow(1.0f - nv, 5.0f));
+                const float3 foamLit = lerp(foamDiffuse, sanitizeWater3(refl) * 0.78f + foamDiffuse * 0.30f, foamFresnel * 0.44f);
                 // Capillary meniscus wet-rock darkening right at [0..0.45m] shoreline contact (smooth & noise-broken):
                 const float shoreDark = lerp(1.0f, lerp(0.56f, 0.76f, shoreJitter), meniscusMask) * lerp(0.84f, 1.0f, smoothstep(0.0f, 24.0f, depthV));
                 // Sharp Fresnel specular glint right along the concave capillary meniscus contact edge:
@@ -931,5 +972,5 @@ void water(uint3 id : SV_DispatchThreadID) {
             col = lerp(lerp(refrSky * 0.55f + uwFogCol * 0.45f, uwFogCol, F_uw * 0.65f), uwSurf, grazingFade);
         }
     }
-    WaterOut[id.xy] = float4(col, game.a);
+    WaterOut[id.xy] = float4(sanitizeWater3(col), isfinite(game.a) ? saturate(game.a) : 1.0f);
 }

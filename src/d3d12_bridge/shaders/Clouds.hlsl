@@ -125,18 +125,33 @@ float cloudDensityVol(float3 pa, bool detail) {
     return dens * cloudWind.z;
 }
 
+// Wave 59: Strict NaN/Inf sanitization (synchronized with RawCloudRaymarchSim.hlsl::SanitizeCloud4).
+float3 sanitizeCloud3(float3 c) {
+    return all(isfinite(c)) ? clamp(c, 0.0f.xxx, 64.0f.xxx) : 0.0f.xxx;
+}
+float4 sanitizeCloud4(float4 c) {
+    return float4(sanitizeCloud3(c.rgb), isfinite(c.a) ? saturate(c.a) : 1.0f);
+}
+
 float3 sampleCloudSunTrans(float mu) {
     const float r = 6360.0f + 4.5f;   // 4.5 km Nordic cumulus deck altitude
     const float H = sqrt(6460.0f * 6460.0f - 6360.0f * 6360.0f);
     const float rho = sqrt(r * r - 6360.0f * 6360.0f);
-    const float d = max(0.0f, -r * mu + sqrt(max(r * r * (mu * mu - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
+    const float muCl = clamp(isfinite(mu) ? mu : 0.0f, -1.0f, 1.0f);
+    const float d = max(0.0f, -r * muCl + sqrt(max(r * r * (muCl * muCl - 1.0f) + 6460.0f * 6460.0f, 0.0f)));
     const float2 uv = float2(saturate((d - (6460.0f - r)) / max(rho + H - (6460.0f - r), 1.0e-4f)), saturate(rho / H));
-    return TransLut.SampleLevel(Lin, uv, 0.0f).rgb;
+    return sanitizeCloud3(TransLut.SampleLevel(Lin, uv, 0.0f).rgb);
 }
 
 float hg(float c, float g) {
     const float g2 = g * g;
-    return (1.0f - g2) / (4.0f * PI * pow(max(1.0f + g2 - 2.0f * g * c, 1.0e-4f), 1.5f));
+    const float denom = max(1.0f + g2 - 2.0f * g * clamp(c, -1.0f, 1.0f), 1.0e-4f);
+    return (1.0f - g2) / (4.0f * PI * denom * sqrt(denom));
+}
+
+// Synchronized dual-lobe Henyey-Greenstein phase (matches RawCloudRaymarchSim.hlsl g1=+0.72, g2=-0.28, w1=0.72).
+float dualHgSync(float cosTheta, float g1, float g2, float w1) {
+    return lerp(hg(cosTheta, g2), hg(cosTheta, g1), w1);
 }
 
 // Wave 38: High-Frequency Interleaved Gradient Noise + Golden-Ratio Temporal Offset.
@@ -169,10 +184,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float aElev = astroSunElev();
         const float nightW = smoothstep(0.04f, -0.07f, aElev);
         // Use true astronomical sun by day/twilight (under-lighting clouds cleanly at sunrise/sunset!) and Moon (sunDir) at night.
-        const float3 cloudLightDir = normalize(lerp(aSun, sunDir.xyz, nightW));
-        const float cosT = dot(dir, cloudLightDir);
-        // Dual-lobe Henyey-Greenstein Mie forward/back scatter (g1 = 0.78 silver lining, g2 = -0.28 back-scatter):
-        const float phase = min(lerp(hg(cosT, -0.28f), hg(cosT, 0.78f), 0.56f), 0.32f);
+        const float3 lightRaw = lerp(aSun, sunDir.xyz, nightW);
+        const float lightLen2 = dot(lightRaw, lightRaw);
+        const float3 cloudLightDir = (isfinite(lightLen2) && lightLen2 > 1.0e-8f) ? (lightRaw * rsqrt(lightLen2)) : float3(0.0f, 0.0f, 1.0f);
+        const float cosT = clamp(dot(dir, cloudLightDir), -1.0f, 1.0f);
+        // Wave 59: Azimuthal alignment synchronized with AtmosphereLut.hlsl civil-twilight Belt of Venus & Earth shadow!
+        const float2 dirHor = dir.xy * rsqrt(max(dot(dir.xy, dir.xy), 1.0e-6f));
+        const float2 sunHor = aSun.xy * rsqrt(max(dot(aSun.xy, aSun.xy), 1.0e-6f));
+        const float solarAzC = saturate(dot(dirHor, sunHor));
+        const float antiAzC  = saturate(dot(dirHor, -sunHor));
+        const float civilTwOzone = smoothstep(-0.12f, -0.015f, aElev) * (1.0f - smoothstep(0.025f, 0.14f, aElev)) * (1.0f - saturate(clouds.x - 0.42f) * 1.15f);
         const float3 rawSunC = sunColour.rgb * (sunDir.w > 0.5f ? 1.0f : 0.0f);
         const float sLum = dot(rawSunC, float3(0.2126f, 0.7152f, 0.0722f));
         // Couple daytime/twilight cloud sunlight directly to Hillaire 2020 256x64 Transmittance LUT using TRUE aElev:
@@ -248,20 +269,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dens <= 0.001f) { continue; }
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 4u; k++) { od += cloudDensityVol(pa + cloudLightDir * kSunD[k], false) * kSunW[k]; }
-            // 6-Octave Physical Multiple-Scattering Integral with Dual-Lobe Mie HG (g1=0.78 forward, g2=-0.28 back)
-            // + Physical Beer-Powder Sugar-Edge Law (2 * exp(-od) * (1 - exp(-2 * od))) for crisp dark convective undersides & silver linings!
-            const float odS = od * (sigma * 0.64f);
+            // Wave 59: 6-Octave Multi-Scattering Dual-Lobe Henyey-Greenstein (g1=+0.72 silver-lining, g2=-0.28 back-scatter,
+            // w1=0.72) + Energy-Conserving Beer-Powder Dark-Edge Silver-Lining synchronized with RawCloudRaymarchSim.hlsl!
+            const float odS = max(od * (sigma * 0.64f), 0.0f);
+            const float localOptD = dens * sigma * dtStep;
             const float3 odRGB = odS * float3(0.97f, 1.00f, 1.04f);
             float3 multiScat = 0.0f.xxx;
             float aOct = 1.0f, bOct = 1.0f, cOct = 1.0f;
             [unroll] for (int oct = 0; oct < 6; oct++) {
-                const float phOct = lerp(hg(cosT, -0.28f * cOct), hg(cosT, 0.78f * cOct), 0.56f);
-                multiScat += exp(-odRGB * bOct) * (aOct * min(phOct, 0.42f));
+                const float phOct = dualHgSync(cosT, 0.72f * cOct, -0.28f * cOct, 0.72f);
+                multiScat += exp(-clamp(odRGB * bOct, 0.0f.xxx, 32.0f.xxx)) * (aOct * min(phOct, 0.44f));
                 aOct *= 0.56f; bOct *= 0.48f; cOct *= 0.54f;
             }
-            multiScat = min(multiScat, 1.25f.xxx);
-            const float beerPowder = 2.0f * exp(-odS * 0.85f) * (1.0f - exp(-2.0f * (odS + dens * 0.42f)));
-            const float powder = saturate(lerp(1.0f - exp(-od * sigma * 1.45f - dens * 0.65f), beerPowder, 0.58f));
+            multiScat = min(multiScat, 1.28f.xxx);
+            // Synchronized Beer-Powder dark-edge law (1 - 0.65 * exp(-2*(od + localOptD))) + silver-lining rim boost:
+            const float powderSync = max(1.0f - 0.65f * exp(-min(2.0f * (odS + localOptD), 24.0f)), 0.35f);
+            const float beerSugar  = 2.0f * exp(-min(odS * 0.85f, 24.0f)) * (1.0f - exp(-min(2.0f * (odS + dens * 0.42f), 24.0f)));
+            const float silverRim  = exp(-min(odS * 0.72f, 20.0f)) * pow(saturate(cosT * 0.5f + 0.5f), 4.0f) * 0.34f;
+            const float powder = saturate(lerp(powderSync, beerSugar, 0.48f) + silverRim);
             const float h = saturate((pa.z - clouds.y) / clouds.z);
             const float stormW = saturate(weather.w * 1.25f + max(clouds.x - 0.72f, 0.0f) * 2.2f);
             // Deep 3D ambient occlusion inside convective LCL cloud bellies (crisp dark undersides vs luminous tops):
@@ -308,13 +333,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             coolBase = lerp(coolBase, baseSlateViolet, goldenW * bellyCoolMask * (1.0f - overcastW * 0.55f) * 0.62f);
             coolBase *= lerp(1.0f.xxx, dualMoon.moonTintRGB * lerp(0.42f, 1.32f, dualMoon.totalPhase01), nightW);
 
-            // Golden-amber -> rose-crimson alpenglow rim & underside forward scattering at dawn/sunset:
-            const float3 alpenglowCol = lerp(float3(1.56f, 0.78f, 0.24f), float3(1.52f, 0.40f, 0.32f), deepSunsetW);
+            // Golden-amber -> rose-crimson alpenglow rim & Chappuis-ozone Belt of Venus synchronization (AtmosphereLut.hlsl):
+            // Sunward edges glow warm golden-coral while anti-solar turrets catch rose-magenta Belt-of-Venus backscatter
+            // above cool Chappuis-ozone slate-indigo cloud bellies!
+            const float3 solarAlpen = lerp(float3(1.56f, 0.78f, 0.24f), float3(1.52f, 0.40f, 0.30f), deepSunsetW);
+            const float3 venusRose  = float3(0.86f, 0.32f, 0.46f);
+            const float3 alpenglowCol = lerp(solarAlpen, venusRose, antiAzC * civilTwOzone * 0.68f);
             const float sunSideFwd = pow(saturate(dot(dir, aSun) * 0.5f + 0.5f), 2.4f);
-            const float rimTrans = exp(-od * sigma * 0.32f) * lerp(0.45f, 1.0f, powder);
+            const float rimTrans = exp(-min(od * sigma * 0.32f, 24.0f)) * lerp(0.45f, 1.0f, powder);
             const float undersideMask = lerp(1.0f, 0.42f, smoothstep(0.18f, 0.85f, h));
-            const float alpenglowEnv = max(twiCloud, goldenW * 0.85f) * (1.0f - overcastW * 0.72f);
-            const float3 underLit = alpenglowCol * (alpenglowEnv * rimTrans * (sunSideFwd * 0.52f + hg(cosT, 0.72f) * 0.38f) * undersideMask);
+            const float alpenglowEnv = max(max(twiCloud, goldenW * 0.85f), civilTwOzone * antiAzC * 0.58f) * (1.0f - overcastW * 0.72f);
+            const float3 underLit = alpenglowCol * (alpenglowEnv * rimTrans * (sunSideFwd * 0.48f + antiAzC * civilTwOzone * 0.24f + dualHgSync(cosT, 0.72f, -0.28f, 0.72f) * 0.38f) * undersideMask);
+            // Subtle Chappuis stratospheric ozone indigo tint on twilight cloud shadows matching AtmosphereLut.hlsl:
+            const float ozoneShadowW = civilTwOzone * (1.0f - solarAzC * 0.55f) * bellyCoolMask;
+            coolBase = lerp(coolBase, coolBase * float3(0.68f, 0.76f, 1.18f) + float3(0.010f, 0.015f, 0.036f), saturate(ozoneShadowW * 0.48f));
             // Orbital dual-moon phase-coupled silver-lining along thin cloud edges & crowns (warm rose Masser / cool cyan Secunda / dark new-moon):
             const float moonEdge = exp(-od * sigma * 0.40f) * lerp(0.45f, 1.0f, powder);
             const float3 moonRimCol = dualMoon.moonTintRGB * float3(0.56f, 0.62f, 0.84f) * moonPhaseGain;
@@ -408,10 +440,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float edgeFade = smoothstep(0.0f, 0.045f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
             const float2 curUv = full * dims.zw;
             const float turnReject = 1.0f - saturate(length(uv - curUv) * 16.0f) * 0.78f;
-            const float4 h = History.SampleLevel(Lin, uv, 0.0f);
+            const float4 h = sanitizeCloud4(History.SampleLevel(Lin, uv, 0.0f));
             // Smooth golden-ratio IGN temporal convergence (silky noise-free night/day clouds, instant rejection on fast camera turns):
-            res = lerp(res, h, clamp(max(cloudWind.w, 0.52f), 0.35f, 0.66f) * edgeFade * turnReject);
+            res = lerp(sanitizeCloud4(res), h, clamp(max(cloudWind.w, 0.52f), 0.35f, 0.66f) * edgeFade * turnReject);
         }
     }
-    return res;
+    return sanitizeCloud4(res);
 }

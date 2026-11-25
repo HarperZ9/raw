@@ -1,5 +1,5 @@
 // tools/raw_bench_suite.cpp: Studio-Grade Automated GPU/CPU Benchmark & Visual Invariant Suite for RAW.
-// Benchmarks all 17 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
+// Benchmarks all 18 core GPU & CPU engine subsystems on Hardware DX12 GPU (e.g. RTX 4090) or WARP:
 //   1. GPU 64^3 Navier-Stokes Fire/Smoke + 256^2 SWE Water (RawFluidSimHost)
 //   2. GPU 4-Cascade Radiance Cascades GI (RawRadianceHost)
 //   3. Procedural PBR Texture Forge (RawTextureForge, all 8 seamless PBR sets)
@@ -17,6 +17,7 @@
 //  15. GPU 256-Bin Log-Luminance Histogram & Asymmetric Human Eye-Adaptation Auto-Exposure (RawAutoExposureHost)
 //  16. GPU 3D Volumetric Cloud Raymarching + Beer-Powder Silver-Lining & Temporal Reprojection (RawCloudRaymarchHost)
 //  17. GPU Cinematic Post-Process: Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF (RawPostCinematicHost)
+//  18. GPU 16,384-Particle 3D Physics & Screen-Space Additive Splat Engine (RawGpuParticlesHost)
 //
 // CLI:
 //   raw_bench_suite [--warp] [--quick] [--frames N] [--json <path>] [--esm <path>] [--bsa <path>] [--no-debug-layer]
@@ -46,6 +47,7 @@
 #include "../src/d3d12_bridge/RawAutoExposureHost.h"
 #include "../src/d3d12_bridge/RawCloudRaymarchHost.h"
 #include "../src/d3d12_bridge/RawPostCinematicHost.h"
+#include "../src/d3d12_bridge/RawGpuParticlesHost.h"
 #include "../src/materials/RawTextureForge.h"
 #include "../src/audio/RawAudioDsp.h"
 #include "../src/worldgen/RawDestructionEngine.h"
@@ -1081,6 +1083,28 @@ struct PostCinematicBenchResult {
     float       maxBgBleedR        = 1.0f;
     float       vignetteFalloffPct = 0.0f;
     uint32_t    nanInfCount        = 0u;
+    std::string note;
+};
+
+struct GpuParticlesBenchResult {
+    bool        passed         = false;
+    Percentiles totalGpuMs{};
+    Percentiles cpuRecordMs{};
+    uint32_t    particleCount  = 16384u;
+    uint32_t    splatWidth     = 480u;
+    uint32_t    splatHeight    = 270u;
+    float       hostSimMs      = 0.0f;
+    float       hostSplatMs    = 0.0f;
+    uint32_t    activeCount    = 0u;
+    uint32_t    expiredActive  = 1u;
+    float       emberMeanY     = 0.0f;
+    float       snowMeanY      = 0.0f;
+    float       windMeanX      = 0.0f;
+    uint32_t    bouncedCount   = 0u;
+    float       minBounceY     = -1.0f;
+    uint32_t    splattedCount  = 0u;
+    uint32_t    nonZeroSplatPx = 0u;
+    uint32_t    nanInfCount    = 0u;
     std::string note;
 };
 
@@ -4063,6 +4087,256 @@ PostCinematicBenchResult RunPostCinematicBenchmark(BenchDx12Rig& rig, uint32_t w
 }
 
 // ----------------------------------------------------------------------------
+// 18. GPU 16,384-Particle 3D Physics & Screen-Space Additive Splat (RawGpuParticlesHost)
+// ----------------------------------------------------------------------------
+GpuParticlesBenchResult RunGpuParticlesBenchmark(BenchDx12Rig& rig, uint32_t warmupFrames, uint32_t measuredFrames)
+{
+    GpuParticlesBenchResult res{};
+    constexpr uint32_t kCount = 16384u;
+    constexpr uint32_t kW     = 480u;
+    constexpr uint32_t kH     = 270u;
+    res.particleCount = kCount;
+    res.splatWidth    = kW;
+    res.splatHeight   = kH;
+
+    raw::bridge::RawGpuParticlesHost host;
+    raw::bridge::GpuParticlesDesc desc{};
+    desc.particleCount = kCount;
+    desc.splatWidth    = kW;
+    desc.splatHeight   = kH;
+    std::string err;
+    if (!host.Init(rig.dev.Get(), desc, &err)) {
+        res.note = "RawGpuParticlesHost::Init failed: " + err;
+        return res;
+    }
+    host.SetTimestampFrequency(rig.tsFreqHz);
+
+    const float eye[3]    = {0.0f, 2.5f, -9.0f};
+    const float target[3] = {0.0f, 2.0f,  0.0f};
+    const float up[3]     = {0.0f, 1.0f,  0.0f};
+    float viewProj[16]{};
+    raw::bridge::BuildParticlesViewProjLH(eye, target, up, 1.04719755f,
+                                          static_cast<float>(kW) / static_cast<float>(kH),
+                                          0.1f, 100.0f, viewProj);
+
+    auto runFixedSteps = [&](const raw::bridge::GpuParticlesParams& pBase, uint32_t steps) -> bool {
+        raw::bridge::GpuParticlesParams p = pBase;
+        for (uint32_t s = 0u; s < steps; ++s) {
+            p.resetAll   = (s == 0u);
+            p.frameIndex = s;
+            p.timeSec    = static_cast<float>(s) * p.dtSec;
+            if (!rig.BeginFrame()) return false;
+            host.Execute(rig.cmd.Get(), p);
+            if (!rig.FlushAndWait()) return false;
+        }
+        return true;
+    };
+
+    auto readParticles = [&](std::vector<raw::bridge::GpuParticleCpuView>& outP) -> bool {
+        std::vector<uint8_t> raw;
+        if (!rig.ReadbackBuffer(host.GetParticleBuffer(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                static_cast<uint64_t>(kCount) * sizeof(raw::bridge::GpuParticleCpuView), raw)) {
+            return false;
+        }
+        outP.resize(kCount);
+        std::memcpy(outP.data(), raw.data(), raw.size());
+        for (const auto& p : outP) {
+            if (!std::isfinite(p.pos[0]) || !std::isfinite(p.pos[1]) || !std::isfinite(p.pos[2]) ||
+                !std::isfinite(p.vel[0]) || !std::isfinite(p.vel[1]) || !std::isfinite(p.vel[2]) ||
+                !std::isfinite(p.age) || !std::isfinite(p.maxLife)) {
+                ++res.nanInfCount;
+            }
+        }
+        return true;
+    };
+
+    auto readStats = [&](raw::bridge::GpuParticlesStats& st) -> bool {
+        std::vector<uint8_t> raw;
+        if (!rig.ReadbackBuffer(host.GetStatsBuffer(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 16ull, raw)) {
+            return false;
+        }
+        std::memcpy(&st, raw.data(), sizeof(st));
+        return true;
+    };
+
+    // 1) Upward rising fire embers + steady-state GPU benchmark
+    raw::bridge::GpuParticlesParams emberP{};
+    std::memcpy(emberP.viewProj, viewProj, sizeof(viewProj));
+    emberP.emitterPos[0] = 0.0f; emberP.emitterPos[1] = 1.2f; emberP.emitterPos[2] = 0.0f;
+    emberP.emitterRadius = 0.75f;
+    emberP.windVel[0] = 0.0f; emberP.windVel[1] = 0.0f; emberP.windVel[2] = 0.0f;
+    emberP.curlStrength = 1.6f;
+    emberP.dtSec = 1.0f / 30.0f;
+    emberP.groundY = 0.0f;
+    emberP.restitution = 0.6f;
+    emberP.buoyancyAccel = 4.6f;
+    emberP.dragCoeff = 0.5f;
+    emberP.mode = raw::bridge::ParticleMode::Embers;
+    emberP.enableRespawn = true;
+    emberP.enableGroundBounce = true;
+
+    std::vector<double> gpuSamples, cpuSamples;
+    gpuSamples.reserve(measuredFrames);
+    cpuSamples.reserve(measuredFrames);
+    const uint32_t totalFrames = warmupFrames + measuredFrames;
+    for (uint32_t f = 0u; f < totalFrames; ++f) {
+        emberP.resetAll   = (f == 0u);
+        emberP.frameIndex = f;
+        emberP.timeSec    = static_cast<float>(f) * emberP.dtSec;
+        const auto c0 = Clock::now();
+        if (!rig.BeginFrame()) {
+            res.note = "BeginFrame (particles) failed";
+            return res;
+        }
+        rig.MarkTimestamp(0u);
+        host.Execute(rig.cmd.Get(), emberP);
+        rig.MarkTimestamp(1u);
+        rig.ResolveTimestamps(0u, 2u);
+        const auto c1 = Clock::now();
+        if (!rig.FlushAndWait()) {
+            res.note = "FlushAndWait (particles) failed";
+            return res;
+        }
+        if (f >= warmupFrames) {
+            double gMs = 0.0;
+            rig.ReadTimestampRangeMs(0u, 1u, gMs);
+            gpuSamples.push_back(gMs);
+            cpuSamples.push_back(ElapsedMs(c0, c1));
+        }
+    }
+
+    res.totalGpuMs  = ComputePercentiles(gpuSamples);
+    res.cpuRecordMs = ComputePercentiles(cpuSamples);
+    res.hostSimMs   = host.HasValidTiming() ? host.GetLastSimMs() : 0.0f;
+    res.hostSplatMs = host.HasValidTiming() ? host.GetLastSplatMs() : 0.0f;
+
+    // 2) Deterministic physics & splat invariant probes (identical 16-step trajectory on HW & WARP)
+    if (!runFixedSteps(emberP, 16u)) {
+        res.note = "Ember physics probe failed";
+        return res;
+    }
+    raw::bridge::GpuParticlesStats emberStats{};
+    std::vector<raw::bridge::GpuParticleCpuView> particles;
+    if (!readStats(emberStats) || !readParticles(particles)) {
+        res.note = "Readback ember stats/particles failed";
+        return res;
+    }
+    res.activeCount   = emberStats.activeCount;
+    res.splattedCount = emberStats.splattedCount;
+    double sumEmberY = 0.0, sumEmberVy = 0.0;
+    for (const auto& p : particles) {
+        sumEmberY  += p.pos[1];
+        sumEmberVy += p.vel[1];
+    }
+    res.emberMeanY = static_cast<float>(sumEmberY / kCount);
+    const float emberMeanVy = static_cast<float>(sumEmberVy / kCount);
+
+    std::vector<uint8_t> splatRaw;
+    if (!rig.ReadbackBuffer(host.GetSplatBuffer(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                            host.SplatBufferBytes(), splatRaw)) {
+        res.note = "Readback particle splat buffer failed";
+        return res;
+    }
+    const auto* splatU32 = reinterpret_cast<const uint32_t*>(splatRaw.data());
+    uint32_t nonZeroPx = 0u;
+    for (uint32_t i = 0u; i < kW * kH; ++i) {
+        if (splatU32[i * 4u + 3u] > 0u &&
+            (splatU32[i * 4u + 0u] > 0u || splatU32[i * 4u + 1u] > 0u || splatU32[i * 4u + 2u] > 0u)) {
+            ++nonZeroPx;
+        }
+    }
+    res.nonZeroSplatPx = nonZeroPx;
+
+    // 3) Lifespan expiry conservation (enableRespawn = false)
+    raw::bridge::GpuParticlesParams expireP = emberP;
+    expireP.enableRespawn = false;
+    expireP.dtSec = 0.12f;
+    if (!runFixedSteps(expireP, 35u)) {
+        res.note = "Expiry probe failed";
+        return res;
+    }
+    raw::bridge::GpuParticlesStats expireStats{};
+    readStats(expireStats);
+    res.expiredActive = expireStats.activeCount;
+
+    // 4) Downward falling snow gravity
+    raw::bridge::GpuParticlesParams snowP = emberP;
+    snowP.mode = raw::bridge::ParticleMode::Snow;
+    snowP.emitterPos[1] = 8.0f;
+    snowP.curlStrength = 0.4f;
+    snowP.dtSec = 1.0f / 20.0f;
+    if (!runFixedSteps(snowP, 16u) || !readParticles(particles)) {
+        res.note = "Snow gravity probe failed";
+        return res;
+    }
+    double sumSnowY = 0.0, sumSnowVy = 0.0;
+    for (const auto& p : particles) {
+        sumSnowY  += p.pos[1];
+        sumSnowVy += p.vel[1];
+    }
+    res.snowMeanY = static_cast<float>(sumSnowY / kCount);
+    const float snowMeanVy = static_cast<float>(sumSnowVy / kCount);
+
+    // 5) +X wind drift advection
+    raw::bridge::GpuParticlesParams windP = emberP;
+    windP.windVel[0] = 14.0f;
+    windP.curlStrength = 0.25f;
+    windP.dragCoeff = 1.8f;
+    windP.dtSec = 1.0f / 20.0f;
+    if (!runFixedSteps(windP, 16u) || !readParticles(particles)) {
+        res.note = "Wind advection probe failed";
+        return res;
+    }
+    double sumWindX = 0.0;
+    for (const auto& p : particles) sumWindX += p.pos[0];
+    res.windMeanX = static_cast<float>(sumWindX / kCount);
+
+    // 6) Rain ground elastic bounce restitution
+    raw::bridge::GpuParticlesParams bounceP = emberP;
+    bounceP.mode = raw::bridge::ParticleMode::Rain;
+    bounceP.emitterPos[1] = 1.1f;
+    bounceP.emitterRadius = 0.35f;
+    bounceP.curlStrength = 0.0f;
+    bounceP.groundY = 0.0f;
+    bounceP.restitution = 0.78f;
+    bounceP.dtSec = 1.0f / 40.0f;
+    bounceP.enableRespawn = false;
+    bounceP.enableGroundBounce = true;
+    if (!runFixedSteps(bounceP, 18u) || !readParticles(particles)) {
+        res.note = "Ground bounce probe failed";
+        return res;
+    }
+    raw::bridge::GpuParticlesStats bounceStats{};
+    readStats(bounceStats);
+    res.bouncedCount = bounceStats.bouncedCount;
+    float minY = 1.0e9f;
+    uint32_t posRebound = 0u;
+    for (const auto& p : particles) {
+        minY = std::min(minY, p.pos[1]);
+        if (p.bounceCount > 0u && p.vel[1] > 0.25f) ++posRebound;
+    }
+    res.minBounceY = minY;
+
+    const bool optOk = (res.nanInfCount == 0u) && (res.activeCount == kCount) && (res.expiredActive == 0u) &&
+                       (res.emberMeanY > 1.8f) && (emberMeanVy > 1.0f) &&
+                       (res.snowMeanY < 7.2f) && (snowMeanVy < -0.5f) &&
+                       (res.windMeanX > 2.5f) &&
+                       (res.bouncedCount > 10000u) && (res.minBounceY >= -1.0e-3f) && (posRebound > 1000u) &&
+                       (res.splattedCount > 10000u) && (res.nonZeroSplatPx > 200u);
+    const bool budgetOk = rig.isWarp ? true : (res.totalGpuMs.mean < 0.08);
+    res.passed = optOk && budgetOk;
+    if (!optOk) {
+        res.note = "GpuParticles conservation/buoyancy/wind/bounce/splat/NaN invariant failed";
+    } else if (!budgetOk) {
+        res.note = "HW GPU 16K GpuParticles mean exceeded 0.08 ms budget";
+    } else {
+        res.note = rig.isWarp ? "WARP 16K 3D particles physics & additive splat PASS"
+                              : "HW GPU < 0.08 ms & 16K 3D physics/bounce/splat PASS";
+    }
+    return res;
+}
+
+// ----------------------------------------------------------------------------
 // JSON Serializer & Console Scorecard Printer
 // ----------------------------------------------------------------------------
 void WriteBenchJson(const std::string& path,
@@ -4088,7 +4362,8 @@ void WriteBenchJson(const std::string& path,
                     const SsrBenchResult& ssr,
                     const AutoExposureBenchResult& autoExposure,
                     const CloudRaymarchBenchResult& cloudRaymarch,
-                    const PostCinematicBenchResult& postCinematic)
+                    const PostCinematicBenchResult& postCinematic,
+                    const GpuParticlesBenchResult& gpuParticles)
 {
     std::ostringstream os;
     os << std::fixed << std::setprecision(4);
@@ -4407,6 +4682,29 @@ void WriteBenchJson(const std::string& path,
     os << "      \"vignetteFalloffPct\": " << postCinematic.vignetteFalloffPct << ",\n";
     os << "      \"nanInfCount\": " << postCinematic.nanInfCount << ",\n";
     os << "      \"note\": \"" << JsonEscape(postCinematic.note) << "\"\n";
+    os << "    },\n";
+
+    // 18. GPU 16,384-Particle 3D Physics & Screen-Space Additive Splat
+    os << "    \"gpuParticles\": {\n";
+    os << "      \"passed\": " << (gpuParticles.passed ? "true" : "false") << ",\n";
+    os << "      \"particleCount\": " << gpuParticles.particleCount << ",\n";
+    os << "      \"splatWidth\": " << gpuParticles.splatWidth << ",\n";
+    os << "      \"splatHeight\": " << gpuParticles.splatHeight << ",\n";
+    os << "      \"totalGpuMs\": "; pctObj(gpuParticles.totalGpuMs); os << ",\n";
+    os << "      \"cpuRecordMs\": "; pctObj(gpuParticles.cpuRecordMs); os << ",\n";
+    os << "      \"hostSimMs\": " << gpuParticles.hostSimMs << ",\n";
+    os << "      \"hostSplatMs\": " << gpuParticles.hostSplatMs << ",\n";
+    os << "      \"activeCount\": " << gpuParticles.activeCount << ",\n";
+    os << "      \"expiredActive\": " << gpuParticles.expiredActive << ",\n";
+    os << "      \"emberMeanY\": " << gpuParticles.emberMeanY << ",\n";
+    os << "      \"snowMeanY\": " << gpuParticles.snowMeanY << ",\n";
+    os << "      \"windMeanX\": " << gpuParticles.windMeanX << ",\n";
+    os << "      \"bouncedCount\": " << gpuParticles.bouncedCount << ",\n";
+    os << "      \"minBounceY\": " << gpuParticles.minBounceY << ",\n";
+    os << "      \"splattedCount\": " << gpuParticles.splattedCount << ",\n";
+    os << "      \"nonZeroSplatPx\": " << gpuParticles.nonZeroSplatPx << ",\n";
+    os << "      \"nanInfCount\": " << gpuParticles.nanInfCount << ",\n";
+    os << "      \"note\": \"" << JsonEscape(gpuParticles.note) << "\"\n";
     os << "    }\n";
 
     os << "  }\n";
@@ -4440,7 +4738,8 @@ void PrintScorecard(const BenchDx12Rig& rig,
                     const SsrBenchResult& ssr,
                     const AutoExposureBenchResult& autoExposure,
                     const CloudRaymarchBenchResult& cloudRaymarch,
-                    const PostCinematicBenchResult& postCinematic)
+                    const PostCinematicBenchResult& postCinematic,
+                    const GpuParticlesBenchResult& gpuParticles)
 {
     std::printf("\n");
     std::printf("=====================================================================================================\n");
@@ -4567,6 +4866,13 @@ void PrintScorecard(const BenchDx12Rig& rig,
                   postCinematic.maxBgBleedR, postCinematic.nanInfCount);
     std::printf("  %-30s | %-6s | %-28s | %s\n", "17. GPU Cinematic MB + DoF", postCinematic.passed ? "PASS" : "FAIL", metric, detail);
 
+    std::snprintf(metric, sizeof(metric), "Prt %.4f ms (p95 %.4f)", gpuParticles.totalGpuMs.mean, gpuParticles.totalGpuMs.p95);
+    std::snprintf(detail, sizeof(detail), "S=%.4f P=%.4f | act=%u bnc=%u px=%u wX=%+.1f | NaN=%u",
+                  gpuParticles.hostSimMs, gpuParticles.hostSplatMs,
+                  gpuParticles.activeCount, gpuParticles.bouncedCount,
+                  gpuParticles.nonZeroSplatPx, gpuParticles.windMeanX, gpuParticles.nanInfCount);
+    std::printf("  %-30s | %-6s | %-28s | %s\n", "18. GPU 16K 3D Particles", gpuParticles.passed ? "PASS" : "FAIL", metric, detail);
+
     std::printf("=====================================================================================================\n");
 }
 
@@ -4634,6 +4940,7 @@ int main(int argc, char** argv)
     const AutoExposureBenchResult      autoExposure  = RunAutoExposureBenchmark(rig, warmupFrames, measuredFrames);
     const CloudRaymarchBenchResult     cloudRaymarch = RunCloudRaymarchBenchmark(rig, warmupFrames, measuredFrames);
     const PostCinematicBenchResult     postCinematic = RunPostCinematicBenchmark(rig, warmupFrames, measuredFrames);
+    const GpuParticlesBenchResult      gpuParticles  = RunGpuParticlesBenchmark(rig, warmupFrames, measuredFrames);
 
     const uint32_t debugErrors = rig.DrainDebugErrors();
     const bool allPassed = fluid.passed && rc.passed && tex.passed && audio.passed &&
@@ -4641,14 +4948,14 @@ int main(int argc, char** argv)
                            gpuCull.passed && lightClusters.passed && volFroxels.passed &&
                            shadowPcss.passed && gtao.passed && ssr.passed &&
                            autoExposure.passed && cloudRaymarch.passed &&
-                           postCinematic.passed && (debugErrors == 0u);
+                           postCinematic.passed && gpuParticles.passed && (debugErrors == 0u);
 
     PrintScorecard(rig, quickMode, warmupFrames, measuredFrames, debugErrors,
-                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic);
+                   fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles);
 
     if (!jsonPath.empty()) {
         WriteBenchJson(jsonPath, rig, quickMode, warmupFrames, measuredFrames, debugErrors, allPassed,
-                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic);
+                       fluid, rc, tex, audio, destr, flora, tamriel, xpbd, gpuCull, lightClusters, volFroxels, shadowPcss, gtao, ssr, autoExposure, cloudRaymarch, postCinematic, gpuParticles);
         std::printf("  JSON report written: %s\n", jsonPath.c_str());
     }
 

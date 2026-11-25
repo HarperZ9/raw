@@ -15,6 +15,7 @@
 //   O                   : Resolve Highest-Urgency Emergent World Event or Poll +4h (RawWorldEventDirector!)
 //   K                   : Cycle 9-Hold & 6-Faction Reputation / Bounty / Guard Posture Readout (RawFactionDiplomacy!)
 //   D                   : Cycle Procedural 3D Dungeon Explorer (Nordic Barrow -> Ice Cavern -> Dwemer Ruin -> Overworld)
+//   X                   : Toggle/Cycle Live Combat Skirmish Arena (220ms Timed-Parry, Melee, Shout, Arrows!)
 //   F5 / F8             : CRC-32 Persistent World Quicksave (.bin + .json) / Quickload (RawWorldSerializer!)
 //   F9 / H              : Toggle Live GPU Telemetry HUD & 64-Sample Frame-Time Sparkline (RawOverlayHost!)
 //   F12                 : Capture Instant 24-Bit .bmp Screenshot (raw_viewer_shot_<N>.bmp)
@@ -74,6 +75,7 @@
 #include "RawAutoExposureHost.h"
 #include "RawCloudRaymarchHost.h"
 #include "RawPostCinematicHost.h"
+#include "RawGpuParticlesHost.h"
 #include "RawWeatherSim.h"
 #include "RawWorldShowcase.h"
 #include "RawDestructionEngine.h"
@@ -91,6 +93,7 @@
 #include "RawWorldSerializer.h"
 #include "RawDungeonGen.h"
 #include "RawSkeletonAnimEngine.h"
+#include "RawCombatSandboxEngine.h"
 #include "RawHydrologyGen.h"
 #include "RawAudioOutput.h"
 
@@ -484,6 +487,15 @@ public:
         if (!m_postCinematicOk) {
             std::printf("[Viewer] RawPostCinematicHost warning: %s\n", err.c_str());
         }
+        err.clear();
+        GpuParticlesDesc gpdesc{};
+        gpdesc.particleCount = RawGpuParticlesHost::kMaxParticles;
+        gpdesc.splatWidth    = 480u;
+        gpdesc.splatHeight   = 270u;
+        m_gpuParticlesOk = m_gpuParticles.Init(m_dev.Get(), gpdesc, &err);
+        if (!m_gpuParticlesOk) {
+            std::printf("[Viewer] RawGpuParticlesHost warning: %s\n", err.c_str());
+        }
         UINT64 tsFreq = 0;
         if (SUCCEEDED(m_queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
             if (m_fluidOk)         m_fluidSim.SetTimestampFrequency(tsFreq);
@@ -499,6 +511,7 @@ public:
             if (m_autoExposureOk)  m_autoExposure.SetTimestampFrequency(tsFreq);
             if (m_cloudRaymarchOk) m_cloudRaymarch.SetTimestampFrequency(tsFreq);
             if (m_postCinematicOk) m_postCinematic.SetTimestampFrequency(tsFreq);
+            if (m_gpuParticlesOk)  m_gpuParticles.SetTimestampFrequency(tsFreq);
         }
         m_settlementSim.Reset(202653u);
         m_settlementTelemetry   = m_settlementSim.ComputeWorldTelemetry();
@@ -1859,6 +1872,26 @@ public:
             pbp.secondaryClip = raw::worldgen::AnimClipId::Walk;
             pbp.blendAlpha    = std::clamp(playerSpeedXY / 260.0f, 0.0f, 1.0f);
         }
+        // Couple live RawCombatSandboxEngine combat action states into RawSkeletonAnimEngine -> RawXpbdSimHost!
+        if (m_combatActive && m_combatPlayerId != 0u) {
+            if (const auto* pa = m_combatSandbox.FindActor(m_combatPlayerId)) {
+                if (pa->state == raw::worldgen::CombatActionState::Windup ||
+                    pa->state == raw::worldgen::CombatActionState::ActiveSwing) {
+                    pbp.upperBodyClip           = raw::worldgen::AnimClipId::MeleeSwing;
+                    pbp.upperBodyAdditiveWeight = 1.0f;
+                    pbp.upperBodyPhaseSec       = pa->animPhaseSec;
+                } else if (pa->state == raw::worldgen::CombatActionState::BowDrawing ||
+                           pa->state == raw::worldgen::CombatActionState::Casting) {
+                    pbp.upperBodyClip           = raw::worldgen::AnimClipId::BowDraw;
+                    pbp.upperBodyAdditiveWeight = 1.0f;
+                    pbp.upperBodyPhaseSec       = pa->animPhaseSec;
+                } else if (pa->state == raw::worldgen::CombatActionState::Blocking) {
+                    pbp.upperBodyClip           = raw::worldgen::AnimClipId::MeleeSwing;
+                    pbp.upperBodyAdditiveWeight = 0.50f;
+                    pbp.upperBodyPhaseSec       = 0.25f;
+                }
+            }
+        }
         raw::worldgen::RawSkeletonAnimEngine::EvaluateCharacterRig(
             playerRoot, m_camYaw, pbp, physOpt, m_playerPose, &m_playerXpbdAnchors);
         m_playerRootPos = playerRoot;
@@ -1882,9 +1915,225 @@ public:
                                         : raw::worldgen::AnimClipId::BowDraw;
             sbp.upperBodyAdditiveWeight = 0.65f;
             sbp.upperBodyPhaseSec       = m_simTimeSec * 1.15f + static_cast<float>(i) * 0.5f;
+            if (m_combatActive && (i + 1u) < m_combatSandbox.Actors().size()) {
+                const auto& ca = m_combatSandbox.Actors()[i + 1u];
+                if (ca.state == raw::worldgen::CombatActionState::Windup ||
+                    ca.state == raw::worldgen::CombatActionState::ActiveSwing) {
+                    sbp.primaryClip             = raw::worldgen::AnimClipId::Run;
+                    sbp.upperBodyClip           = raw::worldgen::AnimClipId::MeleeSwing;
+                    sbp.upperBodyAdditiveWeight = 1.0f;
+                    sbp.upperBodyPhaseSec       = ca.animPhaseSec;
+                } else if (ca.state == raw::worldgen::CombatActionState::BowDrawing ||
+                           ca.state == raw::worldgen::CombatActionState::Casting) {
+                    sbp.upperBodyClip           = raw::worldgen::AnimClipId::BowDraw;
+                    sbp.upperBodyAdditiveWeight = 1.0f;
+                    sbp.upperBodyPhaseSec       = ca.animPhaseSec;
+                }
+            }
             raw::worldgen::RawSkeletonAnimEngine::EvaluateCharacterRig(
                 ag.position, yaw, sbp, physOpt, m_squadPoses[i], &m_squadAnchors[i]);
         }
+    }
+
+    static raw::worldgen::CombatWeatherInput BuildCombatWeatherInput(const raw::worldgen::WeatherGpuUniforms& wGpu,
+                                                                     WeatherPreset weather)
+    {
+        raw::worldgen::CombatWeatherInput cwx{};
+        cwx.wetness01    = (weather == WeatherPreset::Rainstorm) ? std::max(wGpu.weather.w, 0.75f) : wGpu.weather.w;
+        cwx.ambientTempC = wGpu.seasonThermal0.w;
+        cwx.windSpeedMps = std::clamp(wGpu.beaufortScale * 2.2f, 0.0f, 35.0f);
+        const float wl   = std::hypot(wGpu.cloudWind.x, wGpu.cloudWind.y);
+        cwx.windDirXY    = (wl > 1.0e-4f) ? raw::worldgen::Vec2{wGpu.cloudWind.x / wl, wGpu.cloudWind.y / wl}
+                                          : raw::worldgen::Vec2{1.0f, 0.0f};
+        return cwx;
+    }
+
+    void SpawnCombatSkirmishAround(float cx, float cy, float groundZ)
+    {
+        m_combatSandbox.Clear();
+        auto& phys = ActivePhysics();
+        auto groundAt = [&](float wx, float wy) -> float {
+            float hz = groundZ;
+            if (phys.SampleTerrainHeight(wx, wy, &hz)) return hz;
+            const auto dh = phys.RayCast({wx, wy, groundZ + 600.0f}, {0.0f, 0.0f, -1.0f}, 2000.0f);
+            return dh.hit ? dh.point[2] : groundZ;
+        };
+
+        // Player Hero (index 0, manual combat actions + 220ms timed-parry)
+        raw::worldgen::CombatActor player{};
+        player.faction       = raw::worldgen::CombatFaction::PlayerAllies;
+        player.role          = raw::worldgen::CombatRole::ShieldBearer;
+        player.position      = {cx, cy, groundAt(cx, cy)};
+        player.facing        = {std::sin(m_camYaw), std::cos(m_camYaw), 0.0f};
+        player.hp            = 320.0f;
+        player.maxHp         = 320.0f;
+        player.armorRating   = 220.0f;
+        player.aiControlled  = false;
+        m_combatPlayerId     = m_combatSandbox.SpawnActor(player);
+
+        static constexpr raw::worldgen::CombatRole kRoles[4] = {
+            raw::worldgen::CombatRole::MeleeWarrior,
+            raw::worldgen::CombatRole::ShieldBearer,
+            raw::worldgen::CombatRole::Archer,
+            raw::worldgen::CombatRole::Battlemage,
+        };
+        // 3 Allied Vanguard + 4 Hostile Raiders forming an active 4v4 skirmish line
+        for (uint32_t i = 0u; i < 3u; ++i) {
+            raw::worldgen::CombatActor ally{};
+            const float ox = cx + (float(i) - 1.0f) * 140.0f;
+            const float oy = cy - 90.0f;
+            ally.faction       = raw::worldgen::CombatFaction::PlayerAllies;
+            ally.role          = kRoles[(i + 1u) % 4u];
+            ally.position      = {ox, oy, groundAt(ox, oy)};
+            ally.facing        = {0.0f, 1.0f, 0.0f};
+            ally.attackElement = (ally.role == raw::worldgen::CombatRole::Battlemage)
+                               ? raw::worldgen::DamageElement::Shock : raw::worldgen::DamageElement::Physical;
+            m_combatSandbox.SpawnActor(ally);
+        }
+        for (uint32_t i = 0u; i < 4u; ++i) {
+            raw::worldgen::CombatActor foe{};
+            const float ox = cx + (float(i) - 1.5f) * 130.0f;
+            const float oy = cy + 165.0f + float(i % 2u) * 85.0f;
+            foe.faction       = raw::worldgen::CombatFaction::Hostiles;
+            foe.role          = kRoles[i];
+            foe.position      = {ox, oy, groundAt(ox, oy)};
+            foe.facing        = {0.0f, -1.0f, 0.0f};
+            foe.attackElement = (foe.role == raw::worldgen::CombatRole::Battlemage)
+                              ? raw::worldgen::DamageElement::Frost : raw::worldgen::DamageElement::Physical;
+            m_combatSandbox.SpawnActor(foe);
+        }
+        m_combatActive      = true;
+        m_combatActionCycle = 0u;
+        m_combatTelemetry   = m_combatSandbox.ComputeTelemetry();
+    }
+
+    void ToggleOrTriggerCombatSkirmish()
+    {
+        auto& phys = ActivePhysics();
+        const auto pst = phys.GetStats();
+        const raw::worldgen::RawWorldPhysics* physOpt =
+            (pst.heightfieldCount > 0u || pst.totalTriangles > 0u) ? &phys : nullptr;
+        const auto cwx = BuildCombatWeatherInput(m_weatherSim.GetGpuUniforms(), m_weatherPreset);
+
+        if (!m_combatActive) {
+            float gz = m_walkMode ? m_playerBody.position.z : (m_camPos[2] - 120.0f);
+            if (!m_walkMode && physOpt) {
+                (void)physOpt->SampleTerrainHeight(m_camPos[0], m_camPos[1], &gz);
+            }
+            SpawnCombatSkirmishAround(m_camPos[0], m_camPos[1], gz);
+            m_combatSandbox.RaiseBlock(m_combatPlayerId);
+            m_combatTelemetry = m_combatSandbox.Step(1.0f / 60.0f, cwx, physOpt, m_navMesh.IsBaked() ? &m_navMesh : nullptr);
+            std::printf("[Combat] Skirmish STARTED (4v4, 220ms Timed-Parry Ready): allies=%u hostiles=%u\n",
+                        m_combatTelemetry.aliveAllies, m_combatTelemetry.aliveHostiles);
+            return;
+        }
+
+        const uint32_t act = m_combatActionCycle++ % 4u;
+        uint32_t nearestHostile = 0u;
+        raw::worldgen::Vec3 hostilePos{m_camPos[0], m_camPos[1] + 220.0f, m_camPos[2] - 120.0f};
+        for (const auto& a : m_combatSandbox.Actors()) {
+            if (a.faction == raw::worldgen::CombatFaction::Hostiles && a.state != raw::worldgen::CombatActionState::Dead) {
+                nearestHostile = a.id;
+                hostilePos     = a.position;
+                break;
+            }
+        }
+        if (act == 0u) {
+            m_combatSandbox.RaiseBlock(m_combatPlayerId);
+            if (nearestHostile != 0u) m_combatSandbox.StartMeleeAttack(m_combatPlayerId, nearestHostile, true);
+            std::printf("[Combat] Player Timed-Parry + Power Attack against actor #%u\n", nearestHostile);
+        } else if (act == 1u) {
+            m_combatSandbox.TriggerShout(m_combatPlayerId, 12.0f);
+            std::printf("[Combat] Player UNRELENTING FORCE Shout triggered!\n");
+        } else if (act == 2u) {
+            const uint32_t pid = m_combatSandbox.FireBallisticProjectile(
+                m_combatPlayerId, hostilePos, 2200.0f, raw::worldgen::DamageElement::Shock);
+            std::printf("[Combat] Player Ballistic Arrow Volley fired (proj #%u)\n", pid);
+        } else {
+            m_combatActive = false;
+            m_combatSandbox.Clear();
+            m_combatPlayerId = 0u;
+            m_combatTelemetry = {};
+            std::printf("[Combat] Skirmish ENDED cleanly.\n");
+            return;
+        }
+        m_combatTelemetry = m_combatSandbox.Step(1.0f / 60.0f, cwx, physOpt, m_navMesh.IsBaked() ? &m_navMesh : nullptr);
+    }
+
+    struct CombatSkirmishProbe {
+        uint32_t aliveAllies         = 0u;
+        uint32_t aliveHostiles       = 0u;
+        uint32_t hitsLanded          = 0u;
+        uint32_t parries             = 0u;
+        uint32_t poiseBreaks         = 0u;
+        uint32_t arrowsFired         = 0u;
+        bool     timedParryTriggered = false;
+        bool     skeletonCoupled     = false;
+        bool     allFinite           = true;
+    };
+
+    CombatSkirmishProbe RunCombatSkirmishSelfTest()
+    {
+        CombatSkirmishProbe p{};
+        auto& phys = ActivePhysics();
+        const auto pst = phys.GetStats();
+        const raw::worldgen::RawWorldPhysics* physOpt =
+            (pst.heightfieldCount > 0u || pst.totalTriangles > 0u) ? &phys : nullptr;
+        const auto cwx = BuildCombatWeatherInput(m_weatherSim.GetGpuUniforms(), m_weatherPreset);
+
+        float gz = m_camPos[2] - 120.0f;
+        if (physOpt) (void)physOpt->SampleTerrainHeight(m_camPos[0], m_camPos[1], &gz);
+        SpawnCombatSkirmishAround(m_camPos[0], m_camPos[1], gz);
+
+        // 1. Deterministic 220ms frontal timed-parry test + melee hit + arrow volley + shout
+        m_combatSandbox.RaiseBlock(m_combatPlayerId);
+        uint32_t firstHostileId = 0u;
+        for (const auto& a : m_combatSandbox.Actors()) {
+            if (a.faction == raw::worldgen::CombatFaction::Hostiles) { firstHostileId = a.id; break; }
+        }
+        auto* pa = m_combatSandbox.FindActor(m_combatPlayerId);
+        auto* ha = m_combatSandbox.FindActor(firstHostileId);
+        if (pa && ha) {
+            ha->position = {pa->position.x, pa->position.y + 85.0f, pa->position.z};
+            ha->facing   = {0.0f, -1.0f, 0.0f};
+            pa->facing   = {0.0f,  1.0f, 0.0f};
+            pa->blockAgeSec = 0.110f; // Inside 220ms timed-parry window!
+            const auto parryRes = m_combatSandbox.ResolveMeleeHit(*ha, *pa, 40.0f, 45.0f,
+                                                                  raw::worldgen::DamageElement::Physical, cwx);
+            p.timedParryTriggered = parryRes.parried && (parryRes.finalDamage == 0.0f);
+            // Fire ballistic arrow volley from player toward hostile archer
+            (void)m_combatSandbox.FireBallisticProjectile(
+                m_combatPlayerId, {pa->position.x + 120.0f, pa->position.y + 240.0f, pa->position.z + 60.0f},
+                2200.0f, raw::worldgen::DamageElement::Shock);
+            // Trigger player melee swing so RawSkeletonAnimEngine evaluates MeleeSwing upper-body blend!
+            (void)m_combatSandbox.StartMeleeAttack(m_combatPlayerId, firstHostileId, true);
+            UpdateSkeletonRigsAndFootIk(1.0f / 60.0f);
+            p.skeletonCoupled = m_playerRigEvaluated &&
+                                std::isfinite(m_playerXpbdAnchors.headCenter.x) &&
+                                std::isfinite(m_playerXpbdAnchors.capeShoulderLeft.z);
+            (void)m_combatSandbox.TriggerShout(m_combatPlayerId, 18.0f);
+        }
+
+        // 2. Step 30 combat frames coupled to live ActivePhysics() + NavMesh + Weather!
+        for (int s = 0; s < 30; ++s) {
+            m_combatTelemetry = m_combatSandbox.Step(1.0f / 60.0f, cwx, physOpt,
+                                                     m_navMesh.IsBaked() ? &m_navMesh : nullptr);
+        }
+        for (const auto& a : m_combatSandbox.Actors()) {
+            if (!std::isfinite(a.position.x) || !std::isfinite(a.position.y) || !std::isfinite(a.position.z) ||
+                !std::isfinite(a.hp) || !std::isfinite(a.stamina) || !std::isfinite(a.poise)) {
+                p.allFinite = false;
+            }
+        }
+        p.aliveAllies   = m_combatTelemetry.aliveAllies;
+        p.aliveHostiles = m_combatTelemetry.aliveHostiles;
+        p.hitsLanded    = m_combatTelemetry.totalHitsLanded;
+        p.parries       = m_combatTelemetry.totalParries;
+        p.poiseBreaks   = m_combatTelemetry.totalPoiseBreaks;
+        p.arrowsFired   = m_combatTelemetry.totalArrowsFired;
+
+        // Leave skirmish cleanly active for subsequent frames so RenderFrame exercises live Combat -> Skeleton -> XPBD!
+        return p;
     }
 
     struct SkeletonFootIkProbe {
@@ -2144,6 +2393,13 @@ public:
             threat.facing = {std::sin(m_camYaw), std::cos(m_camYaw), 0.0f};
             m_lastSquadOut = raw::worldgen::StepSquadTactics(
                 m_tacticalSquad, threat, activePhys, m_navMesh.IsBaked() ? &m_navMesh : nullptr, dtClamped);
+        }
+        if (m_combatActive) {
+            const raw::worldgen::RawWorldPhysics* physOpt =
+                (activePhysStats.heightfieldCount > 0u || activePhysStats.totalTriangles > 0u) ? &activePhys : nullptr;
+            m_combatTelemetry = m_combatSandbox.Step(
+                dtClamped, BuildCombatWeatherInput(wGpu, m_weatherPreset), physOpt,
+                m_navMesh.IsBaked() ? &m_navMesh : nullptr);
         }
         UpdateSkeletonRigsAndFootIk(dtClamped);
 
@@ -2731,6 +2987,47 @@ public:
                 D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON);
         }
 
+        // Live GPU 16,384-Particle 3D Physics & Screen-Space Splat (RawGpuParticlesHost - 15th Live GPU Solver!)
+        if (m_gpuParticlesOk) {
+            GpuParticlesParams gpp{};
+            const float eyeM[3]    = {m_camPos[0] / 70.0f, m_camPos[2] / 70.0f, m_camPos[1] / 70.0f};
+            const float targetM[3] = {
+                eyeM[0] + cam.fwd[0] * 10.0f,
+                eyeM[1] + cam.fwd[2] * 10.0f,
+                eyeM[2] + cam.fwd[1] * 10.0f
+            };
+            const float upM[3] = {cam.up[0], cam.up[2], cam.up[1]};
+            BuildParticlesViewProjLH(eyeM, targetM, upM, 1.12f,
+                                     float(m_width) / float(std::max(1u, m_height)),
+                                     0.2f, 250.0f, gpp.viewProj);
+            gpp.emitterPos[0] = eyeM[0] + cam.fwd[0] * 4.5f;
+            gpp.emitterPos[1] = eyeM[1] + cam.fwd[2] * 4.5f + 0.8f;
+            gpp.emitterPos[2] = eyeM[2] + cam.fwd[1] * 4.5f;
+            gpp.emitterRadius = 2.4f;
+            gpp.windVel[0]    = std::clamp(wGpu.cloudWind.x * 0.12f, -12.0f, 12.0f);
+            gpp.windVel[1]    = 0.0f;
+            gpp.windVel[2]    = std::clamp(wGpu.cloudWind.y * 0.12f, -12.0f, 12.0f);
+            gpp.curlStrength  = 1.4f;
+            gpp.dtSec         = dtClamped;
+            gpp.timeSec       = m_simTimeSec;
+            float groundU     = m_camPos[2] - 200.0f;
+            (void)activePhys.SampleTerrainHeight(m_camPos[0], m_camPos[1], &groundU);
+            gpp.groundY       = groundU / 70.0f;
+            gpp.restitution   = 0.62f;
+            gpp.frameIndex    = static_cast<uint32_t>(m_frameCount & 0xFFFFFFFFull);
+            gpp.resetAll      = (m_frameCount == 0ull);
+            if (m_weatherPreset == WeatherPreset::Blizzard || u.weather[2] > 0.35f) {
+                gpp.mode = ParticleMode::Snow;
+            } else if (m_weatherPreset == WeatherPreset::Rainstorm || u.weather[3] > 0.25f) {
+                gpp.mode = ParticleMode::Rain;
+            } else if (m_mode == WorldMode::Dungeon || (m_season == SeasonChoice::Spring && !m_fireEnabled)) {
+                gpp.mode = ParticleMode::WaterfallMist;
+            } else {
+                gpp.mode = ParticleMode::Embers;
+            }
+            m_gpuParticlesRan = m_gpuParticles.Execute(m_dispCmd.Get(), gpp);
+        }
+
         if (m_radOk && m_giEnabled) {
             m_radianceHost.ExecuteScreenGI(m_dispCmd.Get(), m_hdrColor.Get(), m_depthIn.Get(),
                                            m_width, m_height, 0.16f);
@@ -2857,6 +3154,9 @@ public:
         float    cloudRaymarchMs      = 0.0f;
         bool     postCinematicActive  = false;
         float    postCinematicMs      = 0.0f;
+        bool     gpuParticlesActive   = false;
+        float    gpuParticlesMs       = 0.0f;
+        uint32_t gpuParticleCount     = 0u;
         uint32_t biomesFound          = 0u;
     };
 
@@ -2905,6 +3205,9 @@ public:
         out->cloudRaymarchMs = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
         out->postCinematicActive = m_postCinematicOk && m_postCinematic.Ready() && m_postCinematicRan;
         out->postCinematicMs = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
+        out->gpuParticlesActive = m_gpuParticlesOk && m_gpuParticles.Ready() && m_gpuParticlesRan;
+        out->gpuParticlesMs = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
+        out->gpuParticleCount = m_gpuParticles.ParticleCount();
 
         const UINT hdrPitch  = (m_width * 8u + 255u) & ~255u;
         const UINT dispPitch = (m_width * 4u + 255u) & ~255u;
@@ -3048,6 +3351,9 @@ public:
         }
         m_cullInstUpload.Reset();
         m_cullInstBuf.Reset();
+        m_gpuParticles.Shutdown();
+        m_combatSandbox.Clear();
+        m_combatActive = false;
         m_postCinematic.Shutdown();
         m_squadPoses.clear();
         m_squadAnchors.clear();
@@ -3146,6 +3452,7 @@ public:
         const float aeMs          = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
         const float cloudMs       = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
         const float postMs        = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
+        const float prtMs         = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
         const auto activeHid      = static_cast<raw::worldgen::HoldId>(m_activeHoldIdx % static_cast<uint32_t>(raw::worldgen::kHoldCount));
         const auto* activeHold    = m_settlementSim.GetHold(activeHid);
         const float holdGrain     = activeHold ? activeHold->price[static_cast<size_t>(raw::worldgen::CommodityKind::Grain)] : 0.0f;
@@ -3174,7 +3481,7 @@ public:
         }
         char buf[1536]{};
         std::snprintf(buf, sizeof(buf),
-                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms HUD:%.3fms | IK:%.1fu | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
+                      "RAW Engine [%s] | %.1f FPS | %u Meshlets (%s) | %s | %s | %s | Fire:%.2fms Water:%.2fms GI:%.2fms XPBD:%.3fms Cull:%.3fms LClust:%.3fms Frox:%.3fms PCSS:%.3fms GTAO:%.3fms SSR:%.3fms AE:%.3fms Cloud:%.3fms POST:%.3fms PRT:%.3fms HUD:%.3fms | IK:%.1fu Cbt:%u/%u(P:%u) | Eco:fire=%u snow=%.0fm3 ice=%u | Fauna:%u roost=%u startle=%u | %s:%.1fg Car:%u(Snw:%u) Scarce:%s%s%s%s%s%s | Shards:%u",
                       m_walkMode ? "WALK" : "FLY",
                       fps, m_lastDrawnMeshlets, m_meshHost.TerrainUsesMeshShaders() ? "AS+MS" : "VS+PS",
                       locBuf, TimePresetName(m_timePreset), ActiveWeatherDisplayName(),
@@ -3191,8 +3498,12 @@ public:
                       aeMs,
                       cloudMs,
                       postMs,
+                      prtMs,
                       m_overlayHost.HasValidTiming() ? m_overlayHost.GetLastOverlayMs() : 0.0f,
                       static_cast<double>(m_playerPose.pelvisDropZ),
+                      m_combatTelemetry.aliveAllies,
+                      m_combatTelemetry.aliveHostiles,
+                      m_combatTelemetry.totalParries,
                       m_ecoTelemetry.activeFireCells,
                       static_cast<double>(m_ecoTelemetry.totalSnowVolumeM3),
                       m_ecoTelemetry.blackIceCells,
@@ -3670,18 +3981,19 @@ private:
         const float aeMs     = m_autoExposure.HasValidTiming() ? (m_autoExposure.GetLastHistMs() + m_autoExposure.GetLastAdaptMs()) : 0.0f;
         const float cloudMs  = m_cloudRaymarch.HasValidTiming() ? m_cloudRaymarch.GetLastCloudMs() : 0.0f;
         const float postMs   = m_postCinematic.HasValidTiming() ? m_postCinematic.GetLastTotalMs() : 0.0f;
+        const float prtMs    = m_gpuParticles.HasValidTiming() ? m_gpuParticles.GetLastTotalMs() : 0.0f;
         std::memset(outHud.lines[2], 0, sizeof(outHud.lines[2]));
         std::snprintf(outHud.lines[2], sizeof(outHud.lines[2]), "GPU F:%.2f W:%.2f GI:%.2f XP:%.2f FX:%.2f PS:%.2f",
                       static_cast<double>(snap.fireMs), static_cast<double>(snap.waterMs),
                       static_cast<double>(snap.giMs), static_cast<double>(snap.xpbdMs),
                       static_cast<double>(froxMs), static_cast<double>(pcssMs));
         std::memset(outHud.lines[3], 0, sizeof(outHud.lines[3]));
-        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.2f SR:%.2f AE:%.2f CD:%.2f POST:%.3f LC:%.2f",
+        std::snprintf(outHud.lines[3], sizeof(outHud.lines[3]), "AO:%.2f SR:%.2f CD:%.2f POST:%.2f PRT:%.3f LC:%.2f",
                       static_cast<double>(gtaoMs),
-                      static_cast<double>(ssrMs),
-                      static_cast<double>(aeMs),
+                      static_cast<double>(ssrMs + aeMs),
                       static_cast<double>(cloudMs),
                       static_cast<double>(postMs),
+                      static_cast<double>(prtMs),
                       static_cast<double>(lclustMs + hizMs + cullMs));
 
         const char* topEvName = m_eventDirector.ActiveEvents().empty()
@@ -4109,6 +4421,8 @@ private:
     bool          m_cloudRaymarchRan = false;
     bool          m_postCinematicOk = false;
     bool          m_postCinematicRan = false;
+    bool          m_gpuParticlesOk = false;
+    bool          m_gpuParticlesRan = false;
     std::string   m_adapterName;
 
     ComPtr<IDXGIFactory4>              m_factory;
@@ -4155,6 +4469,12 @@ private:
     RawAutoExposureHost                m_autoExposure;
     RawCloudRaymarchHost               m_cloudRaymarch;
     RawPostCinematicHost               m_postCinematic;
+    RawGpuParticlesHost                m_gpuParticles;
+    raw::worldgen::RawCombatSandboxEngine m_combatSandbox;
+    raw::worldgen::CombatSandboxTelemetry m_combatTelemetry{};
+    bool                               m_combatActive = false;
+    uint32_t                           m_combatPlayerId = 0u;
+    uint32_t                           m_combatActionCycle = 0u;
     raw::worldgen::SkeletonPose        m_playerPose{};
     raw::worldgen::XpbdAttachmentAnchors m_playerXpbdAnchors{};
     raw::worldgen::Vec3                m_playerRootPos{};
@@ -4328,6 +4648,7 @@ LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                     case 'O': st->viewer->ResolveOrPollWorldEvent(); break;
                     case 'K': st->viewer->CycleDiplomacyInspect(); break;
                     case 'D': st->viewer->CycleDungeonExplorer(); break;
+                    case 'X': st->viewer->ToggleOrTriggerCombatSkirmish(); break;
                     case VK_F5: st->viewer->QuicksaveWorld(); break;
                     case VK_F8: st->viewer->QuickloadWorld(); break;
                     case 'H':
@@ -4405,7 +4726,7 @@ int main(int argc, char** argv)
     if (opt.showHelp) {
         std::printf(
             "RAW Interactive Real-Time Win32/DX12 Standalone Engine Viewer\n"
-            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
+            "Controls: WASD/QE flight (P=Walk/Fly, Space=Jump), Shift boost, RMB freelook, C/LMB raycast+fracture, N NavMesh A* path, I ignite wildfire, V startle wildlife, E economy +6h/cycle hold, O resolve/poll world event, K cycle hold/faction diplomacy, D cycle 3D dungeon explorer, X toggle/cycle combat skirmish+parry, F5/F8 quicksave/quickload, F9/H HUD, F12 BMP screenshot, 1-4 seasons, F fire, G GI, B biomes, L landmarks, T time, W weather/WTHR, A audio, R fracture, M frontier/Tamriel, ESC exit\n"
             "CLI: [--headless-frames N] [--warp] [--debug] [--width W] [--height H] [--esm <Skyrim.esm>]\n");
         return 0;
     }
@@ -4438,6 +4759,7 @@ int main(int argc, char** argv)
         RawEngineViewer::SerializerProbe serializerProbe{};
         RawEngineViewer::DungeonExplorerProbe dungeonProbe{};
         RawEngineViewer::SkeletonFootIkProbe skelProbe{};
+        RawEngineViewer::CombatSkirmishProbe combatProbe{};
         bool teleportedToWhiterun = false;
         for (uint32_t f = 0; f < opt.headlessFrames; ++f) {
             if (f == 0u) {
@@ -4454,6 +4776,7 @@ int main(int argc, char** argv)
                 }
                 dungeonProbe    = viewer.RunDungeonExplorerSelfTest();
                 skelProbe       = viewer.RunSkeletonFootIkSelfTest();
+                combatProbe     = viewer.RunCombatSkirmishSelfTest();
             }
             if (f == opt.headlessFrames / 2u) {
                 if (opt.startEsm && std::filesystem::exists(opt.esmPath)) {
@@ -4476,7 +4799,7 @@ int main(int argc, char** argv)
 
         RawEngineViewer::HeadlessAudit audit{};
         const bool rbOk = viewer.ReadbackHeadlessAudit(&audit);
-        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
+        std::printf("       Audit: path=%s, meshlets=%u, shards=%u, biomes=%u/6, gi=%s (%.3fms), fire=%.3fms, water=%.3fms, xpbd=%s (%u p, %.3fms), cull=%s (%u insts, %u mips, hiz=%.4fms, cull=%.4fms), lclust=%s (%u L, build=%.4fms, assign=%.4fms), frox=%s (inj=%.4fms, int=%.4fms), pcss=%s (%.4fms), gtao=%s (main=%.4fms, den=%.4fms), ssr=%s (%.4fms), ae=%s (hist=%.4fms, adapt=%.4fms), cloud=%s (%.4fms), post=%s (%.4fms), prt=%s (%u p, %.4fms), hud=%s (%.4fms, hudPx=%u), hdrLitPx=%u, hdrNanInf=%u, dispNonZeroPx=%u, dispMean=%.3f, dispStdDev=%.3f\n",
                     audit.usedMeshShaders ? "AS+MS+PS" : "VS+PS",
                     audit.drawnMeshlets, audit.activeShards, audit.biomesFound,
                     audit.radianceActive ? "ON" : "off", audit.radianceGiMs,
@@ -4491,6 +4814,7 @@ int main(int argc, char** argv)
                     audit.autoExposureActive ? "ON" : "off", audit.autoExpHistMs, audit.autoExpAdaptMs,
                     audit.cloudRaymarchActive ? "ON" : "off", audit.cloudRaymarchMs,
                     audit.postCinematicActive ? "ON" : "off", audit.postCinematicMs,
+                    audit.gpuParticlesActive ? "ON" : "off", audit.gpuParticleCount, audit.gpuParticlesMs,
                     audit.overlayActive ? "ON" : "off", audit.overlayMs, audit.hudNonZeroPx,
                     audit.hdrLitPixels, audit.hdrNanInf,
                     audit.dispNonZeroPx, audit.dispMeanLuma, audit.dispStdDevLuma);
@@ -4498,6 +4822,10 @@ int main(int argc, char** argv)
                     skelProbe.evaluatedRigs, static_cast<double>(skelProbe.maxQuatNormErr),
                     static_cast<double>(skelProbe.pelvisDropZ), int(skelProbe.footPlanted),
                     int(skelProbe.xpbdAnchorsFinite), int(skelProbe.coupledToXpbd));
+        std::printf("       Combat Skirmish: allies=%u hostiles=%u hits=%u parries=%u poiseBrk=%u arrows=%u timedParry=%d skelCoupled=%d finite=%d\n",
+                    combatProbe.aliveAllies, combatProbe.aliveHostiles, combatProbe.hitsLanded,
+                    combatProbe.parries, combatProbe.poiseBreaks, combatProbe.arrowsFired,
+                    int(combatProbe.timedParryTriggered), int(combatProbe.skeletonCoupled), int(combatProbe.allFinite));
         std::printf("       Ecosystem: ignited=%u activeFire=%u burned=%.1fm2 snow=%.1fm3 runoff=%.2fm3 ice=%u peakTemp=%.1fC finite=%d\n",
                     ecoProbe.ignitedCells, ecoProbe.activeFireCells, ecoProbe.burnedAreaM2,
                     ecoProbe.snowVolumeM3, ecoProbe.meltRunoffM3, ecoProbe.blackIceCells,
@@ -4552,9 +4880,15 @@ int main(int argc, char** argv)
               "Live GPU 3D Volumetric Cloud Raymarcher (RawCloudRaymarchHost - 13th GPU Solver) executed cleanly");
         check(audit.postCinematicActive && std::isfinite(audit.postCinematicMs) && audit.postCinematicMs >= 0.0f,
               "Live GPU Cinematic Post-Process DoF+MotionBlur+Vignette (RawPostCinematicHost - 14th GPU Solver) executed cleanly");
+        check(audit.gpuParticlesActive && audit.gpuParticleCount == 16384u &&
+              std::isfinite(audit.gpuParticlesMs) && audit.gpuParticlesMs >= 0.0f,
+              "Live GPU 16,384-Particle 3D Physics & Splat Engine (RawGpuParticlesHost - 15th GPU Solver) executed cleanly");
         check(skelProbe.evaluatedRigs >= 1u && skelProbe.maxQuatNormErr < 1.0e-4f &&
               skelProbe.footPlanted && skelProbe.xpbdAnchorsFinite && skelProbe.coupledToXpbd,
               "Live 24-Bone Procedural Skeleton Animation + Terrain Foot-IK + XPBD Anchor Coupling passed cleanly");
+        check(combatProbe.timedParryTriggered && combatProbe.arrowsFired > 0u &&
+              combatProbe.hitsLanded > 0u && combatProbe.skeletonCoupled && combatProbe.allFinite,
+              "Live Combat Skirmish Arena (RawCombatSandboxEngine) 220ms Timed-Parry + Ballistic Arrows + Skeleton->XPBD coupling passed");
         check(dungeonProbe.barrowOk && dungeonProbe.iceCavernOk && dungeonProbe.dwemerRuinOk && dungeonProbe.returnedOk &&
               dungeonProbe.navWalkable > 100u && dungeonProbe.astarWaypoints >= 2u && dungeonProbe.walkGrounded,
               "Interactive Procedural 3D Dungeon Explorer cycled all 3 archetypes + interior NavMesh A* + Walk Mode & returned cleanly");

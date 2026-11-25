@@ -16,6 +16,7 @@
 #include "../src/pipeline/RawAssetValidator.h"
 #include "../src/pipeline/RawForgePipeline.h"
 #include "../src/worldgen/RawBsaArchive.h"
+#include "../src/worldgen/RawCombatSandboxEngine.h"
 #include "../src/worldgen/RawDungeonGen.h"
 #include "../src/worldgen/RawEsmModelResolver.h"
 #include "../src/worldgen/RawEsmNpcWeatherLoader.h"
@@ -1814,6 +1815,213 @@ bool RunSkeletonIkAudit() {
     return ok;
 }
 
+bool RunCombatSimAudit() {
+    using namespace raw::worldgen;
+    const auto t0 = std::chrono::steady_clock::now();
+
+    auto makeFlatArena = [](uint64_t key) -> TerrainCellHeightfield {
+        TerrainCellHeightfield hf{};
+        hf.cellKey     = key;
+        hf.originX     = -2048.0f;
+        hf.originY     = -2048.0f;
+        hf.sizeX       = 4096.0f;
+        hf.sizeY       = 4096.0f;
+        hf.gridW       = 17u;
+        hf.gridH       = 17u;
+        hf.waterLevelZ = -14000.0f;
+        hf.heights.assign(17u * 17u, 0.0f);
+        return hf;
+    };
+
+    auto makeStoneWall = [](Vec3 bmin, Vec3 bmax) -> TriangleMeshCollider {
+        TriangleMeshCollider m{};
+        m.instanceId  = 42u;
+        m.materialTag = 1u;
+        m.vertices = {
+            {bmin.x, bmin.y, bmin.z}, {bmax.x, bmin.y, bmin.z},
+            {bmax.x, bmax.y, bmin.z}, {bmin.x, bmax.y, bmin.z},
+            {bmin.x, bmin.y, bmax.z}, {bmax.x, bmin.y, bmax.z},
+            {bmax.x, bmax.y, bmax.z}, {bmin.x, bmax.y, bmax.z},
+        };
+        m.indices = {
+            0, 2, 1,  0, 3, 2,  4, 5, 6,  4, 6, 7,
+            0, 1, 5,  0, 5, 4,  3, 6, 2,  3, 7, 6,
+            0, 4, 7,  0, 7, 3,  1, 2, 6,  1, 6, 5,
+        };
+        return m;
+    };
+
+    // 1. 220ms Timed Parry + Poise Break + Skeleton Weapon Hand Pose
+    bool parryPoiseOk = false;
+    bool parried = false;
+    bool poiseBroken = false;
+    float handZ = 0.0f;
+    {
+        RawCombatSandboxEngine eng;
+        CombatActor atk{};
+        atk.faction      = CombatFaction::Hostiles;
+        atk.position     = {0.0f, 0.0f, 0.0f};
+        atk.facing       = {1.0f, 0.0f, 0.0f};
+        atk.aiControlled = false;
+        const uint32_t atkId = eng.SpawnActor(atk);
+
+        CombatActor def{};
+        def.faction      = CombatFaction::PlayerAllies;
+        def.position     = {100.0f, 0.0f, 0.0f};
+        def.facing       = {-1.0f, 0.0f, 0.0f};
+        def.aiControlled = false;
+        const uint32_t defId = eng.SpawnActor(def);
+
+        eng.RaiseBlock(defId);
+        CombatWeatherInput dry{};
+        eng.Step(0.120f, dry);
+        const float defHpBefore = eng.FindActor(defId)->hp;
+        const HitResolution parryRes = eng.ResolveMeleeHit(
+            *eng.FindActor(atkId), *eng.FindActor(defId), 45.0f, 50.0f, DamageElement::Physical, dry);
+        parried = parryRes.parried && !parryRes.landed && (parryRes.finalDamage == 0.0f) &&
+                  (eng.FindActor(defId)->hp == defHpBefore) &&
+                  (eng.FindActor(atkId)->state == CombatActionState::Staggered);
+
+        eng.FindActor(atkId)->state = CombatActionState::Idle;
+        eng.FindActor(defId)->state = CombatActionState::Idle;
+        eng.ResolveMeleeHit(*eng.FindActor(atkId), *eng.FindActor(defId), 30.0f, 60.0f, DamageElement::Physical, dry);
+        const HitResolution breakRes = eng.ResolveMeleeHit(
+            *eng.FindActor(atkId), *eng.FindActor(defId), 30.0f, 60.0f, DamageElement::Physical, dry);
+        poiseBroken = breakRes.landed && breakRes.poiseBroken &&
+                      (eng.FindActor(defId)->state == CombatActionState::Staggered);
+
+        const Vec3 handPos = RawCombatSandboxEngine::EvaluateActorWeaponHandPos(*eng.FindActor(atkId));
+        handZ = handPos.z;
+        parryPoiseOk = parried && poiseBroken && IsFinite3(handPos);
+    }
+
+    // 2. Weather Elemental Synergy & Sub-Zero Stamina Regen
+    CombatWeatherInput dryWarm{};
+    dryWarm.wetness01    = 0.0f;
+    dryWarm.ambientTempC = 16.0f;
+    CombatWeatherInput wetCold{};
+    wetCold.wetness01    = 1.0f;
+    wetCold.ambientTempC = -15.0f;
+    const float shockDry = EvaluateCombatElementalMult(DamageElement::Shock, dryWarm);
+    const float shockWet = EvaluateCombatElementalMult(DamageElement::Shock, wetCold);
+    const float fireDry  = EvaluateCombatElementalMult(DamageElement::Fire, dryWarm);
+    const float fireWet  = EvaluateCombatElementalMult(DamageElement::Fire, wetCold);
+    const float frostDry = EvaluateCombatElementalMult(DamageElement::Frost, dryWarm);
+    const float frostWet = EvaluateCombatElementalMult(DamageElement::Frost, wetCold);
+    const float stamWarm = EvaluateThermalStaminaRegenMult(dryWarm.ambientTempC);
+    const float stamCold = EvaluateThermalStaminaRegenMult(wetCold.ambientTempC);
+    const bool weatherOk = (shockWet > shockDry * 1.25f) && (fireWet < fireDry * 0.85f) &&
+                           (frostWet > frostDry * 1.25f) && (stamCold < stamWarm * 0.85f);
+
+    // 3. Ballistic Arrow LOS Check (Clear Hit vs Stone Wall Occlusion)
+    bool clearShotHit = false;
+    bool wallBlocked  = false;
+    uint32_t wallBlocks = 0u;
+    {
+        CombatActor archer{};
+        archer.faction      = CombatFaction::PlayerAllies;
+        archer.role         = CombatRole::Archer;
+        archer.position     = {0.0f, 0.0f, 0.0f};
+        archer.aiControlled = false;
+
+        CombatActor dummy{};
+        dummy.faction      = CombatFaction::Hostiles;
+        dummy.position     = {700.0f, 0.0f, 0.0f};
+        dummy.aiControlled = false;
+
+        CombatWeatherInput calm{};
+        calm.windSpeedMps = 0.0f;
+
+        RawWorldPhysics openWorld;
+        openWorld.AddTerrainHeightfield(makeFlatArena(1ull));
+        RawCombatSandboxEngine openEng;
+        const uint32_t a1 = openEng.SpawnActor(archer);
+        const uint32_t d1 = openEng.SpawnActor(dummy);
+        openEng.FireBallisticProjectile(a1, {700.0f, 0.0f, 0.0f}, 2400.0f, DamageElement::Physical);
+        for (int f = 0; f < 40; ++f) openEng.Step(1.0f / 60.0f, calm, &openWorld);
+        clearShotHit = (openEng.FindActor(d1)->hp < 200.0f);
+
+        RawWorldPhysics walledWorld;
+        walledWorld.AddTerrainHeightfield(makeFlatArena(1ull));
+        walledWorld.AddCellCollider(2ull, makeStoneWall({320.0f, -200.0f, 0.0f}, {380.0f, 200.0f, 280.0f}));
+        RawCombatSandboxEngine wallEng;
+        const uint32_t a2 = wallEng.SpawnActor(archer);
+        const uint32_t d2 = wallEng.SpawnActor(dummy);
+        wallEng.FireBallisticProjectile(a2, {700.0f, 0.0f, 0.0f}, 2400.0f, DamageElement::Physical);
+        for (int f = 0; f < 40; ++f) wallEng.Step(1.0f / 60.0f, calm, &walledWorld);
+        wallBlocks  = wallEng.ComputeTelemetry().totalArrowBlocks;
+        wallBlocked = (wallEng.FindActor(d2)->hp == 200.0f) && (wallBlocks >= 1u);
+    }
+    const bool losOk = clearShotHit && wallBlocked;
+
+    // 4. 8v8 (16-Actor) 180-Tick Rainstorm Battle Simulation & Perf
+    RawWorldPhysics arena;
+    arena.AddTerrainHeightfield(makeFlatArena(1ull));
+    RawCombatSandboxEngine battle;
+    for (int i = 0; i < 8; ++i) {
+        CombatActor ally{};
+        ally.faction       = CombatFaction::PlayerAllies;
+        ally.role          = static_cast<CombatRole>(i % 4);
+        ally.position      = {-320.0f - static_cast<float>((i % 4) >= 2 ? 220 : 0),
+                              -280.0f + static_cast<float>(i) * 80.0f, 0.0f};
+        ally.facing        = {1.0f, 0.0f, 0.0f};
+        ally.attackElement = (ally.role == CombatRole::Battlemage) ? DamageElement::Shock : DamageElement::Physical;
+        battle.SpawnActor(ally);
+
+        CombatActor foe{};
+        foe.faction       = CombatFaction::Hostiles;
+        foe.role          = static_cast<CombatRole>(i % 4);
+        foe.position      = {320.0f + static_cast<float>((i % 4) >= 2 ? 220 : 0),
+                             -280.0f + static_cast<float>(i) * 80.0f, 0.0f};
+        foe.facing        = {-1.0f, 0.0f, 0.0f};
+        foe.attackElement = (foe.role == CombatRole::Battlemage) ? DamageElement::Frost : DamageElement::Physical;
+        battle.SpawnActor(foe);
+    }
+    CombatWeatherInput rainBattle{};
+    rainBattle.wetness01    = 0.75f;
+    rainBattle.ambientTempC = 4.0f;
+    rainBattle.windSpeedMps = 6.0f;
+
+    constexpr int kTicks = 180;
+    const auto bt0 = std::chrono::steady_clock::now();
+    for (int t = 0; t < kTicks; ++t) {
+        battle.Step(1.0f / 60.0f, rainBattle, &arena);
+    }
+    const double meanTickMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - bt0).count() / static_cast<double>(kTicks);
+    const CombatSandboxTelemetry tel = battle.ComputeTelemetry();
+
+    bool allFinite = true;
+    for (const CombatActor& a : battle.Actors()) {
+        if (!IsFinite3(a.position) || !std::isfinite(a.hp) || a.hp < 0.0f ||
+            !std::isfinite(a.stamina) || !std::isfinite(a.poise)) {
+            allFinite = false;
+        }
+    }
+    const bool battleOk = allFinite && (tel.totalHitsLanded >= 10u) &&
+                          (tel.totalArrowsFired >= 4u) && (meanTickMs < 0.50);
+
+    const double totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const bool ok = parryPoiseOk && weatherOk && losOk && battleOk;
+
+    std::printf(
+        "[INFO] 8v8 RPG Combat Sandbox, Parry/Poise & Ballistic LOS Audit (%.2f ms):\n"
+        "  1. 220ms Parry & Poise : parried=%s poiseBroken=%s handZ=%.1fu [%s]\n"
+        "  2. Weather Synergy     : shock %.2f->%.2f fire %.2f->%.2f frost %.2f->%.2f stam %.2f->%.2f [%s]\n"
+        "  3. Ballistic Arrow LOS : clearShotHit=%s wallBlocked=%s(blocks=%u) [%s]\n"
+        "  4. 8v8 Battle (180t)   : alive=%u/%u hits=%u parries=%u poiseBrk=%u arrows=%u meanTick=%.3fms [%s]\n"
+        "[%s] combat-sim: 8v8 parry/poise/weather/LOS combat audit %s (%.2f ms)\n",
+        totalMs,
+        parried ? "yes" : "no", poiseBroken ? "yes" : "no", handZ, parryPoiseOk ? "PASS" : "FAIL",
+        shockDry, shockWet, fireDry, fireWet, frostDry, frostWet, stamWarm, stamCold, weatherOk ? "PASS" : "FAIL",
+        clearShotHit ? "yes" : "no", wallBlocked ? "yes" : "no", wallBlocks, losOk ? "PASS" : "FAIL",
+        tel.aliveAllies, tel.aliveHostiles, tel.totalHitsLanded, tel.totalParries,
+        tel.totalPoiseBreaks, tel.totalArrowsFired, meanTickMs, battleOk ? "PASS" : "FAIL",
+        ok ? "PASS" : "FAIL", ok ? "PASS" : "FAIL", totalMs);
+    return ok;
+}
+
 bool ParseCellXY(const std::string& s, int32_t* outX, int32_t* outY) {
     const size_t comma = s.find(',');
     if (comma == std::string::npos || comma == 0u || comma + 1u >= s.size()) return false;
@@ -1857,6 +2065,7 @@ void PrintUsage() {
         "  raw_forge_cli --world-snapshot                          5-pillar RAWWORLD v1 CRC-32 binary + JSON snapshot audit\n"
         "  raw_forge_cli --dungeon-gen                             3-archetype 3D dungeon meshlet + Entrance->Boss A* audit\n"
         "  raw_forge_cli --skeleton-ik                             24-bone humanoid FK/IK/slope-FootIK/XPBD/64-rig audit\n"
+        "  raw_forge_cli --combat-sim                              8v8 parry/poise/weather-synergy/ballistic-LOS combat audit\n"
         "  raw_forge_cli --validate-all [dir]                      Run all 4 procedural pipelines + quality gates\n"
         "Options:\n"
         "  --seed <N>         Deterministic RNG seed (default: 202607)\n"
@@ -1920,6 +2129,7 @@ int main(int argc, char** argv) {
     bool runWorldSnapshot   = false;
     bool runDungeonGen      = false;
     bool runSkeletonIk      = false;
+    bool runCombatSim       = false;
     bool writeGeometry      = true;
     uint32_t seed       = 202607u;
     float latitudeDeg   = 60.0f;
@@ -2084,6 +2294,8 @@ int main(int argc, char** argv) {
             runDungeonGen = true;
         } else if (arg == "--skeleton-ik") {
             runSkeletonIk = true;
+        } else if (arg == "--combat-sim") {
+            runCombatSim = true;
         } else if (arg == "--validate-all") {
             runValidateAll = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') {
@@ -2110,11 +2322,11 @@ int main(int argc, char** argv) {
 
     if (!runValidateAll && !runEsmMeta && !runPhysicsProbe && !runTamrielStream && !runNavMeshAudit &&
         !runEcosystemSim && !runWildlifeSim && !runSettlementSim && !runEventsSim && !runDiplomacySim &&
-        !runWorldSnapshot && !runDungeonGen && !runSkeletonIk &&
+        !runWorldSnapshot && !runDungeonGen && !runSkeletonIk && !runCombatSim &&
         floraDir.empty() && dioramaDir.empty() && almanacDir.empty() &&
         materialsDir.empty() && texturesDir.empty() && esmPath.empty() && esmScenePath.empty() &&
         bsaListPath.empty() && nifPath.empty() && bsaNifArchive.empty() && ddsPath.empty() && bsaDdsArchive.empty()) {
-        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, or --validate-all).\n");
+        std::fprintf(stderr, "Error: specify at least one action (--flora, --diorama, --almanac, --materials, --textures, --esm, --esm-scene, --bsa-list, --nif, --bsa-nif, --dds, --bsa-dds, --esm-meta, --physics-probe, --tamriel-stream, --navmesh-audit, --ecosystem-sim, --wildlife-sim, --settlement-sim, --events-sim, --diplomacy-sim, --world-snapshot, --dungeon-gen, --skeleton-ik, --combat-sim, or --validate-all).\n");
         PrintUsage();
         return 2;
     }
@@ -2255,6 +2467,10 @@ int main(int argc, char** argv) {
 
     if (runSkeletonIk) {
         if (!RunSkeletonIkAudit()) allOk = false;
+    }
+
+    if (runCombatSim) {
+        if (!RunCombatSimAudit()) allOk = false;
     }
 
     if (runValidateAll) {

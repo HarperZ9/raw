@@ -6,6 +6,7 @@
 #include "rt_adaptive_audio_director.h"
 #include "rt_engine_health.h"
 #include "rt_frame_governor.h"
+#include "rt_live_dashboard.h"
 #include "rt_mod_load_audit.h"
 #include "rt_profile_presets.h"
 #include "rt_save_papyrus_guard.h"
@@ -186,7 +187,15 @@ bool DispatchDiagnosticCommand(const char* cmdLine, std::string& outResponse) no
                 "  saves  - Report .ESS save Papyrus string-table health & frame hitch watchdog telemetry\n"
                 "  status - Concise unified snapshot (health, governor, audio mood, weather & GMST modules)\n"
                 "  preset <ultra|balanced|competitive|safemode> - Query or apply a validated 4-tier quality preset\n"
-                "  reload_shaders - Run atomic pre-validation & trigger raw_shaders\\ hot-reload generation";
+                "  reload_shaders - Run atomic pre-validation & trigger raw_shaders\\ hot-reload generation\n"
+                "  dashboard - Atomically export raw_live_dashboard.json & self-contained raw_live_dashboard.html";
+            return true;
+        }
+
+        if (verb == "dashboard") {
+            std::string summary;
+            (void)LiveDashboardExportNow(nullptr, &summary);
+            outResponse = summary;
             return true;
         }
 
@@ -354,7 +363,7 @@ std::string ConsoleDiagInit(const std::string& outDir) {
     }
     char buf[224];
     std::snprintf(buf, sizeof(buf),
-                  "[ConsoleDiag] initialized (9 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders | poll=%uf -> %s\\raw_cmd.txt)",
+                  "[ConsoleDiag] initialized (10 commands: help/health/sdk/flight/mods/saves/status/preset/reload_shaders/dashboard | poll=%uf -> %s\\raw_cmd.txt)",
                   kPollCadenceFrames, outDir.empty() ? "raw_engine_out" : outDir.c_str());
     return buf;
 }

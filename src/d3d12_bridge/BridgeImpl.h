@@ -19,6 +19,7 @@
 #include "RawAutoExposureHost.h"
 #include "RawCloudRaymarchHost.h"
 #include "RawPostCinematicHost.h"
+#include "RawGpuParticlesHost.h"
 #include "RawOverrideRegistry.h"
 #include "RawAsyncCompute.h"
 #include "RawIndirectBatch.h"
@@ -96,6 +97,7 @@ struct D3D12Bridge::Impl
     std::unique_ptr<RawAutoExposureHost> autoExposure; // Live GPU 256-Bin Log-Luminance Histogram & Eye-Adaptation Auto-Exposure
     std::unique_ptr<RawCloudRaymarchHost> cloudRaymarch; // Live GPU 3D Volumetric Cloud Raymarching + Beer-Powder Silver-Lining solver
     std::unique_ptr<RawPostCinematicHost> postCinematic; // Live GPU Tile-Max Motion Blur + Depth-Aware Hexagonal Bokeh DoF solver
+    std::unique_ptr<RawGpuParticlesHost> gpuParticles; // Live GPU 16,384-Particle 3D Physics & Additive Splat solver
     bool                     fluidReady = false;
     bool                     radianceReady = false;
     bool                     xpbdSimReady = false;
@@ -112,6 +114,7 @@ struct D3D12Bridge::Impl
     bool                     autoExposureReady = false;
     bool                     cloudRaymarchReady = false;
     bool                     postCinematicReady = false;
+    bool                     gpuParticlesReady = false;
     ComPtr<ID3D12CommandAllocator>    fluidAlloc[kRing];
     ComPtr<ID3D12GraphicsCommandList> fluidList;
     ComPtr<ID3D12Fence>               fluidFence;
@@ -241,6 +244,16 @@ struct D3D12Bridge::Impl
     uint64_t                          postCinematicSlotVal[kRing] = {};
     uint32_t                          postCinematicSlot = 0;
     uint64_t                          postCinematicStepFrames = 0;
+    ComPtr<ID3D12CommandAllocator>    gpuParticlesAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList> gpuParticlesList;
+    ComPtr<ID3D12Fence>               gpuParticlesFence;
+    HANDLE                            gpuParticlesEvent = nullptr;
+    uint64_t                          gpuParticlesFenceVal = 0;
+    uint64_t                          gpuParticlesSlotVal[kRing] = {};
+    uint32_t                          gpuParticlesSlot = 0;
+    uint64_t                          gpuParticlesStepFrames = 0;
+    uint64_t                          gpuParticlesLastMs = 0;
+    ParticleMode                      gpuParticlesLastMode = ParticleMode::Embers;
     std::string                       telemetryOutDir;
     bool InitFluidSim();
     void ShutdownFluidSim();
@@ -278,6 +291,9 @@ struct D3D12Bridge::Impl
     bool InitPostCinematic();
     void ShutdownPostCinematic();
     bool ExecutePostCinematicOnQueue(bool hasMotion);
+    bool InitGpuParticles();
+    void ShutdownGpuParticles();
+    bool ExecuteGpuParticlesOnQueue(bool isInterior);
     bool InitOverlayHost();
     void ShutdownOverlayHost();
     void PollOverlayHotkey();

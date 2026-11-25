@@ -37,6 +37,7 @@
 #include "rt_forensics.h"
 #include "rt_frame_governor.h"
 #include "rt_live_config.h"
+#include "rt_live_dashboard.h"
 #include "rt_memory_guards.h"
 #include "rt_mod_load_audit.h"
 #include "rt_movement_combat.h"
@@ -150,6 +151,7 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     raw::rt::EngineHealthOnPresent();
     raw::rt::ProfilePresetsOnPresent();
     raw::rt::ShaderHotReloadOnPresent();
+    raw::rt::LiveDashboardOnPresent();
     raw::rt::ConsoleDiagOnPresent();
     {
         static LARGE_INTEGER s_qpcFreq{};
@@ -407,6 +409,7 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     Log("%s", raw::rt::SdkBridgeInit(g_out).c_str());
     Log("%s", raw::rt::ProfilePresetsInit().c_str());
     Log("%s", raw::rt::ShaderHotReloadInit(g_dir + "raw_shaders").c_str());
+    Log("%s", raw::rt::LiveDashboardInit(g_out).c_str());
     Log("%s", raw::rt::ConsoleDiagInit(g_out).c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
@@ -436,6 +439,7 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         return 0;
     }
     raw::rt::ConsoleDiagShutdown();
+    raw::rt::LiveDashboardShutdown();
     raw::rt::ShaderHotReloadShutdown();
     raw::rt::ProfilePresetsShutdown();
     raw::rt::SdkBridgeShutdown();

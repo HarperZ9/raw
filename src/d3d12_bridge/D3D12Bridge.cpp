@@ -308,7 +308,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
         const bool autoExpOk = m->InitAutoExposure();
         const bool cloudOk = m->InitCloudRaymarch();
         const bool postCinOk = m->InitPostCinematic();
-        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s",
+        const bool particlesOk = m->InitGpuParticles();
+        m->log("[D3D12Bridge] Metal subsystems: RAW-LUMEN Bindless65K=%s, RAW-MESH(as_6_6/ms_6_6)=%s, RawTerrainWorld=%s (%s)%s, AsyncCompute=%s, ExecuteIndirect=%s (IndirectMesh=%s), FluidSim=%s, RadianceCascades=%s, XpbdSim=%s, OverlayHud(F9)=%s, GpuCull=%s, LightClusters(1024)=%s, VolFroxels(160x90x64)=%s, ShadowPcss=%s, Gtao=%s, Ssr=%s, AutoExposure=%s, CloudRaymarch=%s, PostCinematic=%s, GpuParticles(16K)=%s",
                bindOk ? "READY" : "off", meshOk ? "READY" : "off",
                terrainOk ? "READY" : "off",
                m->meshHost.TerrainUsesMeshShaders() ? "AS+MS+PS" : "VS+PS fallback",
@@ -327,7 +328,8 @@ bool D3D12Bridge::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx,
                ssrOk ? "READY" : "off",
                autoExpOk ? "READY" : "off",
                cloudOk ? "READY" : "off",
-               postCinOk ? "READY" : "off");
+               postCinOk ? "READY" : "off",
+               particlesOk ? "READY" : "off");
         // Monumental Remaster: Canonical 32-material physically-measured registry + 6-biome frontier WorldShowcase + 9 zero-external-asset hero GPU AS+MS assets:
         {
             const auto& matReg = raw::materials::DefaultMaterialRegistry();
@@ -1397,6 +1399,79 @@ void D3D12Bridge::Impl::ShutdownPostCinematic()
     postCinematicReady = false;
 }
 
+bool D3D12Bridge::Impl::InitGpuParticles()
+{
+    ShutdownGpuParticles();
+    if (!dev12) return false;
+    gpuParticles = std::make_unique<RawGpuParticlesHost>();
+    GpuParticlesDesc desc{};
+    desc.particleCount = RawGpuParticlesHost::kMaxParticles;
+    desc.splatWidth    = std::max(cfg.width / 4u, 64u);
+    desc.splatHeight   = std::max(cfg.height / 4u, 36u);
+    std::string prtErr;
+    if (!gpuParticles->Init(dev12.Get(), desc, &prtErr)) {
+        log("[GpuParticles] off: %s", prtErr.c_str());
+        gpuParticles.reset();
+        return false;
+    }
+    UINT64 tsFreq = 0;
+    if (queue && SUCCEEDED(queue->GetTimestampFrequency(&tsFreq)) && tsFreq > 0) {
+        gpuParticles->SetTimestampFrequency(tsFreq);
+    }
+    for (UINT i = 0; i < kRing; ++i) {
+        if (FAILED(dev12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&gpuParticlesAlloc[i])))) {
+            ShutdownGpuParticles();
+            return false;
+        }
+    }
+    if (FAILED(dev12->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, gpuParticlesAlloc[0].Get(), nullptr, IID_PPV_ARGS(&gpuParticlesList))) ||
+        FAILED(gpuParticlesList->Close()) ||
+        FAILED(dev12->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&gpuParticlesFence)))) {
+        ShutdownGpuParticles();
+        return false;
+    }
+    gpuParticlesEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!gpuParticlesEvent) {
+        ShutdownGpuParticles();
+        return false;
+    }
+    gpuParticlesLastMs   = GetTickCount64();
+    gpuParticlesLastMode = ParticleMode::Embers;
+    gpuParticlesReady    = true;
+    log("[GpuParticles] GPU 16,384-Particle 3D Physics + Splat ready (splat %ux%u)",
+        desc.splatWidth, desc.splatHeight);
+    return true;
+}
+
+void D3D12Bridge::Impl::ShutdownGpuParticles()
+{
+    if (gpuParticlesFence && gpuParticlesEvent && gpuParticlesFenceVal > 0) {
+        if (gpuParticlesFence->GetCompletedValue() < gpuParticlesFenceVal) {
+            gpuParticlesFence->SetEventOnCompletion(gpuParticlesFenceVal, gpuParticlesEvent);
+            WaitForSingleObject(gpuParticlesEvent, 3000);
+        }
+    }
+    gpuParticlesList.Reset();
+    for (UINT i = 0; i < kRing; ++i) {
+        gpuParticlesAlloc[i].Reset();
+        gpuParticlesSlotVal[i] = 0;
+    }
+    gpuParticlesFence.Reset();
+    if (gpuParticlesEvent) {
+        CloseHandle(gpuParticlesEvent);
+        gpuParticlesEvent = nullptr;
+    }
+    if (gpuParticles) {
+        gpuParticles->Shutdown();
+        gpuParticles.reset();
+    }
+    gpuParticlesFenceVal   = 0;
+    gpuParticlesSlot       = 0;
+    gpuParticlesStepFrames = 0;
+    gpuParticlesLastMs     = 0;
+    gpuParticlesReady      = false;
+}
+
 void D3D12Bridge::Shutdown()
 {
     if (!m) return;
@@ -1405,6 +1480,7 @@ void D3D12Bridge::Shutdown()
         if (m->ctx11) m->ctx11->Flush();
     }
     m->asyncCompute.Shutdown();
+    m->ShutdownGpuParticles();
     m->ShutdownPostCinematic();
     m->ShutdownCloudRaymarch();
     m->ShutdownAutoExposure();

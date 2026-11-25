@@ -134,8 +134,11 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
     const float postCinematicMs = (postCinematicReady && postCinematic && postCinematic->HasValidTiming() &&
                                    std::isfinite(postCinematic->GetLastTotalMs()))
         ? postCinematic->GetLastTotalMs() : 0.0f;
+    const float gpuParticlesMs = (gpuParticlesReady && gpuParticles && gpuParticles->HasValidTiming() &&
+                                  std::isfinite(gpuParticles->GetLastTotalMs()))
+        ? gpuParticles->GetLastTotalMs() : 0.0f;
 
-    char jsonBuf[3072]{};
+    char jsonBuf[3584]{};
     const int n = std::snprintf(
         jsonBuf, sizeof(jsonBuf),
         "{\n"
@@ -174,6 +177,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         "  \"autoExposureAdaptMs\": %.4f,\n"
         "  \"cloudRaymarchMs\": %.4f,\n"
         "  \"postCinematicMs\": %.4f,\n"
+        "  \"gpuParticlesMs\": %.4f,\n"
         "  \"seasonSnowM\": %.4f,\n"
         "  \"seasonIceM\": %.4f,\n"
         "  \"skinTempC\": %.3f,\n"
@@ -216,6 +220,7 @@ void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
         autoExposureAdaptMs,
         cloudRaymarchMs,
         postCinematicMs,
+        gpuParticlesMs,
         seasonSnowM,
         seasonIceM,
         skinTempC,
@@ -1612,6 +1617,115 @@ bool D3D12Bridge::Impl::ExecutePostCinematicOnQueue(bool hasMotion)
     return true;
 }
 
+bool D3D12Bridge::Impl::ExecuteGpuParticlesOnQueue(bool isInterior)
+{
+    if (!gpuParticlesReady || !gpuParticles || !gpuParticles->Ready() ||
+        !queue || !gpuParticlesList || !gpuParticlesFence || !gpuParticlesEvent) {
+        return false;
+    }
+
+    const uint32_t slot = gpuParticlesSlot;
+    if (gpuParticlesSlotVal[slot] > 0 && gpuParticlesFence->GetCompletedValue() < gpuParticlesSlotVal[slot]) {
+        gpuParticlesFence->SetEventOnCompletion(gpuParticlesSlotVal[slot], gpuParticlesEvent);
+        WaitForSingleObject(gpuParticlesEvent, 3000);
+    }
+    if (FAILED(gpuParticlesAlloc[slot]->Reset()) ||
+        FAILED(gpuParticlesList->Reset(gpuParticlesAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (gpuParticlesLastMs > 0ull && nowMs >= gpuParticlesLastMs) {
+        dtSec = std::clamp(static_cast<float>(nowMs - gpuParticlesLastMs) * 0.001f, 0.001f, 0.05f);
+    }
+    gpuParticlesLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 0.0f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+    }
+
+    // Weather-driven particle mode: Snow (blizzards), Rain (storms), WaterfallMist (damp rivers), Embers (fires/clear dusk)
+    ParticleMode mode = ParticleMode::Embers;
+    if (!isInterior) {
+        const bool nearRiver = std::isfinite(fi.waterPlaneZ) &&
+                               (std::fabs(lighting.posAdjust[2] - fi.waterPlaneZ) < 420.0f);
+        if (weatherSnow > 0.18f) {
+            mode = ParticleMode::Snow;
+        } else if (fi.rainIntensity > 0.18f) {
+            mode = ParticleMode::Rain;
+        } else if (nearRiver && lastFluidFireEmitters == 0u) {
+            mode = ParticleMode::WaterfallMist;
+        } else {
+            mode = ParticleMode::Embers;
+        }
+    }
+
+    const bool resetNow = (gpuParticlesStepFrames == 0ull) || (mode != gpuParticlesLastMode);
+    gpuParticlesLastMode = mode;
+
+    // Build camera-relative LH view-projection in local Y-up meters (emitter positioned ahead of camera)
+    const float aspect = static_cast<float>(gpuParticles->SplatWidth()) /
+                         static_cast<float>(std::max(gpuParticles->SplatHeight(), 1u));
+    const float eye[3]    = {0.0f, 2.0f, -8.0f};
+    const float target[3] = {0.0f, 2.0f,  0.0f};
+    const float up[3]     = {0.0f, 1.0f,  0.0f};
+
+    GpuParticlesParams pp{};
+    BuildParticlesViewProjLH(eye, target, up, 1.04719755f, aspect, 0.1f, 120.0f, pp.viewProj);
+    pp.emitterPos[0]      = 0.0f;
+    pp.emitterPos[1]      = (mode == ParticleMode::Snow || mode == ParticleMode::Rain) ? 7.5f : 1.0f;
+    pp.emitterPos[2]      = 0.0f;
+    pp.emitterRadius      = (mode == ParticleMode::Snow || mode == ParticleMode::Rain) ? 6.0f : 1.2f;
+    pp.windVel[0]         = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.04f, -14.0f, 14.0f);
+    pp.windVel[1]         = 0.0f;
+    pp.windVel[2]         = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.04f, -14.0f, 14.0f);
+    pp.curlStrength       = (mode == ParticleMode::Rain) ? 0.35f : 1.45f;
+    pp.dtSec              = dtSec;
+    pp.timeSec            = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+    pp.groundY            = 0.0f;
+    pp.restitution        = (mode == ParticleMode::Rain) ? 0.55f : 0.40f;
+    pp.gravityScale       = 1.0f;
+    pp.buoyancyAccel      = 4.2f;
+    pp.dragCoeff          = (mode == ParticleMode::Snow) ? 1.4f : 0.75f;
+    pp.splatIntensity     = 1.0f;
+    pp.mode               = mode;
+    pp.frameIndex         = static_cast<uint32_t>(gpuParticlesStepFrames & 0xFFFFu);
+    pp.resetAll           = resetNow;
+    pp.enableRespawn      = true;
+    pp.enableGroundBounce = true;
+
+    gpuParticles->Execute(gpuParticlesList.Get(), pp);
+
+    if (FAILED(gpuParticlesList->Close())) return false;
+    ID3D12CommandList* lists[1] = {gpuParticlesList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(gpuParticlesFence.Get(), ++gpuParticlesFenceVal);
+    gpuParticlesSlotVal[slot] = gpuParticlesFenceVal;
+    gpuParticlesSlot = (slot + 1u) % kRing;
+
+    if ((gpuParticlesStepFrames++ % 180ull) == 0ull) {
+        const char* modeName = (mode == ParticleMode::Snow) ? "Snow" :
+                               (mode == ParticleMode::Rain) ? "Rain" :
+                               (mode == ParticleMode::WaterfallMist) ? "Mist" : "Embers";
+        log("[GpuParticles] live 16K 3D particles (%s): simMs=%.4f, splatMs=%.4f, totalMs=%.4f",
+            modeName,
+            gpuParticles->HasValidTiming() ? gpuParticles->GetLastSimMs() : 0.0f,
+            gpuParticles->HasValidTiming() ? gpuParticles->GetLastSplatMs() : 0.0f,
+            gpuParticles->HasValidTiming() ? gpuParticles->GetLastTotalMs() : 0.0f);
+    }
+    return true;
+}
+
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
     return WaitFence(fence12.Get(), value, cpuEvent, timeoutMs);
@@ -1854,8 +1968,10 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     const bool runPostCinematic = m->cfg.lightingPass && m->lighting.valid && m->postCinematicReady &&
                                   m->postCinematic && m->postCinematic->Ready() &&
                                   m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+    const bool runGpuParticles = m->cfg.lightingPass && m->lighting.valid && m->gpuParticlesReady &&
+                                 m->gpuParticles && m->gpuParticles->Ready();
     const bool runOverlay = m->overlayHudEnabled && m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
-    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runOverlay;
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runOverlay;
     auto runPostLightingPasses = [&]() -> bool {
         if (!hasPostWork) return true;
         if (runTerrain) {
@@ -1959,6 +2075,9 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         }
         if (runPostCinematic) {
             m->ExecutePostCinematicOnQueue(s.hasMotion);
+        }
+        if (runGpuParticles) {
+            m->ExecuteGpuParticlesOnQueue(isInterior);
         }
         if (runOverlay) {
             m->ExecuteOverlayHudOnQueue(isInterior);

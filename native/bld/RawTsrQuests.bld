@@ -1,0 +1,123 @@
+// RawTsrQuests.bld: RAW Engine Deterministic TSR Upscaling, RCAS Sharpening, Quest Persuasion,
+// Smithing Tempering & Encumbrance Kernels in BuildLang 1.4.0.
+// Counterparts to RawTsrUpscaleSim.hlsl, RawQuestDialogueSim.cpp, and rt_crafting_inventory_gmst.cpp:
+//   1. halton_jitter_offset   - Exact radical-inverse Halton-2/3 subpixel TSR jitter [-0.5..+0.5)
+//   2. ycocg_clamp_weight     - YCoCg neighborhood variance-box anti-ghosting confidence weight
+//   3. rcas_lobe_weight       - Ringing-safe RCAS negative sharpening lobe weight [-0.1875..0]
+//   4. quest_persuasion_prob  - Speech + disposition logistic dialogue persuasion probability
+//   5. smithing_temper_bonus  - Diminishing-returns smithing temper bonus with anti-exploit cap
+//   6. encumbrance_speed_mult - Carry-weight encumbrance locomotion speed multiplier
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn abs_f64(x: f64) -> f64 {
+    if x < 0.0 { -x } else { x }
+}
+
+// 1. Exact radical-inverse Halton low-discrepancy subpixel jitter offset centered in [-0.5, +0.5).
+// Matches src/d3d12_bridge/shaders/RawTsrUpscaleSim.hlsl Halton(2,3) jitter table.
+fn halton_jitter_offset(index: i32, base: i32) -> f64 {
+    let mut n: i32 = if index < 1 { 1 } else { index };
+    let b: i32 = if base < 2 { 2 } else { base };
+    let b_f: f64 = b as f64;
+    let mut f: f64 = 1.0;
+    let mut r: f64 = 0.0;
+    while n > 0 {
+        f = f / b_f;
+        let q: i32 = n / b;
+        let rem: i32 = n - q * b;
+        r = r + f * (rem as f64);
+        n = q;
+    }
+    r - 0.5
+}
+
+// 2. YCoCg neighborhood variance-box anti-ghosting history confidence weight in [0.05..1.0].
+// Matches src/d3d12_bridge/shaders/RawTsrUpscaleSim.hlsl temporal rejection clamp.
+fn ycocg_clamp_weight(hist_val: f64, mean_val: f64, sigma_val: f64, gamma: f64) -> f64 {
+    let half_ext: f64 = max_f64(max_f64(sigma_val, 0.0) * max_f64(gamma, 0.25), 1.0e-4);
+    let dev: f64 = abs_f64(hist_val - mean_val);
+    if dev <= half_ext {
+        1.0
+    } else {
+        clamp_f64(half_ext / dev, 0.05, 1.0)
+    }
+}
+
+// 3. Ringing-safe RCAS negative sharpening lobe weight strictly bounded in [-0.1875..0.0].
+// Matches src/d3d12_bridge/shaders/RawTsrUpscaleSim.hlsl RCAS sharpening pass.
+fn rcas_lobe_weight(luma_min: f64, luma_max: f64, sharpness: f64) -> f64 {
+    let hi: f64 = clamp_f64(luma_max, 1.0e-4, 1.0);
+    let lo: f64 = clamp_f64(luma_min, 0.0, hi);
+    let w_lo: f64 = -lo / (4.0 * hi);
+    let w_hi: f64 = -(1.0 - hi) / max_f64(4.0 * (1.0 - lo), 1.0e-4);
+    let peak: f64 = clamp_f64(max_f64(w_lo, w_hi), -0.1875, 0.0);
+    peak * clamp_f64(sharpness, 0.0, 1.0)
+}
+
+// 4. Quest dialogue speech persuasion success probability in [0.05..0.98].
+// Matches src/worldgen/RawQuestDialogueSim.cpp & src/engine_rt/rt_crime_mount_gmst.cpp.
+fn quest_persuasion_prob(speech_skill: f64, difficulty: f64, disposition: f64) -> f64 {
+    let eff: f64 = clamp_f64(speech_skill, 0.0, 120.0) + 0.30 * clamp_f64(disposition, -50.0, 50.0);
+    let p: f64 = 1.0 / (1.0 + exp(-(eff - difficulty) * 0.12));
+    clamp_f64(p, 0.05, 0.98)
+}
+
+// 5. Diminishing-returns smithing temper bonus with smooth hyperbolic anti-exploit ceiling.
+// Matches src/engine_rt/rt_crafting_inventory_gmst.cpp tempering curve.
+fn smithing_temper_bonus(smithing_skill: f64, perk_mult: f64, max_bonus: f64) -> f64 {
+    let cap: f64 = max_f64(max_bonus, 1.0);
+    let perk: f64 = clamp_f64(perk_mult, 1.0, 2.0);
+    let raw: f64 = max_f64(smithing_skill - 10.0, 0.0) * 0.18 * perk;
+    cap * tanh(raw / cap)
+}
+
+// 6. Carry-weight encumbrance locomotion speed multiplier in [0.25..1.0].
+// Matches src/engine_rt/rt_crafting_inventory_gmst.cpp encumbrance speed curve.
+fn encumbrance_speed_mult(carry_wt: f64, max_carry_wt: f64) -> f64 {
+    let ratio: f64 = max_f64(carry_wt, 0.0) / max_f64(max_carry_wt, 1.0);
+    if ratio <= 0.75 {
+        1.0
+    } else if ratio <= 1.0 {
+        1.0 - 0.15 * ((ratio - 0.75) / 0.25)
+    } else {
+        clamp_f64(0.45 - 0.15 * (ratio - 1.0), 0.25, 0.45)
+    }
+}
+
+fn main() ~ Console {
+    let h2_1: f64 = halton_jitter_offset(1, 2);
+    let h2_2: f64 = halton_jitter_offset(2, 2);
+    let h3_1: f64 = halton_jitter_offset(1, 3);
+    let yc_in: f64 = ycocg_clamp_weight(0.52, 0.50, 0.04, 1.25);
+    let yc_out: f64 = ycocg_clamp_weight(0.85, 0.50, 0.04, 1.25);
+    let rcas_mid: f64 = rcas_lobe_weight(0.35, 0.55, 0.80);
+    let rcas_edge: f64 = rcas_lobe_weight(0.02, 0.98, 0.80);
+    let pers_nov: f64 = quest_persuasion_prob(20.0, 75.0, 0.0);
+    let pers_mas: f64 = quest_persuasion_prob(85.0, 60.0, 20.0);
+    let sm_mid: f64 = smithing_temper_bonus(50.0, 1.0, 40.0);
+    let sm_leg: f64 = smithing_temper_bonus(100.0, 2.0, 40.0);
+    let enc_lt: f64 = encumbrance_speed_mult(180.0, 300.0);
+    let enc_hv: f64 = encumbrance_speed_mult(285.0, 300.0);
+    let enc_ov: f64 = encumbrance_speed_mult(360.0, 300.0);
+
+    println!("halton_jitter_offset(1,2) = {} | (2,2) = {} | (1,3) = {}", h2_1, h2_2, h3_1);
+    println!("ycocg_clamp_weight(in-box) = {} | (disoccluded) = {}", yc_in, yc_out);
+    println!("rcas_lobe_weight(mid) = {} | (high-contrast) = {}", rcas_mid, rcas_edge);
+    println!("quest_persuasion_prob(novice) = {} | (master) = {}", pers_nov, pers_mas);
+    println!("smithing_temper_bonus(50) = {} | (100+perk) = {}", sm_mid, sm_leg);
+    println!("encumbrance_speed_mult(light) = {} | (heavy) = {} | (over) = {}", enc_lt, enc_hv, enc_ov);
+}

@@ -1,6 +1,6 @@
-# RAW Engine BuildLang Core Kernel Map (12 Modules, 72 Verified Kernels)
+# RAW Engine BuildLang Core Kernel Map (13 Modules, 78 Verified Kernels)
 
-This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, and combat-mechanics kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**12 modules, 72 verified kernels**):
+This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar physics, atmosphere, meteorology, biomechanics, PBR optics, fluid dynamics, acoustics, shadows, combat/AI, regional economy, GPU pipeline, world-systems, volumetric clouds, archery, dungeon, animation IK, cinematic post-FX, profile-tiering, GPU particle dynamics, combat-mechanics, TSR upscaling, quest persuasion, and crafting/encumbrance kernels to their verified **BuildLang 1.4.0** counterparts under `native/bld/` (**13 modules, 78 verified kernels**):
 
 1. [`native/bld/RawPhysicsKernels.bld`](../native/bld/RawPhysicsKernels.bld) (6 core scalar physics & anti-exploit kernels)
 2. [`native/bld/RawAtmoWeather.bld`](../native/bld/RawAtmoWeather.bld) (7 planetary atmosphere, orbital solar, snowpack ODE & black-ice kernels)
@@ -14,10 +14,11 @@ This document maps RAW Engine's deterministic C++23 and HLSL SM 6.6/6.10 scalar 
 10. [`native/bld/RawCloudsDungeon.bld`](../native/bld/RawCloudsDungeon.bld) (6 dual-lobe HG clouds, Beer-Powder scattering, spherical cloud shell, bow draw power, dungeon connectivity & compass marker kernels)
 11. [`native/bld/RawAnimKinematics.bld`](../native/bld/RawAnimKinematics.bld) (6 2-bone IK knee angle, critically damped spring-damper, CoC bokeh radius, motion-blur clamp, VRAM budget tier & shout cooldown kernels)
 12. [`native/bld/RawParticlesCombat.bld`](../native/bld/RawParticlesCombat.bld) (6 particle bounce, curl-wind drag, timed-parry stagger, wet/frost elemental damage, armor mitigation & poise recovery kernels)
+13. [`native/bld/RawTsrQuests.bld`](../native/bld/RawTsrQuests.bld) (6 Halton-2/3 jitter, YCoCg variance clamp, RCAS sharpening lobe, quest persuasion, smithing temper & encumbrance speed kernels)
 
 ## Toolchain Verification Receipts (`buildc 1.4.0`)
 
-Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **12/12 `check` PASS**, **12/12 `run` PASS**):
+Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe` (`buildc 1.4.0`, **13/13 `check` PASS**, **13/13 `run` PASS**):
 
 ### Module 1: `native/bld/RawPhysicsKernels.bld`
 - `buildc check`: Exit Code `0` (`Lexing... OK (763 tokens)`, `Parsing... OK (9 items)`, `Type checking... OK`, `No errors found`)
@@ -162,7 +163,19 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
   poise_recovery_step(hitstun) = 35 | (recovering) = 47.5
   ```
 
-## Kernel-by-Kernel Mapping (72 Kernels)
+### Module 13: `native/bld/RawTsrQuests.bld`
+- `buildc check`: Exit Code `0` (`Lexing... OK (896 tokens)`, `Parsing... OK (10 items)`, `Type checking... OK`, `No errors found`)
+- `buildc run`: Exit Code `0`
+  ```text
+  halton_jitter_offset(1,2) = 0 | (2,2) = -0.25 | (1,3) = -0.16666666666666669
+  ycocg_clamp_weight(in-box) = 1 | (disoccluded) = 0.14285714285714288
+  rcas_lobe_weight(mid) = -0.12727272727272726 | (high-contrast) = -0.004081632653061225
+  quest_persuasion_prob(novice) = 0.05 | (master) = 0.9763394218445388
+  smithing_temper_bonus(50) = 7.123234724693209 | (100+perk) = 26.783610384750833
+  encumbrance_speed_mult(light) = 1 | (heavy) = 0.88 | (over) = 0.42000000000000004
+  ```
+
+## Kernel-by-Kernel Mapping (78 Kernels)
 
 ### 1. Core Physics Kernels (`native/bld/RawPhysicsKernels.bld`)
 
@@ -296,10 +309,21 @@ Verified directly on this workstation with `C:\Users\Zain\.cargo\bin\buildc.exe`
 | 71 | `armor_damage_mitigation(armor_rating, armor_pen01, max_cap)` | `src/worldgen/RawCombatEngine.cpp` | `clamp(armor * (1 - pen) * 0.0012, 0, min(cap, 0.80))` | `300` armor vs `50%` mace pen = `0.18`; `1200` armor hard-capped at `0.80` |
 | 72 | `poise_recovery_step(cur_poise, max_poise, since_hit_s, delay_s, regen_rate, dt_sec)` | `src/worldgen/RawCombatEngine.cpp` | Hold during hitstun (`t < delay`), else `min(cur + rate*dt, max)` | Frozen at `35.0` during hitstun (`0.8 s`); regenerates to `47.5` post-delay |
 
-## Reproducing All 12 BuildLang Module Checks
+### 13. Temporal Super-Resolution, Quest Persuasion and Crafting Kernels (`native/bld/RawTsrQuests.bld`)
+
+| # | BuildLang Function | Engine C++ / HLSL Counterpart | Governing Equation | Verified Invariant |
+| --- | --- | --- | --- | --- |
+| 73 | `halton_jitter_offset(index, base)` | `src/d3d12_bridge/shaders/RawTsrUpscaleSim.hlsl` | Radical-inverse Halton(`base`) centered in `[-0.5, +0.5)` | `(1,2)=0.0`, `(2,2)=-0.25`, `(1,3)=-0.1667` |
+| 74 | `ycocg_clamp_weight(hist_val, mean_val, sigma_val, gamma)` | `src/d3d12_bridge/shaders/RawTsrUpscaleSim.hlsl` | `1.0` inside `gamma*sigma` box, else `clamp(half_ext / dev, 0.05, 1.0)` | In-box history = `1.0`; disoccluded outlier damped to `0.1429` |
+| 75 | `rcas_lobe_weight(luma_min, luma_max, sharpness)` | `src/d3d12_bridge/shaders/RawTsrUpscaleSim.hlsl` | Ringing-safe negative lobe in `[-0.1875, 0.0]` scaled by sharpness | Mid-contrast `-0.1273`; high-contrast edge clamped to `-0.0041` |
+| 76 | `quest_persuasion_prob(speech_skill, difficulty, disposition)` | `src/worldgen/RawQuestDialogueSim.cpp` | `clamp(1 / (1 + exp(-0.12*(eff - diff))), 0.05, 0.98)` | Novice (`20` vs `75`) = `0.05`; master (`85, +20` vs `60`) = `0.9763` |
+| 77 | `smithing_temper_bonus(smithing_skill, perk_mult, max_bonus)` | `src/engine_rt/rt_crafting_inventory_gmst.cpp` | `cap * tanh(raw / cap)` smooth diminishing-returns ceiling | Skill 50 = `7.12`; Skill 100 + 2x perk = `26.78` (bounded `< 40`) |
+| 78 | `encumbrance_speed_mult(carry_wt, max_carry_wt)` | `src/engine_rt/rt_crafting_inventory_gmst.cpp` | `1.0` (`<=75%`), smooth `1.0 -> 0.85` (`75..100%`), walk lock `<=0.45` (`>100%`) | Light `1.0`, heavy (`95%`) `0.88`, over-encumbered (`120%`) `0.42` |
+
+## Reproducing All 13 BuildLang Module Checks
 
 ```powershell
-foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat')) {
+foreach ($m in @('RawPhysicsKernels','RawAtmoWeather','RawBiomeFlora','RawRenderOptics','RawFluidDynamics','RawCombatAi','RawEconomySim','RawGpuPipeline','RawWorldSystems','RawCloudsDungeon','RawAnimKinematics','RawParticlesCombat','RawTsrQuests')) {
     buildc check "E:\wt\raw-rt9\native\bld\$m.bld"
     buildc run   "E:\wt\raw-rt9\native\bld\$m.bld"
 }

@@ -412,15 +412,19 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
             ? saturate(smoothstep(0.14f, 0.58f, relLumVar + quadIrradStd * 0.35f) * (0.28f + 0.42f * windMagF + 0.30f * speedRamp)
                        + (fgSilhouetteNeighbor ? 0.45f : 0.0f))
             : 0.0f;
+        // Wave 72: Specular Motion-Vector Guard (parallax reflection highlights on metal/water/wet stone move at
+        // reflection velocity rather than surface MV velocity; boosts reactivity & disables bicubic ringing on motion).
+        const float specPeakW = saturate((curLum - blurLum * 1.18f) * 2.2f) * saturate(fresnel * 1.45f + (isMetal || isWater ? 0.50f : specTap.x * 0.65f));
+        const float specMvReact = (!isActor && !isFoliage) ? saturate(specPeakW * smoothstep(0.12f, 0.65f, speedRamp) * 0.82f) : 0.0f;
         const float reactiveMask = saturate(max(
             max(max(fireEmberReact, waterGlintReact), max(precipReact, max(fgSwingReact, silRimReact))),
-            max(max(varMotionReact, max(spikeContrastReact, foliageMicroReact)), max(mvDivDisocc * 0.98f, isEmissive ? 0.90f : 0.0f))));
+            max(max(varMotionReact, max(spikeContrastReact, max(foliageMicroReact, specMvReact))), max(mvDivDisocc * 0.98f, isEmissive ? 0.90f : 0.0f))));
 
-        // Wave 71: Disocclusion-safe history fetch (falls back from 5-tap bicubic Catmull-Rom to clean bilinear
-        // across foreground silhouettes, high motion divergence, and fine alpha-tested foliage cards so negative
-        // bicubic lobes never bleed dark outline halos across newly disoccluded edges!).
+        // Wave 71 + Wave 72: Disocclusion-safe history fetch (falls back from 5-tap bicubic Catmull-Rom to clean
+        // bilinear across foreground silhouettes, high motion divergence, specular parallax, and alpha-tested foliage
+        // so negative bicubic lobes never bleed dark outline halos across newly disoccluded edges!).
         const float histSharp = (1.0f - max(speedRamp, reactiveMask)) * 0.14f * edgeGate;
-        const bool useBilinearHist = fgSilhouetteNeighbor || (depthDisocc > 0.28f) || (mvDivDisocc > 0.28f) || isFoliage;
+        const bool useBilinearHist = fgSilhouetteNeighbor || (depthDisocc > 0.28f) || (mvDivDisocc > 0.28f) || isFoliage || (specMvReact > 0.35f);
         const float3 prevTm = useBilinearHist
             ? tonemapKaris(HistPrev.SampleLevel(Lin, puv, 0.0f).rgb)
             : sampleCatmullRom5Perceptual(HistPrev, puv, histSharp);
@@ -434,6 +438,9 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float colDisocc = max(saturate((lumDelta - 0.18f) * 2.6f), saturate((chrDelta - 0.22f) * 2.4f));
         const float geoDisocc = max(mvDivDisocc, max(depthDisocc * 0.92f, normalDisocc * 0.85f));
         const float disocc    = saturate(max(max(colDisocc, trapSep), geoDisocc));
+        // Wave 72: Trichrome-Drift Adaptive Detail Guard (suppresses chroma ringing when temporal chroma drifts faster than luma; excludes actors):
+        const float triChromaDrift = (!isActor) ? saturate((chrDelta - (lumDelta * 1.25f + 0.08f)) * 3.2f) : 0.0f;
+        const float3 curYStable = lerp(curY, rgbToYCoCg(tonemapKaris(max(curRgb * cavityScale, 0.0f.xxx))), triChromaDrift * 0.45f * saturate(speedRamp + mvDivDisocc));
 
         // Tightened YCoCg Ellipsoid + Variance Clipping (Wave 66 anti-outline silhouette guard):
         // On high motion-divergence silhouettes (mvDivPx > 1.5), clamp neighborhood variance box cleanly toward
@@ -456,7 +463,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
                                                                                  : (isIceLike > 0.25f ? lerp(0.24f, 0.84f, speedRamp)
                                                                                                       : lerp(0.26f, 0.88f, speedRamp)))));
         const float alpha = saturate(max(baseAlpha, reactiveFinal));
-        const float3 blendedY = lerp(clippedY, curY, alpha);
+        const float3 blendedY = lerp(clippedY, curYStable, alpha);
         recon = sanitizeFiniteRgb(invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx)));
 
         // Zero-Lag Disocclusion Split-Manifold Prior + Native-Resolution Albedo Sharpness Preservation:

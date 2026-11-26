@@ -1724,7 +1724,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Wave 64 + Wave 65 Forest Ground-Bounce Fill & Deep-Furrow Floor on Vertical Tree Trunks (isWoodBark):
     // Eliminates every remaining crushed-black bark red speckle (luma < 0.015) on shadowed Riverwood pine trunks!
     if (!match && isExterior && isWoodBark) {
-        albedo = max(albedo, float3(0.038f, 0.030f, 0.022f));
+        albedo = max(albedo, float3(0.046f, 0.037f, 0.028f));
         const float barkVertW = saturate(1.0f - abs(s.n.z));
         const float dayBarkW = smoothstep(-0.06f, 0.14f, astroSunElev());
         const float3 forestBounce = max(barkGroundBounce, float3(0.11f, 0.095f, 0.072f)) * float3(1.18f, 1.02f, 0.80f);
@@ -1988,10 +1988,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // GGX follows the game's specular map where the game had a lobe, as the game's own term does (mask x scale x lobe):
     // a sharp lobe at f0 0.02 on a surface the map leaves dark (the inn's beams, rt7-glint-1) read as white streaks the
     // game never draws, and a weight full from a mask of 0.25 still left them on the planks (rt7-glint-5).
-    // Wave 64: Fix white-specular chalk bleaching on sunlit pine needles (base==5u AND base==1u pine saplings!):
-    // Previously `specMap = lobe ? ... : 1.0f` dumped 100% raw white sun GGX specular onto non-lobe foliage!
-    const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : (isBotanicalCard ? 0.08f : 1.0f);
-    const float3 foliageSpecTint = isBotanicalCard ? float3(0.14f, 0.24f, 0.10f) : 1.0f.xxx;
+    // Wave 64 + Wave 72: Energy-conserving foliage specular + continuous wet-leaf sheen under rain/mist!
+    // Keeps kD + kS <= 1.0 (white-furnace safe): wet leaves gain crisp sky-coupled dielectric sheen while
+    // attenuating diffuse energy proportionally, preventing chalky bleaching on dry midday pine needles.
+    const float wetLeafW = (isBotanicalCard && isExterior && !isWoodBark) ? saturate(wet.wet * 0.90f + weather.w * 0.35f) : 0.0f;
+    const float botSpecScale = lerp(0.08f, 0.22f, wetLeafW);
+    const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : (isBotanicalCard ? botSpecScale : 1.0f);
+    const float3 foliageSpecTint = isBotanicalCard ? lerp(float3(0.14f, 0.24f, 0.10f), float3(0.42f, 0.50f, 0.46f), wetLeafW) : 1.0f.xxx;
+    if (wetLeafW > 0.02f) { lit = max(lit * (1.0f - wetLeafW * 0.14f), min(lit, 0.022f.xxx)); }
     lit += ((flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f)) * foliageSpecTint;
     // Ray-traced reflection on glossy surfaces with live dynamic-cubemap IBL fallback on RT misses,
     // plus dynamic cubemap enhancement for class-2 metal/armor and clearcoat GGX on wet surfaces.

@@ -229,19 +229,27 @@ void cs_tsr_resolve(uint3 dtid : SV_DispatchThreadID)
         return;
     }
 
-    // 5-tap Catmull-Rom bicubic history reprojection
-    const float4 histSample = SampleHistoryCatmullRom5(prevUv, outDims, gInvDims.zw);
-    const float3 histYCoCg  = RgbToYCoCg(ToneCompress(histSample.rgb));
+    // Wave 72: Disocclusion & Specular MV Guard (falls back off 5-tap negative-lobe Catmull-Rom to clean bilinear
+    // across high depth-edge silhouettes or reactive sparks/speculars so zero dark outline halos bleed on motion).
+    const float velOutPx     = length(velUv * outDims);
+    const float depthEdge    = saturate((zMax3x3 - zMin3x3) * 40.0f);
+    const bool  useBilinTsr  = (depthEdge > 0.35f) || (maxReactive > 0.50f);
+    const float4 histRawTap  = HistoryTex.SampleLevel(gLinearClamp, clamp(prevUv, gInvDims.zw * 0.5f, 1.0f - gInvDims.zw * 0.5f), 0.0f);
+    const float4 histSample  = useBilinTsr
+        ? float4(Sanitize3(histRawTap.rgb), saturate(isfinite(histRawTap.a) ? histRawTap.a : 0.0f))
+        : SampleHistoryCatmullRom5(prevUv, outDims, gInvDims.zw);
+    const float3 histYCoCg   = RgbToYCoCg(ToneCompress(histSample.rgb));
 
     // YCoCg variance-clipping anti-ghosting box (gamma = 1.15 default)
     m1 *= (1.0f / 9.0f);
     m2 *= (1.0f / 9.0f);
     const float3 sigma = sqrt(max(m2 - m1 * m1, float3(0.0f, 0.0f, 0.0f)));
+    const float meanLumaHdr  = Luma709(ToneExpand(YCoCgToRgb(m1)));
+    const float specSpike    = saturate((Luma709(curHdrRgb) - meanLumaHdr * 1.25f) * 1.65f) * saturate(velOutPx * 0.25f);
+    maxReactive              = max(maxReactive, specSpike * 0.65f);
 
     // Tighten variance box under fast motion/depth edges for zero disocclusion ghosting;
     // preserve thin sub-pixel lines inside [boxHardMin, boxHardMax] when completely static.
-    const float velOutPx      = length(velUv * outDims);
-    const float depthEdge     = saturate((zMax3x3 - zMin3x3) * 40.0f);
     const float staticFactor  = (1.0f - saturate(velOutPx * 2.0f)) * (1.0f - depthEdge);
     const float motionScale   = lerp(lerp(1.0f, 0.72f, saturate(velOutPx / 12.0f)), 1.50f, staticFactor);
     const float gamma         = max(gTsrParams.y, 0.25f) * motionScale;

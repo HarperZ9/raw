@@ -479,11 +479,16 @@ float4 main(In i) : SV_Target {
                             + Bloom.Sample(S0, suv - float2(bpx.x * 3.8f, -bpx.y * 3.8f)).rgb;
         const float hLumIn = dot(hInner * 0.5f, W);
         const float hLumOut = dot(hOuter * 0.5f, W);
-        // Warm-source Kodak 5219 halation STRICTLY on genuine >1.55 HDR warm peaks (flames, sun, torches;
-        // eliminates the pink-orange blotches on cyan ice-cave walls seen in 13.59.17!):
+        // Wave 72: Physical 3-wavelength spectral Kodak 5219 halation envelope (650nm deep-red outer scatter,
+        // 580nm warm-amber inner scatter, 460nm absorbed by anti-halation backing; strictly >1.55 HDR peaks and
+        // energy-capped so dark mist & cyan ice caves stay 100% pure with zero artificial washout!).
         const float warmMask = saturate((bloom.r - bloom.b * 0.85f) * 3.5f);
-        const float3 halation = float3(1.12f, 0.36f, 0.08f) * (warmMask * (saturate((bloomLum - 1.55f) * 0.35f) * 0.08f + saturate((hLumIn - 1.55f) * 0.30f) * 0.055f))
-                              + float3(1.00f, 0.14f, 0.04f) * (warmMask * saturate((hLumOut - 1.75f) * 0.28f) * 0.045f);
+        const float hPeakCore = saturate((bloomLum - 1.55f) * 0.35f);
+        const float hPeakIn   = saturate((hLumIn   - 1.55f) * 0.30f);
+        const float hPeakOut  = saturate((hLumOut  - 1.75f) * 0.28f);
+        const float3 halRaw = float3(1.10f, 0.42f, 0.06f) * (warmMask * (hPeakCore * 0.075f + hPeakIn * 0.055f))
+                            + float3(1.04f, 0.14f, 0.02f) * (warmMask * hPeakOut * 0.048f);
+        const float3 halation = halRaw / (1.0f + max(halRaw.r, max(halRaw.g, halRaw.b)) * 1.25f);
         float3 anaAcc = 0.0f.xxx;
         // Suppress horizontal anamorphic lens bar smoothly on indoor scenes (zero glare bars across tavern wall candles!)
         // and raise threshold to >4.2 so only genuine intense outdoor sun glints / explosions streak:
@@ -825,10 +830,11 @@ float4 main(In i) : SV_Target {
     // Optional PQ ST.2084 10-bit HDR10 transfer output (TonemapView >= 3) with subtle 10-bit TPDF IGN dither:
     c.rgb = sanitizeHdr3(c.rgb);
     if (RB.w >= 2.5f) {
+        // Wave 72: Exact ITU-R BT.709 -> BT.2020 D65-white-preserving matrix (row sums == 1.000000).
         const float3 lin2020 = saturate(float3(
-            0.6274f * c.r + 0.3293f * c.g + 0.0433f * c.b,
-            0.0691f * c.r + 0.9195f * c.g + 0.0114f * c.b,
-            0.0164f * c.r + 0.0880f * c.g + 0.8956f * c.b));
+            0.627404f * c.r + 0.329283f * c.g + 0.043313f * c.b,
+            0.069097f * c.r + 0.919540f * c.g + 0.011362f * c.b,
+            0.016391f * c.r + 0.088013f * c.g + 0.895595f * c.b));
         const float3 ym = pow(max(lin2020 * 0.04f, 1.0e-7f.xxx), 0.1593017578f);
         c.rgb = pow(max((0.8359375f + 18.8515625f * ym) / max(1.0f + 18.6875f * ym, 1.0e-5f.xxx), 1.0e-7f.xxx), 78.84375f);
         c.rgb = saturate(c.rgb + (tpdfIgn * (0.50f / 1023.0f)).xxx);

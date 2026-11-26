@@ -32,18 +32,21 @@ void resolve(uint3 id : SV_DispatchThreadID) {
         uint4 meta = CacheValue.Load4(a + 16u);          // frames, lastFrame, asuint(freeFlightMin), asuint(entropy)
         if (count > 0u) {
             const float invCount = 1.0f / float(count);
-            const float4 mean = float4(sum) * (invCount / CACHE_FIXED);
-            const float4 old = asfloat(CacheValue.Load4(a));
-            // SIGGRAPH Advances 2026 ORCA (GI-18) zero-lag luminance + chromaticity jump reset:
-            // reacts in 1-2 frames to spells, torches, lightning, or opening doors even when luminance stays constant!
+            const float4 mean = sanitizeCache4(float4(sum) * (invCount / CACHE_FIXED));
+            const float4 old = sanitizeCache4(asfloat(CacheValue.Load4(a)));
+            // SIGGRAPH Advances 2026 ORCA (GI-18) + Wave 75 Relative-L2 Online Hash Radiance Cache EMA:
+            // reacts in 1-2 frames to spells, torches, lightning, or opening doors while guaranteeing 0 NaN/Inf!
             const float oldLum = dot(old.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float newLum = dot(mean.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float relDelta = abs(newLum - oldLum) / max(oldLum, 0.05f);
             const float chrDelta = length(mean.rgb / max(newLum, 0.05f) - old.rgb / max(oldLum, 0.05f));
+            const float3 radDiff = mean.rgb - old.rgb;
+            const float relL2 = dot(radDiff, radDiff) / (dot(old.rgb, old.rgb) + 0.01f);
             if (relDelta > 0.35f || chrDelta > 0.42f) { meta.x = min(meta.x, 2u); }
             meta.x = min(meta.x + 1u, maxFrames);
-            const float alpha = 1.0f / float(meta.x);
-            const float4 v = meta.x <= 1u ? mean : lerp(old, mean, alpha);
+            const float baseAlpha = 1.0f / float(meta.x);
+            const float alpha = clamp(max(baseAlpha, smoothstep(0.12f, 1.25f, relL2) * 0.45f), 0.05f, 0.85f);
+            const float4 v = sanitizeCache4(meta.x <= 1u ? mean : lerp(old, mean, alpha));
             CacheValue.Store4(a, asuint(v));
 
             // Negative-Space Conservative Free-Flight Radius: shrinks quickly on new occluders, expands cautiously in open air.

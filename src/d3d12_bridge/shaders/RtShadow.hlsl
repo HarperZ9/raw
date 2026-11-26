@@ -20,6 +20,7 @@
 #include "LightingCommon.hlsli"
 #include "Weather.hlsli"
 #include "SpectralTransport.hlsli"
+#include "RawRestirHashCache.hlsli"
 
 Texture2D<float>  Depth  : register(t0);
 Texture2D<float4> Normal : register(t1);
@@ -533,28 +534,49 @@ void main(uint3 id : SV_DispatchThreadID) {
                 [loop] for (uint k = 0u; k < restNeighbors; k++) {
                     const float a = angBase + float(k) * 2.39996323f;
                     const float rad = (k == 0u) ? 0.0f : (3.5f + 3.2f * float(k));
-                    const int2 q = int2(prev + float2(cos(a), sin(a)) * rad);
+                    int2 q = int2(prev + float2(cos(a), sin(a)) * rad);
                     if (any(q < 0) || q.x >= int(dims.x) || q.y >= int(dims.y)) { continue; }
-                    const float4 rq = ResIn[q];
+                    float4 rq = ResIn[q];
+                    // Wave 75: Disocclusion-Safe 2-Slot Temporal Reservoir Selection (for k==0, probes
+                    // secondary staggered slot when primary depth diverges under swaying foliage/edges):
+                    if (k == 0u && (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z)) {
+                        const int2 altOff = ((id.x ^ id.y) & 1u) != 0u ? int2(1, 0) : int2(0, 1);
+                        const int2 qAlt = clamp(q + altOff, int2(0, 0), int2(dims.xy) - 1);
+                        const float4 rqAlt = ResIn[qAlt];
+                        const float3 nAlt = worldNormal(Normal.Load(int3(qAlt, 0)));
+                        const int chosen = rawSelectTwoSlotReservoirLayer(
+                            z, n, rq.w, worldNormal(Normal.Load(int3(q, 0))), rq.x >= 0.5f,
+                            rqAlt.w, nAlt, rqAlt.x >= 0.5f);
+                        if (chosen == 1) { q = qAlt; rq = rqAlt; }
+                    }
                     if (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z) { continue; }
                     // HPG 2026 Best Paper (LGT-09) Compatibility-Guided Spatial ReSTIR Neighbor Selection:
-                    // Validates both tight geometric normal alignment (dot >= 0.84) and irradiance-ratio compatibility
-                    // so incompatible lit/shadowed neighbors never inject blotches across architectural corners!
+                    // Validates both tight geometric normal alignment (dot >= 0.84) and shift-mapping Jacobian!
                     float compatW = 1.0f;
+                    float shiftJac = 1.0f;
+                    const uint yq = uint(rq.x + 0.5f) - 1u;
+                    if (yq >= flags.y || yq == best[0] || yq == best[1] || yq == best[2]) { continue; }
                     if (k > 0u) {
                         const float3 nq = worldNormal(Normal.Load(int3(q, 0)));
                         const float ndCompat = dot(n, nq);
                         if (ndCompat < 0.84f) { continue; }
                         compatW = smoothstep(0.84f, 0.98f, ndCompat);
+                        const float dqN = Depth.Load(int3(q, 0));
+                        if (dqN < 0.99998f) {
+                            const float3 pNeigh = worldAt(float2(q), dqN);
+                            const float3 lPos = lightPosR[yq].xyz;
+                            const float3 lNrm = normalize(p - lPos + float3(0.0f, 0.0f, 1.0e-5f));
+                            shiftJac = rawEvalRestirShiftJacobian(p, pNeigh, lPos, lNrm);
+                            if (shiftJac <= 0.0f) { continue; }
+                        }
                     }
-                    const uint yq = uint(rq.x + 0.5f) - 1u;
-                    if (yq >= flags.y || yq == best[0] || yq == best[1] || yq == best[2]) { continue; }
-                    // Cap reservoir history at 8 samples scaled by compatibility weight so moving lights track immediately:
+                    // Wave 75: Generalized Balance Heuristic MIS + Jacobian-weighted unbiased reuse:
                     const float mq = min(rq.z, 8.0f) * compatW;
                     const float pCompat = lightShare(yq, p, n);
-                    const float wq = pCompat * rq.y * mq;
+                    const float misW = rawEvalGeneralizedBalanceMis(mq, pCompat, max(M, 1.0f), max(total, 1.0e-5f), shiftJac);
+                    const float wq = pCompat * rq.y * mq * shiftJac * lerp(0.5f, 1.5f, misW);
                     M += mq;
-                    if (wq <= 0.0f) { continue; }
+                    if (!isfinite(wq) || wq <= 0.0f) { continue; }
                     wsum += wq;
                     if (qmcKorobov1(px, 64u + k, frameIndex + 7.0f) * wsum < wq) { pick = yq; }
                 }

@@ -24,3 +24,23 @@ uint pcg(uint v) {
     const uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
     return (w >> 22u) ^ w;
 }
+
+// Wave 75: Multi-resolution L=8 world-space hash key + finite radiance sanitizer shared across RtCache & RtShadow.
+float4 sanitizeCache4(float4 v) {
+    return float4(
+        isfinite(v.x) ? clamp(v.x, 0.0f, 32.0f) : 0.0f,
+        isfinite(v.y) ? clamp(v.y, 0.0f, 32.0f) : 0.0f,
+        isfinite(v.z) ? clamp(v.z, 0.0f, 32.0f) : 0.0f,
+        isfinite(v.w) ? saturate(v.w) : 0.0f);
+}
+
+uint hashCacheKeyMultiRes(float3 worldPos, float3 worldNormal, uint lodLevel, float baseCellSize) {
+    const uint  lod = min(lodLevel, 7u);
+    const float cellSize = max(baseCellSize, 1.0f) * float(1u << lod);
+    const int3  qPos = int3(floor(worldPos / cellSize));
+    const int3  qNrm = int3(round(clamp(worldNormal, -1.0f.xxx, 1.0f.xxx) * 3.0f));
+    uint h = (uint(qPos.x) * 73856093u) ^ (uint(qPos.y) * 19349663u) ^ (uint(qPos.z) * 83492791u);
+    h ^= (uint(qNrm.x + 4) * 2654435761u) ^ (uint(qNrm.y + 4) * 2246822519u) ^ (uint(qNrm.z + 4) * 3266489917u);
+    h = pcg(h ^ ((lod + 1u) * 668265263u));
+    return (h == 0u || h == CACHE_TOMB) ? 1u : h;
+}

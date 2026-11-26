@@ -40,6 +40,12 @@ struct State
     ID3D11Buffer* cb = nullptr;
     ID3D11Buffer* saved = nullptr;
     ID3D11ShaderResourceView* savedLutSrv = nullptr;
+    ID3D11ShaderResourceView* savedSceneSrv = nullptr;
+    ID3D11Texture2D* debugSceneTex = nullptr;
+    ID3D11ShaderResourceView* debugSceneSrv = nullptr;
+    UINT debugW = 0, debugH = 0;
+    DXGI_FORMAT debugFmt = DXGI_FORMAT_UNKNOWN;
+    bool swappedScene = false;
     ID3D11Texture2D* lutTex = nullptr;
     ID3D11ShaderResourceView* lutSrv = nullptr;
     int loadedLutIdx = -1;
@@ -295,6 +301,43 @@ void Tonemap_BeforeDraw(ID3D11DeviceContext* real)
     real->PSSetConstantBuffers(5, 1, &s.cb);
     real->PSGetShaderResources(5, 1, &s.savedLutSrv);
     if (s.lutSrv) real->PSSetShaderResources(5, 1, &s.lutSrv);
+    // Wave 70: On LightingPass debug views (1..36, excluding WaterView 1..7), bind pristine bridge colorOut
+    // to t1 so Skyrim's post-opaque snow decals, water, mist, snowflakes & flames never corrupt DebugView 1/2/35!
+    s.swappedScene = false;
+    if (rawDebugBypass && hookCfg.light.waterView == 0) {
+        if (auto* br = SB::Proxy::hook::Bridge()) {
+            if (ID3D11Texture2D* srcTex = br->ColorOutTex11()) {
+                D3D11_TEXTURE2D_DESC sd{};
+                srcTex->GetDesc(&sd);
+                if (!s.debugSceneTex || s.debugW != sd.Width || s.debugH != sd.Height || s.debugFmt != sd.Format) {
+                    if (s.debugSceneSrv) { s.debugSceneSrv->Release(); s.debugSceneSrv = nullptr; }
+                    if (s.debugSceneTex) { s.debugSceneTex->Release(); s.debugSceneTex = nullptr; }
+                    ID3D11Device* dev = nullptr;
+                    real->GetDevice(&dev);
+                    if (dev) {
+                        D3D11_TEXTURE2D_DESC dd{};
+                        dd.Width = sd.Width; dd.Height = sd.Height; dd.MipLevels = 1; dd.ArraySize = 1;
+                        dd.Format = sd.Format; dd.SampleDesc.Count = 1;
+                        dd.Usage = D3D11_USAGE_DEFAULT; dd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                        if (SUCCEEDED(dev->CreateTexture2D(&dd, nullptr, &s.debugSceneTex)) &&
+                            SUCCEEDED(dev->CreateShaderResourceView(s.debugSceneTex, nullptr, &s.debugSceneSrv))) {
+                            s.debugW = sd.Width; s.debugH = sd.Height; s.debugFmt = sd.Format;
+                        } else {
+                            if (s.debugSceneSrv) { s.debugSceneSrv->Release(); s.debugSceneSrv = nullptr; }
+                            if (s.debugSceneTex) { s.debugSceneTex->Release(); s.debugSceneTex = nullptr; }
+                        }
+                        dev->Release();
+                    }
+                }
+                if (s.debugSceneTex && s.debugSceneSrv) {
+                    real->CopyResource(s.debugSceneTex, srcTex);
+                    real->PSGetShaderResources(1, 1, &s.savedSceneSrv);
+                    real->PSSetShaderResources(1, 1, &s.debugSceneSrv);
+                    s.swappedScene = true;
+                }
+            }
+        }
+    }
     s.swapped = true;
     if (!s.logged) { s.logged = true; Log("[Tonemap] first tone map draw with RAW's shader"); }
 }
@@ -307,6 +350,11 @@ void Tonemap_AfterDraw(ID3D11DeviceContext* real)
     if (s.saved) { s.saved->Release(); s.saved = nullptr; }
     real->PSSetShaderResources(5, 1, &s.savedLutSrv);
     if (s.savedLutSrv) { s.savedLutSrv->Release(); s.savedLutSrv = nullptr; }
+    if (s.swappedScene) {
+        real->PSSetShaderResources(1, 1, &s.savedSceneSrv);
+        if (s.savedSceneSrv) { s.savedSceneSrv->Release(); s.savedSceneSrv = nullptr; }
+        s.swappedScene = false;
+    }
     s.swapped = false;
 }
 

@@ -377,50 +377,67 @@ public:
             }
         }
         const RasterBind fog[10] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, cloudNow, {}}, {{}, m_froxelInt, {}}, {{}, simNow, {}}, {{}, {}, m_lin}};
+        const bool isDebugView = (m_u.flags[3] != 0u);
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
-            // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
-            // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.
-            Draw(*c, m_aoOut, m_fogPipe, fog);
-            TextureHandle bloomSrc = m_aoOut;
-            if (m_u.dofParams[0] > 1.0f) {
-                const TextureHandle focusPrev = m_dofFocus[(m_frame + 1) & 1];
-                const TextureHandle focusNow  = m_dofFocus[m_frame & 1];
-                const RasterBind df[3] = {{m_uniform, {}, {}}, {{}, focusPrev, {}}, {{}, m_depth, {}}};
-                Draw(*c, focusNow, m_dofFocusPipe, df);
-                const RasterBind dc[5] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_dofCoc, m_dofCocPipe, dc);
-                const RasterBind dg[3] = {{m_uniform, {}, {}}, {{}, m_dofCoc, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_dofBokeh, m_dofGatherPipe, dg);
-                const RasterBind dpost[3] = {{m_uniform, {}, {}}, {{}, m_dofBokeh, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_dofCoc, m_dofPostPipe, dpost);
-                const RasterBind dp[6] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_dofCoc, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_lit, m_dofCompPipe, dp);
-                bloomSrc = m_lit;
+            if (isDebugView) {
+                // Wave 70: Pure Debug View path: skip DoF & 6-level HDR Bloom so Debug Views 1..36
+                // (normals, sun shadows, albedo, MVs, depth, NaN heatmap) land bit-exact in m_out!
+                if (m_tune.rawlss5) {
+                    Draw(*c, m_aoOut, m_fogPipe, fog);
+                    const TextureHandle rPrev = m_rawlssHist[(m_frame + 1) & 1];
+                    const TextureHandle giSrc = giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game);
+                    const RasterBind rb[10] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_normal, {}},
+                                               {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}},
+                                               {{}, m_albedo, {}}, {{}, giSrc, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_out, m_rawlss5Pipe, rb);
+                } else {
+                    Draw(*c, m_out, m_fogPipe, fog);
+                }
+            } else {
+                // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
+                // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.
+                Draw(*c, m_aoOut, m_fogPipe, fog);
+                TextureHandle bloomSrc = m_aoOut;
+                if (m_u.dofParams[0] > 1.0f) {
+                    const TextureHandle focusPrev = m_dofFocus[(m_frame + 1) & 1];
+                    const TextureHandle focusNow  = m_dofFocus[m_frame & 1];
+                    const RasterBind df[3] = {{m_uniform, {}, {}}, {{}, focusPrev, {}}, {{}, m_depth, {}}};
+                    Draw(*c, focusNow, m_dofFocusPipe, df);
+                    const RasterBind dc[5] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_dofCoc, m_dofCocPipe, dc);
+                    const RasterBind dg[3] = {{m_uniform, {}, {}}, {{}, m_dofCoc, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_dofBokeh, m_dofGatherPipe, dg);
+                    const RasterBind dpost[3] = {{m_uniform, {}, {}}, {{}, m_dofBokeh, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_dofCoc, m_dofPostPipe, dpost);
+                    const RasterBind dp[6] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_dofCoc, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_lit, m_dofCompPipe, dp);
+                    bloomSrc = m_lit;
+                }
+                // RAWLSS 7.0 Split-Manifold Neural Ray Reconstructor (albedo demodulation + 12->16->4 SM 6.9 Long-Vector net + world-GI prior):
+                if (m_tune.rawlss5) {
+                    const TextureHandle rPrev = m_rawlssHist[(m_frame + 1) & 1];
+                    const TextureHandle rNow  = m_rawlssHist[m_frame & 1];
+                    const TextureHandle giSrc = giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game);
+                    const RasterBind rb[10] = {{m_uniform, {}, {}}, {{}, bloomSrc, {}}, {{}, m_depth, {}}, {{}, m_normal, {}},
+                                               {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}},
+                                               {{}, m_albedo, {}}, {{}, giSrc, {}}, {{}, {}, m_lin}};
+                    Draw(*c, rNow, m_rawlss5Pipe, rb);
+                    bloomSrc = rNow;
+                }
+                const RasterBind bp[2] = {{{}, bloomSrc, {}}, {{}, {}, m_lin}};
+                Draw(*c, m_bloomDown[0], m_bloomPrePipe, bp);
+                for (int k = 1; k < 6; ++k) {
+                    const RasterBind bd[2] = {{{}, m_bloomDown[k - 1], {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_bloomDown[k], m_bloomDownPipe, bd);
+                }
+                for (int k = 4; k >= 0; --k) {
+                    const TextureHandle coarser = (k == 4) ? m_bloomDown[5] : m_bloomUp[k + 1];
+                    const RasterBind bu[3] = {{{}, coarser, {}}, {{}, m_bloomDown[k], {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_bloomUp[k], m_bloomUpPipe, bu);
+                }
+                const RasterBind bc[3] = {{{}, bloomSrc, {}}, {{}, m_bloomUp[0], {}}, {{}, {}, m_lin}};
+                Draw(*c, m_out, m_bloomCompPipe, bc);
             }
-            // RAWLSS 7.0 Split-Manifold Neural Ray Reconstructor (albedo demodulation + 12->16->4 SM 6.9 Long-Vector net + world-GI prior):
-            if (m_tune.rawlss5) {
-                const TextureHandle rPrev = m_rawlssHist[(m_frame + 1) & 1];
-                const TextureHandle rNow  = m_rawlssHist[m_frame & 1];
-                const TextureHandle giSrc = giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game);
-                const RasterBind rb[10] = {{m_uniform, {}, {}}, {{}, bloomSrc, {}}, {{}, m_depth, {}}, {{}, m_normal, {}},
-                                           {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}},
-                                           {{}, m_albedo, {}}, {{}, giSrc, {}}, {{}, {}, m_lin}};
-                Draw(*c, rNow, m_rawlss5Pipe, rb);
-                bloomSrc = rNow;
-            }
-            const RasterBind bp[2] = {{{}, bloomSrc, {}}, {{}, {}, m_lin}};
-            Draw(*c, m_bloomDown[0], m_bloomPrePipe, bp);
-            for (int k = 1; k < 6; ++k) {
-                const RasterBind bd[2] = {{{}, m_bloomDown[k - 1], {}}, {{}, {}, m_lin}};
-                Draw(*c, m_bloomDown[k], m_bloomDownPipe, bd);
-            }
-            for (int k = 4; k >= 0; --k) {
-                const TextureHandle coarser = (k == 4) ? m_bloomDown[5] : m_bloomUp[k + 1];
-                const RasterBind bu[3] = {{{}, coarser, {}}, {{}, m_bloomDown[k], {}}, {{}, {}, m_lin}};
-                Draw(*c, m_bloomUp[k], m_bloomUpPipe, bu);
-            }
-            const RasterBind bc[3] = {{{}, bloomSrc, {}}, {{}, m_bloomUp[0], {}}, {{}, {}, m_lin}};
-            Draw(*c, m_out, m_bloomCompPipe, bc);
         } else {
             Draw(*c, m_out, m_fogPipe, fog);
         }

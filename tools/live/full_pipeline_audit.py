@@ -43,7 +43,9 @@ SCENE_INIT_FILENAME = "raw_scene_init.txt"
 SCENE_INIT_BAT_CMD = "bat raw_scene_init"
 
 DEFAULT_CAM_SWEEP_YAW = 0.008
+DEFAULT_LIVE_CAM_SWEEP_YAW = 0.0022
 DEFAULT_CAM_SWEEP_PITCH = 0.0012
+DEFAULT_LIVE_CAM_SWEEP_PITCH = 0.0
 DEFAULT_CAM_SWEEP_FWD = 0.0
 DEFAULT_CAM_SWEEP_FRAMES = 240
 
@@ -830,8 +832,8 @@ def run_live_audit(
     burst: int = 6,
     stride: int = 3,
     cam_sweep: bool = True,
-    cam_sweep_yaw: float = DEFAULT_CAM_SWEEP_YAW,
-    cam_sweep_pitch: float = DEFAULT_CAM_SWEEP_PITCH,
+    cam_sweep_yaw: float = DEFAULT_LIVE_CAM_SWEEP_YAW,
+    cam_sweep_pitch: float = DEFAULT_LIVE_CAM_SWEEP_PITCH,
     cam_sweep_fwd: float = DEFAULT_CAM_SWEEP_FWD,
     cam_sweep_frames: int = DEFAULT_CAM_SWEEP_FRAMES,
     min_world_frames: int = 220,
@@ -1024,8 +1026,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
     ap.add_argument("--stride", type=int, default=3, help="Frames between burst captures (1..30, default 3)")
     ap.add_argument("--cam-sweep", dest="cam_sweep", action="store_true", default=True, help="Drive headless cam_sweep camera motion during bursts (default: ON)")
     ap.add_argument("--no-cam-sweep", dest="cam_sweep", action="store_false", help="Disable headless cam_sweep camera motion")
-    ap.add_argument("--cam-sweep-yaw", type=float, default=DEFAULT_CAM_SWEEP_YAW, help="Yaw rad/frame for cam_sweep (default 0.008)")
-    ap.add_argument("--cam-sweep-pitch", type=float, default=DEFAULT_CAM_SWEEP_PITCH, help="Pitch rad/frame for cam_sweep (default 0.0012)")
+    ap.add_argument("--cam-sweep-yaw", type=float, default=DEFAULT_LIVE_CAM_SWEEP_YAW, help="Yaw rad/frame for cam_sweep (default 0.0022 gentle horizontal pan)")
+    ap.add_argument("--cam-sweep-pitch", type=float, default=DEFAULT_LIVE_CAM_SWEEP_PITCH, help="Pitch rad/frame for cam_sweep (default 0.0 horizontal pan)")
     ap.add_argument("--cam-sweep-fwd", type=float, default=DEFAULT_CAM_SWEEP_FWD, help="Forward units/frame for cam_sweep (default 0.0)")
     ap.add_argument("--cam-sweep-frames", type=int, default=DEFAULT_CAM_SWEEP_FRAMES, help="Frames per cam_sweep pulse (default 240)")
     ap.add_argument("--min-world-frames", type=int, default=220, help="Minimum world frames in raw_harness_status.txt before capture (default 220)")

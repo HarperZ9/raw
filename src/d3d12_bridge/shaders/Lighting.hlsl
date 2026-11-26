@@ -278,6 +278,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         // Pass raw sky/celestial buffer (Masser, Secunda, exotic DLC realms) cleanly straight to LightFog.hlsl
         // which owns 100% of the 24h physical Hillaire skybox, single isRealSun() solar disc, lunar halo, stars, aurora & clouds.
         // (Removes duplicate sunDisc in Lighting.hlsl that previously leaked onto the Moon via moonKeep!)
+        if (flags.w == 1u) { return float4(0.5f, 0.5f, 1.0f, game.a); }
+        if (flags.w == 2u) { return float4(1.0f, 1.0f, 1.0f, game.a); }
         if (flags.w == 10u) { return float4(1.0f, 0.0f, 1.0f, game.a); }
         if (flags.w == 28u) { return float4(0.04f, 0.06f, 0.12f, game.a); }
         if (flags.w == 29u) { return float4(0.02f, 0.04f, 0.10f, game.a); }
@@ -321,7 +323,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             return float4(zEdge35 * 0.85f, zEdge35 * 0.45f, 0.08f, game.a);
         }
         if (flags.w == 36u) { return float4(0.02f, 0.02f, 0.04f, game.a); }
-        if (flags.w == 14u) { return float4(worldNormal(Normal.Load(ip)) * 0.5f + 0.5f, game.a); }
+        if (flags.w == 1u || flags.w == 14u) { return float4(worldNormal(Normal.Load(ip)) * 0.5f + 0.5f, game.a); }
         if (flags.w == 15u) { return float4(Albedo.Load(ip).rgb, game.a); }
         // Views 2, 4 and 5 on distant LOD: the sun, sky and bounce of the march through the depth (RtShadow.hlsl, RtFar).
         if (flags.w == 2u) { return float4(RtVis.Load(ip).xxx, game.a); }
@@ -341,6 +343,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const bool isSkinnedActor = base == 14u;   // Wave 63 Contract: Skinned Actor / Creature / Fur / Clothing
     // Unlock full physically-based PBR shading for Skin (10), Hair (11), Eyes (12), and Skinned Actor/Creature/Cloth (14)!
     if (base == 0u || (base >= 7u && !skin && !isHair && !isEye && !isSkinnedActor) || (cls & 128u) != 0u) {
+        if (flags.w == 1u) {
+            const float3 nEff = worldNormal(Normal.Load(ip));
+            const float nEffL = dot(nEff, nEff);
+            return float4((nEffL > 0.25f ? (nEff * rsqrt(nEffL)) : float3(0.0f, 0.0f, 1.0f)) * 0.5f + 0.5f, game.a);
+        }
+        if (flags.w == 2u) { return float4(1.0f, 1.0f, 1.0f, game.a); }
         if (flags.w == 28u) { return float4(debugClassColor(base, false, 0.0f) * (0.45f + 0.55f * saturate(dot(game.rgb, 0.333f))), game.a); }
         if (flags.w == 29u) {
             const float zEarly = max(viewZOf(d), 1.0f);
@@ -1263,12 +1271,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float dzS = abs(viewZOf(Depth.Load(spS)) - z);
                 if (dzS < zTolS) {
                     const float gW = ((sx == 0 || sy == 0) ? 1.15f : 0.78f) * (1.0f - (dzS / zTolS) * 0.55f);
-                    const float nwS = smoothstep(0.70f, 0.96f, dot(nSmooth, worldNormal(Normal.Load(spS)))) * gW;
-                    if (nwS <= 0.01f) continue;
+                    const float nDotS = dot(nSmooth, worldNormal(Normal.Load(spS)));
+                    const float nwS = smoothstep(0.70f, 0.96f, nDotS) * gW;
+                    // Wave 69: Relaxed bump-tolerant normal weight for exterior sunShadow (depth-gated!) so
+                    // masonry brick crevices and foliage cards denoise cleanly without blurring across silhouettes.
+                    const float sunW = smoothstep(0.30f, 0.88f, nDotS) * gW;
+                    if (sunW <= 0.01f && nwS <= 0.01f) continue;
                     const float4 nRvRaw = RtVis.Load(spS);
                     const float4 nRv = all(isfinite(nRvRaw)) ? saturate(nRvRaw) : 1.0f.xxxx;
+                    if (sunW > 0.01f) { pvSum.x += nRv.x * sunW; pvW.x += sunW; }
+                    if (nwS <= 0.01f) continue;
                     const uint3 nIdx = uint3(RtIdx.Load(spS).xyz * 255.0f + 0.5f);
-                    pvSum.x += nRv.x * nwS; pvW.x += nwS;
                     if (rIdx.x != 0u) {
                         if      (nIdx.x == rIdx.x) { pvSum.y += nRv.y * nwS; pvW.y += nwS; }
                         else if (nIdx.y == rIdx.x) { pvSum.y += nRv.z * nwS; pvW.y += nwS; }
@@ -1287,14 +1300,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
         }
-        // 4 outer radius-2 cardinal taps strictly for exterior sun-shadow penumbra smoothness (zero light-slot overhead):
+        // 8 outer radius-2 ring taps strictly for exterior sun-shadow penumbra smoothness (depth-gated, zero light-slot overhead):
         if (sunColour.w > 0.5f) {
-            static const int2 kSunR2[4] = { int2(2, 0), int2(-2, 0), int2(0, 2), int2(0, -2) };
-            [unroll] for (int ri = 0; ri < 4; ++ri) {
+            static const int2 kSunR2[8] = {
+                int2(2, 0), int2(-2, 0), int2(0, 2), int2(0, -2),
+                int2(2, 2), int2(-2, 2), int2(2, -2), int2(-2, -2)
+            };
+            [unroll] for (int ri = 0; ri < 8; ++ri) {
                 const int3 sp2 = int3(clamp(ip.xy + kSunR2[ri], int2(0, 0), dMaxS), 0);
                 const float dz2 = abs(viewZOf(Depth.Load(sp2)) - z);
                 if (dz2 < zTolS) {
-                    const float nw2 = smoothstep(0.76f, 0.97f, dot(nSmooth, worldNormal(Normal.Load(sp2)))) * 0.52f * (1.0f - dz2 / zTolS);
+                    const float baseW2 = (ri < 4) ? 0.56f : 0.38f;
+                    const float nw2 = smoothstep(0.32f, 0.88f, dot(nSmooth, worldNormal(Normal.Load(sp2)))) * baseW2 * (1.0f - dz2 / zTolS);
                     if (nw2 > 0.01f) {
                         const float nSun2 = RtVis.Load(sp2).x;
                         if (isfinite(nSun2)) { pvSum.x += saturate(nSun2) * nw2; pvW.x += nw2; }
@@ -1764,6 +1781,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                        lerp(float3(1.04f, 1.05f, 1.08f), float3(1.18f, 0.92f, 0.72f), goldInt), dayInt);
         const float todIntGain = lerp(0.78f, 1.08f, dayInt) * (skin ? 0.76f : 1.0f);
         amb *= lerp(todIntTint, float3(0.88f, 0.95f, 1.06f), outCool * 0.35f) * todIntGain;
+        // Wave 70: Physical multi-bounce room-ambient floor in lit interiors (applied AFTER todIntGain)
+        // so shadowed tavern alcoves preserve readable wood/stone detail instead of crushing to #000000.
+        amb = max(amb, float3(0.042f, 0.036f, 0.030f) * lerp(0.72f, 1.0f, combinedOcc));
     }
     // Wave 29 Reciprocal Cross-Material Contact Empathy + Environmental Asymmetry Breaking:
     // 1) 4-tap neighbor G-buffer inspection (strictly gated by 3D world distance so distant mountains never bleed):

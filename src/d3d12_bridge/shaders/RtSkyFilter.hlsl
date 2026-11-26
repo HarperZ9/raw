@@ -17,6 +17,9 @@ RWTexture2D<unorm float4> Lights : register(u3);
 RWTexture2D<float4>      BIn     : register(u4);   // bounce rgb, lum^2
 RWTexture2D<float4>      BOut    : register(u5);
 RWTexture2D<float4>      Bounce  : register(u6);   // lighting pass input (rgb, packed restVis + sigma)
+RWTexture2D<unorm float4> Vis    : register(u7);   // RtVisibility: own-pixel in-place temporal sun shadow (.x)
+RWTexture2D<float4>      SunHistIn  : register(u8);  // sunShadow, viewZ, frames, m2
+RWTexture2D<float4>      SunHistOut : register(u9);
 cbuffer F : register(b1) { uint hasMotion, reset, maxFrames, fPad; };
 
 // Raw alpha: sky (0 or 1), plus 4 + 2 q where the untraced lights' share was sampled, q its value in fifteenths
@@ -206,13 +209,16 @@ void main(uint3 id : SV_DispatchThreadID) {
         BOut[p] = 0.0f;
         Bounce[p] = float4(0.0f, 0.0f, 0.0f, 1.0f);
         Lights[p] = float4(Lxyz, 1.0f);
+        SunHistOut[p] = float4(1.0f, -1.0f, 0.0f, 1.0f);
         return;
     }
     const float z = max(sanitizeSkyScalar(viewZOf(d), 100.0f), 0.1f);
     const int2 lim = int2(dims.xy) - 1;
     float n = 0.0f, past = 0.0f, pastR = 1.0f, pastM2 = 0.0f;
+    float pastSun = 1.0f, pastSunN = 0.0f;
     float3 pastB = 0.0f;
     bool have = false;
+    bool haveSun = false;
     const float3 wpC = worldAt(float2(p), d);
     const float3 nGeom = reconstructGeomNormal(p, wpC, z);
 
@@ -236,6 +242,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         const int2 pb = int2(floor(prev));
         const float2 pa = prev - float2(pb);
         float hs = 0.0f, hn = 0.0f, hw = 0.0f, hr = 0.0f, hm2 = 0.0f;
+        float hsun = 0.0f, hsunN = 0.0f, hsunW = 0.0f;
         float3 hb = 0.0f;
         // Tighter grazing-aware depth reprojection gate rejects foreground/background & doorframe bleed cleanly!
         const float3 viewDirC = normalize(eyeAt() - wpC + float3(0.0f, 0.0f, 1.0e-5f));
@@ -245,16 +252,41 @@ void main(uint3 id : SV_DispatchThreadID) {
         [unroll] for (int k = 0; k < 4; k++) {
             const int2 t = pb + int2(k & 1, k >> 1);
             if (any(t < 0) || t.x >= int(dims.x) || t.y >= int(dims.y)) { continue; }
-            const float4 h = HistIn[t];
-            if (!all(isfinite(h)) || h.y <= 0.0f || abs(h.y - zClamped) > zTol) { continue; }
             const float w = ((k & 1) ? pa.x : 1.0f - pa.x) * ((k >> 1) ? pa.y : 1.0f - pa.y);
-            const float4 bTapRaw = BIn[t];
-            const float3 bTapRgb = sanitizeSkyRgb(bTapRaw.rgb);
-            const float bTapM2 = isfinite(bTapRaw.a) ? max(bTapRaw.a, 0.0f) : 0.0f;
-            hs += w * saturate(h.x); hn += w * clamp(h.z, 0.0f, 64.0f); hw += w; hb += w * bTapRgb; hm2 += w * bTapM2; hr += w * saturate(h.w);
+            const float4 h = HistIn[t];
+            if (all(isfinite(h)) && h.y > 0.0f && abs(h.y - zClamped) <= zTol) {
+                const float4 bTapRaw = BIn[t];
+                const float3 bTapRgb = sanitizeSkyRgb(bTapRaw.rgb);
+                const float bTapM2 = isfinite(bTapRaw.a) ? max(bTapRaw.a, 0.0f) : 0.0f;
+                hs += w * saturate(h.x); hn += w * clamp(h.z, 0.0f, 64.0f); hw += w; hb += w * bTapRgb; hm2 += w * bTapM2; hr += w * saturate(h.w);
+            }
+            const float4 sh = SunHistIn[t];
+            if (all(isfinite(sh)) && sh.y > 0.0f && abs(sh.y - zClamped) <= zTol * 1.35f) {
+                hsun += w * saturate(sh.x);
+                hsunN += w * clamp(sh.z, 0.0f, 32.0f);
+                hsunW += w;
+            }
         }
         if (hw > 0.08f) {
             past = saturate(hs / hw); n = hn / hw; pastB = hb / hw; pastM2 = hm2 / hw; pastR = saturate(hr / hw); have = true;
+        }
+        if (hsunW > 0.08f) {
+            // Wave 70: Add depth-gated 4-neighbor cross taps on read-only SunHistIn around pb to stabilize
+            // sub-pixel grass/foliage penumbras during rigid camera pans with zero read/write race.
+            float sSum = hsun, sW = hsunW;
+            static const int2 kSunCross[4] = { int2(-1, 0), int2(2, 0), int2(0, -1), int2(0, 2) };
+            [unroll] for (int sc = 0; sc < 4; ++sc) {
+                const int2 tc = pb + kSunCross[sc];
+                if (any(tc < 0) || tc.x >= int(dims.x) || tc.y >= int(dims.y)) { continue; }
+                const float4 shc = SunHistIn[tc];
+                if (all(isfinite(shc)) && shc.y > 0.0f && abs(shc.y - zClamped) <= zTol) {
+                    sSum += 0.22f * saturate(shc.x);
+                    sW += 0.22f;
+                }
+            }
+            pastSun = saturate(sSum / sW);
+            pastSunN = hsunN / hsunW;
+            haveSun = true;
         }
     }
 
@@ -324,6 +356,24 @@ void main(uint3 id : SV_DispatchThreadID) {
     // guaranteeing zero temporal feedback amplification!).
     const float3 skyAuroraTint = sanitizeSkyRgb(evalNightAuroraSkyBounce(vis));
     const float3 bOutDisplay = min(bFiltered + skyAuroraTint, 1.85f.xxx);
+
+    // Wave 69 + Wave 70: Motion-reprojected temporal exterior sun-shadow stabilization (zero read/write race:
+    // Vis is read & written strictly at own pixel p; SunHistIn/SunHistOut ping-pong cleanly).
+    if (sunColour.w > 0.5f) {
+        const float4 rawVis = Vis[p];
+        const float curSun = isfinite(rawVis.x) ? saturate(rawVis.x) : 1.0f;
+        const bool sunHardDisocc = (mvDivPx > 1.35f) || !haveSun;
+        const float sunN = sunHardDisocc ? 1.0f : min(pastSunN + 1.0f, 16.0f);
+        const float sunDelta = haveSun ? abs(curSun - pastSun) : 0.0f;
+        const float sunMvBoost = smoothstep(0.65f, 1.55f, mvDivPx) * 0.85f;
+        const float sunCloudBoost = smoothstep(0.08f, 0.35f, sunDelta) * cloudTransW * 0.45f;
+        const float alphaSun = saturate(max(max(1.0f / sunN, lerp(0.08f, 0.16f, rigidPanFactor)), max(sunMvBoost, sunCloudBoost)));
+        const float filtSun = saturate(haveSun ? lerp(pastSun, curSun, alphaSun) : curSun);
+        SunHistOut[p] = float4(filtSun, min(z, 65000.0f), sunN, filtSun * filtSun);
+        Vis[p] = float4(filtSun, rawVis.y, rawVis.z, rawVis.w);
+    } else {
+        SunHistOut[p] = float4(1.0f, min(z, 65000.0f), 1.0f, 1.0f);
+    }
 
     // Pack 16-level restVis + continuous temporal SVGF stdDev sigmaOut into RGBA16F Bounce.a (zero extra VRAM/textures).
     const float packedRestVar = floor(saturate(rest) * 15.0f + 0.5f) * 2.0f + sigmaOut;

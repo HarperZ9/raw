@@ -38,7 +38,9 @@ bool RtSky::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base
         !Tex(dev, m_bhist[0], width, height, H, L"rt bounce history 0") || !Tex(dev, m_bhist[1], width, height, H, L"rt bounce history 1") ||
         !Tex(dev, m_bounce, width, height, H, L"rt bounce", D3D12_RESOURCE_STATE_COMMON) ||
         !Tex(dev, m_res[0], width, height, DXGI_FORMAT_R32G32B32A32_FLOAT, L"rt light reservoirs 0") ||
-        !Tex(dev, m_res[1], width, height, DXGI_FORMAT_R32G32B32A32_FLOAT, L"rt light reservoirs 1")) {
+        !Tex(dev, m_res[1], width, height, DXGI_FORMAT_R32G32B32A32_FLOAT, L"rt light reservoirs 1") ||
+        !Tex(dev, m_sunHist[0], width, height, H, L"rt sun shadow history 0") ||
+        !Tex(dev, m_sunHist[1], width, height, H, L"rt sun shadow history 1")) {
         err = "sky textures"; return false;
     }
     const D3D12_CPU_DESCRIPTOR_HANDLE cpu = heap->GetCPUDescriptorHandleForHeapStart();
@@ -53,16 +55,21 @@ bool RtSky::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base
     uav(m_bhist[1].Get(), H, 9); uav(m_bhist[0].Get(), H, 10); uav(m_bounce.Get(), H, 11);
     const DXGI_FORMAT R = DXGI_FORMAT_R32G32B32A32_FLOAT;
     uav(m_res[0].Get(), R, 14); uav(m_res[1].Get(), R, 15); uav(m_res[1].Get(), R, 17); uav(m_res[0].Get(), R, 18);
+    uav(m_sunHist[0].Get(), H, 20); uav(m_sunHist[1].Get(), H, 21);
+    uav(m_sunHist[1].Get(), H, 22); uav(m_sunHist[0].Get(), H, 23);
     SetMotion(nullptr);
 
     // Root: the lighting pass's uniform (b0), constants (b1), depth (t0), motion (t2), the rays and the
-    // two histories (u0..u2, one table per parity), the light-index output (u3).
+    // two histories (u0..u2, one table per parity), the light-index output (u3), bounce (u4..u6),
+    // visibility output (u7), and temporal sun-shadow history ping-pong (u8..u9).
     D3D12_DESCRIPTOR_RANGE depth{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
     D3D12_DESCRIPTOR_RANGE motion{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2, 0, 0};
     D3D12_DESCRIPTOR_RANGE hist{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0};
     D3D12_DESCRIPTOR_RANGE lights{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 3, 0, 0};
     D3D12_DESCRIPTOR_RANGE bounce{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 4, 0, 0};   // u4 in, u5 out history; u6 the output
-    D3D12_ROOT_PARAMETER p[7]{};
+    D3D12_DESCRIPTOR_RANGE visRange{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 7, 0, 0}; // u7: RtVisibility (in-place sun .x)
+    D3D12_DESCRIPTOR_RANGE sunHist{D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 8, 0, 0};  // u8 in, u9 out sun shadow history
+    D3D12_ROOT_PARAMETER p[9]{};
     p[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; p[0].Descriptor = {0, 0};
     p[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[1].Constants = {1, 0, 4};
     p[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[2].DescriptorTable = {1, &depth};
@@ -70,7 +77,9 @@ bool RtSky::Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base
     p[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[4].DescriptorTable = {1, &hist};
     p[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[5].DescriptorTable = {1, &lights};
     p[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[6].DescriptorTable = {1, &bounce};
-    D3D12_ROOT_SIGNATURE_DESC rs{7, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    p[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[7].DescriptorTable = {1, &visRange};
+    p[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[8].DescriptorTable = {1, &sunHist};
+    D3D12_ROOT_SIGNATURE_DESC rs{9, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs)) ||
         FAILED(dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) {
@@ -141,6 +150,8 @@ void RtSky::Record(ID3D12GraphicsCommandList4* cl, D3D12_GPU_VIRTUAL_ADDRESS uni
     cl->SetComputeRootDescriptorTable(4, {gpu.ptr + UINT64(m_base + ((frame & 1) ? 3 : 0)) * m_inc});
     cl->SetComputeRootDescriptorTable(5, {gpu.ptr + UINT64(4) * m_inc});
     cl->SetComputeRootDescriptorTable(6, {gpu.ptr + UINT64(m_base + ((frame & 1) ? 9 : 6)) * m_inc});
+    cl->SetComputeRootDescriptorTable(7, {gpu.ptr + UINT64(3) * m_inc});
+    cl->SetComputeRootDescriptorTable(8, {gpu.ptr + UINT64(m_base + ((frame & 1) ? 22 : 20)) * m_inc});
     cl->Dispatch((m_w + 7) / 8, (m_h + 7) / 8, 1);
     b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COMMON;

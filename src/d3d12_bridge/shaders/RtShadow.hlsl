@@ -315,59 +315,63 @@ void main(uint3 id : SV_DispatchThreadID) {
         const float2 rDisk = stbnR2(px, frameIndex + 3.0f);
         const float3 sunDirUnit = (dot(sunDir.xyz, sunDir.xyz) > 1.0e-8f) ? normalize(sunDir.xyz) : float3(0.0f, 0.0f, 1.0f);
         const uint rtTier = (giFlags >> 8u) & 7u;
-        if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDirUnit) > 0.0f) {
-            // Wave 54 + Wave 65 + Wave 66 Anti-Acne World-Locked Multi-Tap PCSS Solar-Disk Shadows:
-            // Offsets ray origins strictly along smooth geometric normal `biasN` (ng on static stone walls!)
-            // with grazing-angle slope-scaled bias (`baseBias + slopeBias * (1 - ng.L)`) + hardened `tMinS`
-            // self-intersection rejection + upper-hemisphere ring ray clamp -> ZERO grazing masonry acne
-            // on sunlit Windhelm stone walls and ZERO temporal boiling!
-            static const float kSolarDiskTan = 0.0046251f;
-            const float overcastWiden = lerp(1.0f, 1.85f, saturate(clouds.x * 0.85f + weather.w * 0.35f));
-            const float solarCone = max(sunCone, kSolarDiskTan) * overcastWiden;
+        if (sunDir.w > 0.5f && sunColour.w > 0.5f) {
+            // Wave 54 + Wave 65 + Wave 70 Anti-Acne Geometric-Normal Multi-Tap PCSS Solar-Disk Shadows:
+            // Traces across all front/grazing surfaces (ngSun > -0.25) without flat-triangle backface cutouts
+            // (Lighting.hlsl handles smooth normal-mapped NdotL self-shading!), uses a continuous fixed
+            // golden-angle solar disk (zero 4-unit voxel hash popping on cam_sweep!), and gives alpha-tested
+            // foliage/grass cards (base==5u) physical translucent transmission floor + self-hit clearance.
             const float ngSun = dot(biasN, sunDirUnit);
-            const float grazingSun = saturate(1.0f - saturate(ngSun));
-            const float baseBias = max(0.38f, 0.020f + 0.0024f * z);
-            const float slopeBias = max(0.65f, 0.0045f * z) * (grazingSun * grazingSun);
-            const float sunNormalOff = clamp(baseBias + slopeBias + (isSkinnedMesh ? 0.55f : 0.32f), 0.45f, 7.5f);
-            const float3 oSun = p + biasN * sunNormalOff;
-            const float turn = saturate(1.0f - max(ngSun, 0.0f) / 0.52f);
-            const float grazingTMin = max(max(termDist, 2.6f), sunNormalOff * 1.40f) * (turn * turn);
-            const float tMinS = clamp(max(grazingTMin, sunNormalOff * 0.38f), 0.38f, 18.0f);
-
-            const float3 sTan = normalize(cross(sunDirUnit, abs(sunDirUnit.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
-            const float3 sBit = cross(sunDirUnit, sTan);
-            // Smooth world-anchored phase (static in world space -> zero boiling when still AND zero screen-swim on cam_sweep):
-            const float3 wpSun = p + camPosW.xyz;
-            const float worldPhase = frac(dot(floor(wpSun * 0.25f), float3(0.1031f, 0.11369f, 0.13787f))) * 6.2831853f;
-
-            // Keep center blocker ray strictly in the geometric upper hemisphere so bump-mapped grazing walls never self-hit:
-            float3 sunRayC = sunDirUnit;
-            const float cDot = dot(biasN, sunRayC);
-            if (cDot < 0.025f) {
-                sunRayC = normalize(sunRayC + biasN * (0.025f - cDot));
-            }
-            Hit hBlocker;
-            float effCone = solarCone * 0.65f;
-            float vSum = 0.0f;
-            if (traceHit(oSun + sunRayC * tMinS, sunRayC, sunLength, hBlocker)) {
-                effCone = clamp(solarCone * (0.32f + 1.48f * saturate(hBlocker.t / 190.0f)), kSolarDiskTan * 0.45f, solarCone * 1.85f);
+            const bool isFoliageCard = (base == 5u);
+            if (!isFoliageCard && ngSun <= -0.45f) {
+                vis.x = 0.0f;
             } else {
-                vSum += 1.0f;
-            }
-            const uint nSunRing = (rtTier <= 1u) ? 2u : 3u;
-            const float ringStep = 6.2831853f / float(nSunRing);
-            [loop] for (uint siS = 0u; siS < nSunRing; ++siS) {
-                const float angS = worldPhase + float(siS) * ringStep;
-                const float radS = effCone * (0.62f + 0.30f * (float(siS & 1u)));
-                float3 dRing = normalize(sunRayC + (sTan * cos(angS) + sBit * sin(angS)) * radS);
-                // Prevent solar-disk jitter ring from dipping into the geometric stone plane at grazing angles:
-                const float rDot = dot(biasN, dRing);
-                if (rDot < 0.025f) {
-                    dRing = normalize(dRing + biasN * (0.025f - rDot));
+                static const float kSolarDiskTan = 0.0046251f;
+                const float overcastWiden = lerp(1.0f, 1.85f, saturate(clouds.x * 0.85f + weather.w * 0.35f));
+                const float solarCone = max(sunCone, kSolarDiskTan) * overcastWiden * (isFoliageCard ? 1.85f : 1.0f);
+                const float grazingSun = saturate(1.0f - saturate(ngSun));
+                const float baseBias = max(0.45f, 0.024f + 0.0028f * z);
+                const float slopeBias = max(0.75f, 0.0050f * z) * (grazingSun * grazingSun);
+                const float foliageBoost = isFoliageCard ? 3.6f : 0.0f;
+                const float sunNormalOff = clamp(baseBias + slopeBias + foliageBoost + (isSkinnedMesh ? 0.55f : 0.38f), 0.50f, 10.5f);
+                const float3 oSun = p + biasN * sunNormalOff;
+                const float turn = saturate(1.0f - max(ngSun, 0.0f) / 0.52f);
+                const float grazingTMin = max(max(termDist, 2.8f), sunNormalOff * 1.45f) * (turn * turn);
+                const float tMinS = clamp(max(grazingTMin, max(sunNormalOff * 0.42f, isFoliageCard ? 4.8f : 0.45f)), 0.45f, 20.0f);
+
+                const float3 sTan = normalize(cross(sunDirUnit, abs(sunDirUnit.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+                const float3 sBit = cross(sunDirUnit, sTan);
+                // Smooth fixed golden-angle solar-disk ring (zero discontinuous 4-unit voxel hash popping on cam_sweep):
+                const float worldPhase = 0.3926991f;
+
+                float3 sunRayC = sunDirUnit;
+                const float cDot = dot(biasN, sunRayC);
+                if (cDot < 0.03f) {
+                    sunRayC = normalize(sunRayC + biasN * (0.03f - cDot));
                 }
-                vSum += visible(oSun, dRing, tMinS, sunLength);
+                Hit hBlocker;
+                float effCone = solarCone * 0.65f;
+                float vSum = 0.0f;
+                if (traceHit(oSun + sunRayC * tMinS, sunRayC, sunLength, hBlocker)) {
+                    effCone = clamp(solarCone * (0.38f + 1.45f * saturate(hBlocker.t / 190.0f)), kSolarDiskTan * 0.45f, solarCone * 1.85f);
+                } else {
+                    vSum += 1.0f;
+                }
+                const uint nSunRing = (rtTier <= 1u) ? 2u : 3u;
+                const float ringStep = 6.2831853f / float(nSunRing);
+                [loop] for (uint siS = 0u; siS < nSunRing; ++siS) {
+                    const float angS = worldPhase + float(siS) * ringStep;
+                    const float radS = effCone * (0.62f + 0.30f * (float(siS & 1u)));
+                    float3 dRing = normalize(sunRayC + (sTan * cos(angS) + sBit * sin(angS)) * radS);
+                    const float rDot = dot(biasN, dRing);
+                    if (rDot < 0.03f) {
+                        dRing = normalize(dRing + biasN * (0.03f - rDot));
+                    }
+                    vSum += visible(oSun, dRing, tMinS, sunLength);
+                }
+                const float rawSunVis = saturate(vSum / float(nSunRing + 1u));
+                vis.x = isFoliageCard ? lerp(0.28f, 1.0f, rawSunVis) : rawSunVis;
             }
-            vis.x = saturate(vSum / float(nSunRing + 1u));
         }
         // Hardware-tier adaptive DXR ray budget (RTX 3060=Tier 1 -> 1 spp, 4070/4090=Tier 2-3 -> 2 spp, 5090=Tier 4 -> 3 spp GI):
         const bool isInterior = (sunColour.w <= 0.5f);

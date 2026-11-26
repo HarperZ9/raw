@@ -1738,6 +1738,7 @@ void D3D12Bridge::Shutdown()
 }
 
 bool D3D12Bridge::Ready() const { return m->ready; }
+ID3D11Texture2D* D3D12Bridge::ColorOutTex11() const { return (m && m->ready) ? m->colorOut.tex11.Get() : nullptr; }
 const BridgeConfig& D3D12Bridge::Config() const { return m->cfg; }
 bool D3D12Bridge::Matches(UINT w, UINT h, DXGI_FORMAT c) const
 {

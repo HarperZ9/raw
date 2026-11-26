@@ -570,11 +570,16 @@ float4 main(In i) : SV_Target {
     if (RB.x > 3.5f) {
         const float imadSat  = lerp(1.0f, P[3].x, 0.32f);
         const float imadTint = P[4].w * 0.22f;
-        const float imadCon  = lerp(1.0f, P[3].z, 0.25f);
+        const float imadCon  = clamp(lerp(1.0f, P[3].z, 0.25f), 0.50f, 1.60f);
         const float imadBri  = lerp(1.0f, P[3].w, 0.25f);
         c = imadSat * (c - g) + g;
         c = imadTint * (g * P[4] - c) + c;
-        c = imadCon * (imadBri * c - pivot) + pivot;
+        // Wave 70: Toe-safe power contrast around pivot in linear display space.
+        // Replaces linear `imadCon * (imadBri * c - pivot) + pivot` which subtracted `(imadCon - 1) * pivot`
+        // from dark linear shadows and drove shadowed interior alcoves negative into pitch-black #000000.
+        const float pivSafe = max(pivot, 0.04f);
+        const float3 cBri = max(imadBri * c.rgb, 0.0f.xxx);
+        c.rgb = pivSafe * pow(max(cBri / pivSafe, 1.0e-6f.xxx), imadCon);
     } else {
         c = P[3].x * (c - g) + g;
         c = P[4].w * (g * P[4] - c) + c;

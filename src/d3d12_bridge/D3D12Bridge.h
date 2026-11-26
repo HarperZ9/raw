@@ -413,6 +413,8 @@ public:
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)
     bool ReadEngineVisibility(std::vector<float>* out);
+    // Pristine D3D11 colorOut texture written by LightingPass/Rawlss5Pass before post-opaque decals/water/particles.
+    ID3D11Texture2D* ColorOutTex11() const;
 
     // A D3D12-side read of a shared texture, as tight rows: proof of what
     // crossed the bridge. Waits for the queue. Slow; for captures and tests.

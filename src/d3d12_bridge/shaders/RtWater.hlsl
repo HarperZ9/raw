@@ -21,6 +21,7 @@
 #include "RawWorldDynamics.hlsli"
 #include "RawPrecipThermal.hlsli"
 #include "RawVolumetricGiGlint.hlsli"
+#include "RawPorosityCaustics.hlsli"
 
 #define Layer Normal
 #define BedAlbedo Spec
@@ -673,7 +674,10 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float troughFade = saturate(focus * sunVis * clearSun * (1.0f - smoothstep(2600.0f, 5200.0f, wDist)));
                 causTrough = lerp(1.0f.xxx, clamp(jacFocus, 0.62f.xxx, 1.25f.xxx), troughFade * 0.65f);
                 const float3 jacFilament = max(jacFocus - 1.0f.xxx, 0.0f.xxx) * 0.68f + net * 0.72f;
-                caus = sanitizeWater3(BedAlbedo.Load(ip).rgb * sunColour.rgb * throughRGB * (l.z * sunVis * focus * waterA.y * 1.40f * clearSun) * jacFilament);
+                // Wave 80: Couple three-band Cauchy spectral caustic dispersion (n_R=1.331, n_G=1.333, n_B=1.339, mean==1.0):
+                const RawSpectralCausticResult waterCausW80 = rawEvalSpectralCausticDispersion(
+                    camPosW.xyz + pb, l, depthV, wGustWater.z, wGustWater.xy, cloudTransW, wtC);
+                caus = sanitizeWater3(BedAlbedo.Load(ip).rgb * sunColour.rgb * throughRGB * (l.z * sunVis * focus * waterA.y * 1.40f * clearSun) * (jacFilament * waterCausW80.causticRGB));
             }
 
             // Refraction through the bed's own colour, from the frame RAW lit before the game composited its water:

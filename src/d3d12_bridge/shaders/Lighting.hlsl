@@ -20,6 +20,7 @@
 #include "RawVolumetricGiGlint.hlsli"
 #include "RawSplitTemporalAerial.hlsli"
 #include "RawBlackbodySss.hlsli"
+#include "RawPorosityCaustics.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -676,6 +677,20 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 albedo    = lerp(albedo, float3(0.14f, 0.12f, 0.10f), meltMask * natSnowMelt * 0.78f);
                 albedo    = lerp(albedo, float3(0.44f, 0.54f, 0.64f), slushRing * natSnowMelt * 0.45f);
                 s.alpha   = lerp(s.alpha, 0.15f, max(meltMask, slushRing) * max(natSnowMelt, wet.snow) * 0.75f);
+            }
+            // Wave 80: Porosity-Coupled Wet-Stone / Mud / Wood Albedo Darkening & Micro-Normal Water-Film Smoothing:
+            // Couples world-space drainage concavity + torch/brazier melt wetness (strictly preserves !isGreenPine & energy <= 1.0).
+            if (!isGreenPine && !isActorFeat && !isActorCloth && max(wet.wet, wet.puddle) > 0.04f && wet.snow < 0.35f && z < 3200.0f) {
+                const float porMatW80 = (base == 4u) ? 0.82f : ((base == 2u) ? 0.08f : (isWoodBark ? 0.58f : 0.68f));
+                const float nvPorW80  = saturate(dot(s.n, s.v));
+                const RawPorosityWetFilmResult porW80 = rawEvalPorosityWetFilm(
+                    p + camPosW.xyz, albedo, s.n, float3(0.0f, 0.0f, 1.0f), s.alpha,
+                    wet.wet, wet.puddle, porMatW80, nvPorW80, isGreenPine);
+                const float porFadeW80 = smoothstep(3200.0f, 240.0f, z) * (1.0f - saturate(wet.snow * 2.8f));
+                albedo  = lerp(albedo, porW80.albedoWet, porFadeW80 * 0.55f);
+                s.n     = normalize(lerp(s.n, porW80.normalFilm, porFadeW80 * 0.45f));
+                s.alpha = lerp(s.alpha, porW80.roughnessFilm, porFadeW80 * 0.50f);
+                lobe    = lobe || (max(wet.wet, wet.puddle) > 0.14f);
             }
             // Wave 42 Dynamic Raindrop Splash Ripples on Wet Surfaces & Puddles (strictly rain-gated; 100% calm on dry days!):
             const float effWetRain = max(wet.wet, wet.puddle);
@@ -1527,12 +1542,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         evalCurlCausticLayer(surfXY + dispDir * dispU, wtCaust),
                         evalCurlCausticLayer(surfXY, wtCaust),
                         evalCurlCausticLayer(surfXY - dispDir * dispU, wtCaust));
+                    // Wave 80: Three-Band Cauchy Spectral Water-Bed Caustic Dispersion (n_R=1.331, n_G=1.333, n_B=1.339, mean==1.0):
+                    const float4 wGustCaus = rawEvalCoherentWindGust4(absPosC, cloudWind, weather, wtCaust);
+                    const RawSpectralCausticResult specCausW80 = rawEvalSpectralCausticDispersion(
+                        absPosC, sunDir.xyz, subDepthU, wGustCaus.z, wGustCaus.xy, cloudTransL, wtCaust);
                     const float3 beerDepth = exp(-subDepthU * float3(0.0085f, 0.0028f, 0.0018f));
                     const float focusW = smoothstep(1.5f, 18.0f, subDepthU);
                     const float upW = saturate(s.n.z * 0.75f + 0.25f);
                     const float clearSunC = max(1.0f - saturate(clouds.x * 0.78f), 0.18f);
                     const float distFadeC = smoothstep(4800.0f, 320.0f, z);
-                    diff += dirCol * causRGB * (beerDepth * (focusW * upW * clearSunC * sunShadow * distFadeC * 0.78f));
+                    diff += dirCol * (causRGB * specCausW80.causticRGB) * (beerDepth * (focusW * upW * clearSunC * sunShadow * distFadeC * 0.78f));
                 }
             }
         }

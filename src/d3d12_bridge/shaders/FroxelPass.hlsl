@@ -92,6 +92,41 @@ float froxelDrainePhase(float cosT, float g, float alpha) {
     return hg * draine;
 }
 
+// Wave 71: Weather-Regime Anisotropic Mie-Draine Phase + 22-deg Solar Ice-Crystal Parhelion Ring.
+// Adapts droplet/crystal scattering lobe continuously across dry alpine aerosols (g=0.70, a=1.25),
+// humid valley/rain droplet fog (g=0.82, a=2.10), and freezing diamond-dust snow (g=0.85, a=2.60).
+float evalFroxelAnisoPhase(float cosT, float nightW, float wetFogW, float snowIceW, float localOd) {
+    const float gDry = lerp(0.70f, 0.76f, nightW);
+    const float gEff = clamp(lerp(lerp(gDry, 0.82f, wetFogW), 0.85f, snowIceW), 0.55f, 0.88f);
+    const float aEff = lerp(lerp(1.25f, 2.10f, wetFogW), 2.60f, snowIceW);
+    const float phFwd = froxelDrainePhase(cosT, gEff, aEff);
+    const float phBack = froxelHG(cosT, lerp(-0.22f, -0.30f, wetFogW));
+    const float phSingle = 0.74f * phFwd + 0.26f * phBack;
+    const float phMulti  = rawMultiScatterPhase(cosT, min(gEff, 0.78f), localOd);
+    float ph = lerp(phSingle, phMulti * 1.85f, 0.44f);
+    // Physical 22-deg (0.384 rad) solar ice-crystal halo/parhelion scatter ring in cold snow/high-altitude air:
+    if (snowIceW > 0.05f && nightW < 0.85f) {
+        const float sunAng = acos(clamp(cosT, -1.0f, 1.0f));
+        const float dr22 = (sunAng - 0.384f) / 0.072f;
+        const float iceRing = exp(-min(dr22 * dr22, 24.0f)) * snowIceW * (1.0f - nightW);
+        ph += iceRing * 0.22f;
+    }
+    return min(max(ph, 0.0f), 3.35f);
+}
+
+// Wave 71: Spectral Sky & Crepuscular Cloud-Gap Shaft Coupling.
+// Sunlit cloud-gap shafts gain slant-path Rayleigh/Ozone forward warmth while shadowed gaps stay cool sky slate.
+float3 evalSpectralCrepuscularCoupling(float3 syncSun, float3 syncSky, float3 hTrans, float cs, float aElev, float cosT, float overcastFr, float nightW) {
+    const float lowSunW = smoothstep(0.45f, 0.02f, max(aElev, 0.0f)) * (1.0f - nightW);
+    const float fwdShaft = smoothstep(0.25f, 0.92f, cosT) * saturate(cs) * (1.0f - overcastFr * 0.65f);
+    const float htL = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.05f);
+    const float3 slantWarm = lerp(float3(1.04f, 0.99f, 0.93f), clamp(hTrans / htL, 0.65f.xxx, 1.45f.xxx) * float3(1.08f, 0.96f, 0.82f), lowSunW);
+    const float3 shaftSun = syncSun * lerp(1.0f.xxx, slantWarm, fwdShaft * 0.45f);
+    const float skyL = max(dot(syncSky, float3(0.2126f, 0.7152f, 0.0722f)), 0.02f);
+    const float3 coolTrough = lerp(syncSky, syncSky * float3(0.90f, 0.96f, 1.08f), (1.0f - saturate(cs)) * (1.0f - nightW) * 0.32f);
+    return sanitizeFroxel3(lerp(coolTrough * (dot(shaftSun, float3(0.2126f, 0.7152f, 0.0722f)) / max(skyL, 0.08f)) * 0.12f + shaftSun, shaftSun, 0.88f));
+}
+
 float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const bool isWorldMap = (timeEnv.w > 0.5f) && (camPosW.z > 42000.0f);
     if ((flags.x & FLAG_FOG) == 0u || (flags.x & FLAG_MATCH) != 0u || isWorldMap) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
@@ -214,12 +249,11 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float3 beamDir = (isfinite(beamLen2) && beamLen2 > 1.0e-8f) ? (beamRaw * rsqrt(beamLen2)) : float3(0.0f, 0.0f, 1.0f);
         const float cosT = clamp(dot(farDir, beamDir), -1.0f, 1.0f);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-        // Jendersie & d'Eon (2023) Unified HG + Draine Mie phase blended with 3-octave Wrenninge/Hillaire
-        // multi-scattering phase (gives creamy sunlit forest godrays and soft aerial volume without single-scatter harshness):
+        // Wave 71: Weather-regime anisotropic Mie-Draine phase + spectral crepuscular cloud-gap coupling:
         const float localOd = saturate(sigma * rayDist * 0.65f);
-        const float phSingle = 0.72f * froxelDrainePhase(cosT, lerp(0.74f, 0.78f, nightW), 1.45f) + 0.28f * froxelHG(cosT, -0.22f);
-        const float phMulti  = rawMultiScatterPhase(cosT, lerp(0.72f, 0.76f, nightW), localOd);
-        const float ph = min(lerp(phSingle, phMulti * 1.85f, 0.45f), 3.2f);
+        const float wetFogW = saturate(weather.w * 0.85f + groundBank * 0.45f + valleyStratMist * 0.35f);
+        const float snowIceW = saturate(weather.z * 0.95f + smoothstep(3200.0f, 6400.0f, wp.z) * 0.35f);
+        const float ph = evalFroxelAnisoPhase(cosT, nightW, wetFogW, snowIceW, localOd);
         const float3 hTrans = froxelTransAt(clamp(aElevF, -0.10f, 1.0f));
         const float htLum = max(dot(hTrans, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
         const float3 physSun = lerp(lerp(sunColour.rgb, hTrans * (max(sunLum, 0.10f) / htLum), 0.58f), float3(0.24f, 0.36f, 0.66f) * 0.55f, nightW);
@@ -247,9 +281,10 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         // Disciplined twilight luminance envelope (prevents bright hazy mountain fogs during sunrise/sunset shifts!):
         const float todAmbGain = lerp(1.0f, 0.62f, twilightW) * lerp(0.46f, 0.94f, cs);
         const float3 ambInScat = lerp(syncSkyFr * todAmbGain, nightFogCol, nightW);
-        // Dynamically lit 3D solar in-scattering: sunlit cloud gaps glow warm while shadowed ridges stay deep cool slate!
+        // Dynamically lit 3D solar in-scattering with spectral crepuscular cloud-gap coupling:
+        const float3 crepSunFr = evalSpectralCrepuscularCoupling(syncSunFr, syncSkyFr, hTrans, cs, aElevF, cosT, overcastFr, nightW);
         const float sunInGain = tune2.z * lerp(0.38f, 0.18f, twilightW) * (1.0f - nightW * 0.78f) * (1.0f - overcastFr * 0.55f);
-        inScat += ambInScat + syncSunFr * (sh * ph * sunInGain * moteBoost);
+        inScat += ambInScat + crepSunFr * (sh * ph * sunInGain * moteBoost);
 
         // Wave 62: Moonlight Rayleigh + Mie Night-Halo Scattering (moonlit mist corona + 22-deg lunar ice-mist ring):
         // Strictly active at night (nightW > 0.02); carves silver-indigo lunar shafts through mountain passes & canopies!
@@ -409,8 +444,11 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             const float4 prevVoxel = samplePrevFroxel(pUv, pClip.w);
             const float motMag = saturate(length(pUv - uv) * 14.0f + abs(pClip.w - zCenter) / max(zCenter, 1.0f) * 3.5f);
             const float sigRel = abs(prevVoxel.a - curVoxel.a) / max(max(prevVoxel.a, curVoxel.a), 1.0e-5f);
-            const float disocc = smoothstep(0.45f, 1.35f, sigRel);
-            const float histKeep = (1.0f - lerp(0.22f, 0.80f, max(motMag, disocc))) * edgeFade;
+            const float curScatL = dot(curVoxel.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float prevScatL = dot(prevVoxel.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float scatRel = abs(prevScatL - curScatL) / max(max(prevScatL, curScatL), 1.0e-5f);
+            const float disocc = max(smoothstep(0.45f, 1.35f, sigRel), smoothstep(0.55f, 1.45f, scatRel));
+            const float histKeep = (1.0f - lerp(0.22f, 0.84f, max(motMag, disocc))) * edgeFade;
             curVoxel = lerp(curVoxel, prevVoxel, saturate(histKeep));
         }
     }

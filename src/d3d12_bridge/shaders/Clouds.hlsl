@@ -158,6 +158,22 @@ float dualHgSync(float cosTheta, float g1, float g2, float w1) {
     return lerp(hg(cosTheta, g2), hg(cosTheta, g1), w1);
 }
 
+// Wave 71: Jendersie & d'Eon (SIGGRAPH 2023) Draine Forward-Diffraction Phase + Water-Droplet Anti-Solar Cloud Glory.
+// Sharpens cumulus silver-lining coronas around the solar disc and adds physical backscatter glory around cosT -> -1.
+float cloudDrainePhase(float cosTheta, float g, float alpha) {
+    const float c = clamp(cosTheta, -1.0f, 1.0f);
+    const float g2 = g * g;
+    const float denom = max(1.0f + g2 - 2.0f * g * c, 1.0e-4f);
+    const float hgVal = (1.0f - g2) / (4.0f * PI * denom * sqrt(denom));
+    const float draine = (1.0f + alpha * c * c) / (1.0f + alpha * (1.0f + 2.0f * g2) / 3.0f);
+    return hgVal * draine;
+}
+
+float cloudGloryRing(float cosTheta, float stormW) {
+    const float back = saturate((-clamp(cosTheta, -1.0f, 1.0f) - 0.88f) / 0.12f);
+    return back * back * (1.0f - stormW * 0.65f) * 0.08f;
+}
+
 // Wave 38: High-Frequency Interleaved Gradient Noise + Golden-Ratio Temporal Offset.
 // Eliminates the diagonal polka-dot halftone grid created by static linear grating dot(lo, (0.7548, 0.5698))!
 float cloudIGN(float2 px, uint frameIdx) {
@@ -275,19 +291,22 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (dens <= 0.001f) { continue; }
             float od = 0.0f;
             [unroll] for (uint k = 0u; k < 4u; k++) { od += cloudDensityVol(pa + cloudLightDir * kSunD[k], false) * kSunW[k]; }
-            // Wave 59: 6-Octave Multi-Scattering Dual-Lobe Henyey-Greenstein (g1=+0.72 silver-lining, g2=-0.28 back-scatter,
-            // w1=0.72) + Energy-Conserving Beer-Powder Dark-Edge Silver-Lining synchronized with RawCloudRaymarchSim.hlsl!
+            // Wave 59 + Wave 71: 6-Octave Multi-Scattering Draine-HG Anisotropic Phase + Spectral Optical Depth
+            // + Energy-Conserving Beer-Powder Dark-Edge Silver-Lining synchronized with RawCloudRaymarchSim.hlsl!
             const float odS = max(od * (sigma * 0.64f), 0.0f);
             const float localOptD = dens * sigma * dtStep;
-            const float3 odRGB = odS * float3(0.97f, 1.00f, 1.04f);
+            const float lowSunSpec = smoothstep(0.32f, 0.02f, max(aElev, 0.0f)) * (1.0f - nightW);
+            const float3 odRGB = odS * lerp(float3(0.97f, 1.00f, 1.04f), float3(0.92f, 1.00f, 1.12f), lowSunSpec);
             float3 multiScat = 0.0f.xxx;
             float aOct = 1.0f, bOct = 1.0f, cOct = 1.0f;
             [unroll] for (int oct = 0; oct < 6; oct++) {
-                const float phOct = dualHgSync(cosT, 0.72f * cOct, -0.28f * cOct, 0.72f);
-                multiScat += exp(-clamp(odRGB * bOct, 0.0f.xxx, 32.0f.xxx)) * (aOct * min(phOct, 0.44f));
+                const float phHg = dualHgSync(cosT, 0.72f * cOct, -0.28f * cOct, 0.72f);
+                const float phDr = (oct <= 1) ? lerp(hg(cosT, -0.28f * cOct), cloudDrainePhase(cosT, 0.76f * cOct, 1.85f), 0.74f) : phHg;
+                const float phOct = (oct <= 1) ? lerp(phHg, phDr, 0.55f) : phHg;
+                multiScat += exp(-clamp(odRGB * bOct, 0.0f.xxx, 32.0f.xxx)) * (aOct * min(phOct, 0.48f));
                 aOct *= 0.56f; bOct *= 0.48f; cOct *= 0.54f;
             }
-            multiScat = min(multiScat, 1.28f.xxx);
+            multiScat = min(multiScat + cloudGloryRing(cosT, saturate(weather.w)) * exp(-min(odS * 0.90f, 20.0f)), 1.30f.xxx);
             // Synchronized Beer-Powder dark-edge law (1 - 0.65 * exp(-2*(od + localOptD))) + silver-lining rim boost:
             const float powderSync = max(1.0f - 0.65f * exp(-min(2.0f * (odS + localOptD), 24.0f)), 0.35f);
             const float beerSugar  = 2.0f * exp(-min(odS * 0.85f, 24.0f)) * (1.0f - exp(-min(2.0f * (odS + dens * 0.42f), 24.0f)));
@@ -453,10 +472,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float edgeFade = smoothstep(0.010f, 0.060f, min(min(uv.x, 1.0f - uv.x), min(uv.y, 1.0f - uv.y)));
             const float2 curUv = full * dims.zw;
             const float turnReject = 1.0f - saturate(length(uv - curUv) * 18.0f) * 0.85f;
-            const float4 h = sanitizeCloud4(History.SampleLevel(Lin, uv, 0.0f));
-            const float aDiff = abs(h.a - curS.a);
+            const float4 hRaw = sanitizeCloud4(History.SampleLevel(Lin, uv, 0.0f));
+            const float2 hStep = dims.zw * 1.5f;
+            const float4 hLtap = sanitizeCloud4(History.SampleLevel(Lin, clamp(uv - float2(hStep.x, 0.0f), 0.002f.xx, 0.998f.xx), 0.0f));
+            const float4 hRtap = sanitizeCloud4(History.SampleLevel(Lin, clamp(uv + float2(hStep.x, 0.0f), 0.002f.xx, 0.998f.xx), 0.0f));
+            const float4 hUtap = sanitizeCloud4(History.SampleLevel(Lin, clamp(uv - float2(0.0f, hStep.y), 0.002f.xx, 0.998f.xx), 0.0f));
+            const float4 hDtap = sanitizeCloud4(History.SampleLevel(Lin, clamp(uv + float2(0.0f, hStep.y), 0.002f.xx, 0.998f.xx), 0.0f));
+            const float4 hSpread = max(max(abs(hLtap - hRaw), abs(hRtap - hRaw)), max(abs(hUtap - hRaw), abs(hDtap - hRaw)));
+            const float4 h = clamp(hRaw, max(curS - hSpread - 0.04f.xxxx, 0.0f.xxxx), curS + hSpread + 0.04f.xxxx);
+            const float aDiff = abs(hRaw.a - curS.a);
             const float curL = dot(curS.rgb, float3(0.2126f, 0.7152f, 0.0722f));
-            const float hL   = dot(h.rgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float hL   = dot(hRaw.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float lDiff = abs(hL - curL) / max(max(curL, hL), 0.15f);
             const float disoccReject = (1.0f - smoothstep(0.14f, 0.42f, aDiff)) * (1.0f - smoothstep(0.45f, 1.15f, lDiff));
             const float histW = clamp(max(cloudWind.w, 0.50f), 0.30f, 0.64f) * edgeFade * turnReject * disoccReject;

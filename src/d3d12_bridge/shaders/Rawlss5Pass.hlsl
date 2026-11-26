@@ -405,13 +405,25 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float varMotionReact = smoothstep(0.20f, 0.72f, relLumVar) * saturate(speedPx * 0.42f + mvDivPx * 0.78f);
         const float spikeContrastReact = smoothstep(0.65f, 2.20f, (lumMax3 - lumMean3) / max(lumMean3 + 0.15f, 0.15f))
             * saturate(mvDivDisocc + speedRamp * 0.65f);
+        // Wave 71: Foliage Micro-Motion Reactivity (untracked vertex wind sway on pine needles & grass cards).
+        // Prevents temporal needle smearing under wind gusts & camera sweeps without introducing static shimmer.
+        const float windMagF = saturate(length(cloudWind.xy) * 0.018f + weather.w * 0.30f + weather.z * 0.25f);
+        const float foliageMicroReact = isFoliage
+            ? saturate(smoothstep(0.14f, 0.58f, relLumVar + quadIrradStd * 0.35f) * (0.28f + 0.42f * windMagF + 0.30f * speedRamp)
+                       + (fgSilhouetteNeighbor ? 0.45f : 0.0f))
+            : 0.0f;
         const float reactiveMask = saturate(max(
             max(max(fireEmberReact, waterGlintReact), max(precipReact, max(fgSwingReact, silRimReact))),
-            max(max(varMotionReact, spikeContrastReact), max(mvDivDisocc * 0.98f, isEmissive ? 0.90f : 0.0f))));
+            max(max(varMotionReact, max(spikeContrastReact, foliageMicroReact)), max(mvDivDisocc * 0.98f, isEmissive ? 0.90f : 0.0f))));
 
-        // Catmull-Rom 5-tap sharpening history sample (sharper when static, neutral under high reactivity):
+        // Wave 71: Disocclusion-safe history fetch (falls back from 5-tap bicubic Catmull-Rom to clean bilinear
+        // across foreground silhouettes, high motion divergence, and fine alpha-tested foliage cards so negative
+        // bicubic lobes never bleed dark outline halos across newly disoccluded edges!).
         const float histSharp = (1.0f - max(speedRamp, reactiveMask)) * 0.14f * edgeGate;
-        const float3 prevTm = sampleCatmullRom5Perceptual(HistPrev, puv, histSharp);
+        const bool useBilinearHist = fgSilhouetteNeighbor || (depthDisocc > 0.28f) || (mvDivDisocc > 0.28f) || isFoliage;
+        const float3 prevTm = useBilinearHist
+            ? tonemapKaris(HistPrev.SampleLevel(Lin, puv, 0.0f).rgb)
+            : sampleCatmullRom5Perceptual(HistPrev, puv, histSharp);
         const float3 prevY = rgbToYCoCg(prevTm);
         const float3 curTm = tonemapKaris(recon);
         const float3 curY = rgbToYCoCg(curTm);
@@ -440,7 +452,7 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float baseAlpha = isFace ? lerp(0.54f, 0.96f, speedRamp)
                                        : (isSkinnedActor ? lerp(0.50f, 0.96f, speedRamp)
                                                          : (isWater ? lerp(0.52f, 0.96f, speedRamp)
-                                                                    : (isFoliage ? lerp(0.22f, 0.86f, speedRamp)
+                                                                    : (isFoliage ? lerp(0.32f, 0.90f, speedRamp)
                                                                                  : (isIceLike > 0.25f ? lerp(0.24f, 0.84f, speedRamp)
                                                                                                       : lerp(0.26f, 0.88f, speedRamp)))));
         const float alpha = saturate(max(baseAlpha, reactiveFinal));

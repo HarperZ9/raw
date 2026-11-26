@@ -20,6 +20,7 @@
 #include "RawSeasonsThermals.hlsli"
 #include "RawWorldDynamics.hlsli"
 #include "RawPrecipThermal.hlsli"
+#include "RawVolumetricGiGlint.hlsli"
 
 #define Layer Normal
 #define BedAlbedo Spec
@@ -410,6 +411,12 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float2 gCap2W = float2(cap2.y * 0.616f + cap2.z * 0.788f, -cap2.y * 0.788f + cap2.z * 0.616f);
                 const float nearRip = smoothstep(3800.0f, 160.0f, wDist) * (isCoastalSea ? ampScale : min(ampScale, 0.22f));
                 waveG += (cap1.yz * 0.068f + gCap2W * 0.030f) * nearRip;
+                // Wave 77: Coherent gust-advected capillary normal ripple perturbation (coupled to Wave 74 gust field):
+                const float4 wGustCap = rawEvalCoherentWindGust4(wpW, cloudWind, weather, wt);
+                const RawGustWaterResult gustCapW77 = rawEvalGustWaterFoamRipple(
+                    wpW, wGustCap.xy, wGustCap.z, wt, 0.0f, riverFlowSpeed, shallowW, 0.02f, 0.04f,
+                    smoothstep(3800.0f, 160.0f, wDist));
+                waveG += gustCapW77.capillarySlope * (isCoastalSea ? 0.85f : 0.52f);
 
                 // Wave 63 Isotropic Domain-Warped River Current & Boulder Deflection Relief
                 // (replaces anisotropic pStr / vWakeA/B stretching that drew diagonal zebra ripples on shallow rivers!):
@@ -766,9 +773,14 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float contactCollar = (1.0f - smoothstep(0.0f, collarReach, depthV)) * smoothstep(0.0f, 0.30f, depthV);
                 const float clingBreakup = smoothstep(0.28f, 0.80f, shoreFine * 0.54f + shoreJitter * 0.28f + windCapBreak * 0.18f + riverFlowSpeed * 0.18f);
                 const float microFoamCling = contactCollar * clingBreakup * (isSeaFoam ? 0.64f : lerp(0.24f, 0.54f, riverFlowSpeed));
-                const float foamEnergy = saturate(max(max(crestBreak, microFoamCling), max(max(bowHit * 0.66f, eddyLee * 0.42f), simFoamLive * 0.82f)));
+                const float baseFoamEnergy = saturate(max(max(crestBreak, microFoamCling), max(max(bowHit * 0.66f, eddyLee * 0.42f), simFoamLive * 0.82f)));
+                // Wave 77: Gust-advected shoreline/rapids foam accumulation + energy-conserving Fresnel & roughness coupling:
+                const RawGustWaterResult gustFoamW77 = rawEvalGustWaterFoamRipple(
+                    wpW, wGustWater.xy, wGustWater.z, wtF, baseFoamEnergy, riverFlowSpeed,
+                    saturate(contactCollar + meniscusMask * 0.5f), F, 0.04f, nearW);
+                const float foamEnergy = gustFoamW77.foamAccum01;
                 const float2 foamAdvect = (isSeaFoam ? (foamFlow * (wtFSlow * 8.0f)) : (riverFlowDir * (wtFSlow * (7.2f + riverFlowSpeed * 9.0f))))
-                                        + clamp(simFlowVel * 0.18f, -12.0f.xx, 12.0f.xx);
+                                        + clamp(simFlowVel * 0.18f, -12.0f.xx, 12.0f.xx) + gustFoamW77.foamAdvectDelta;
                 const float foamLace = foamEnergy > 0.02f ? cellularFoamLace(wpW.xy - foamAdvect, wtF, foamEnergy) : 0.0f;
                 const float foamMask = saturate(max(foamLace * smoothstep(0.08f, 0.56f, foamEnergy), simFoamLive * (0.18f + 0.82f * foamLace))) * nearW;
                 // True Underwater Volumetric Sunbeam Shafts (EXTERIORS ONLY):
@@ -790,8 +802,8 @@ void water(uint3 id : SV_DispatchThreadID) {
                 }
                 const float foamSun = (isExtBody && sunDir.w > 0.5f) ? saturate(dot(n, sunDir.xyz) * 0.55f + 0.45f) : 0.0f;
                 const float3 foamDiffuse = (max(ambientAt(float3(0.0f, 0.0f, 1.0f)), 0.06f.xxx) * 0.90f + sunColour.rgb * (foamSun * 0.52f)) * float3(0.94f, 0.97f, 0.98f);
-                const float foamFresnel = saturate(0.0204f + 0.9796f * pow(1.0f - nv, 5.0f));
-                const float3 foamLit = lerp(foamDiffuse, sanitizeWater3(refl) * 0.78f + foamDiffuse * 0.30f, foamFresnel * 0.44f);
+                const float foamFresnel = gustFoamW77.fresnelEff;
+                const float3 foamLit = lerp(foamDiffuse, sanitizeWater3(refl) * (0.72f * (1.0f - gustFoamW77.roughnessEff * 0.35f)) + foamDiffuse * 0.30f, foamFresnel * 0.55f);
                 const float shoreDark = lerp(1.0f, lerp(0.52f, 0.74f, shoreJitter), meniscusMask) * lerp(0.82f, 1.0f, smoothstep(0.0f, 26.0f, depthV));
                 float3 meniscusGlint = 0.0f.xxx;
                 if (capillaryRim > 0.01f && wDist < 2800.0f) {

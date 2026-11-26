@@ -22,10 +22,12 @@ Texture2D<float4> FroxelIn     : register(t0);
 #include "RawProceduralNoise.hlsli"
 #include "RawWeatherAtmo.hlsli"
 #include "RawPrecipThermal.hlsli"
+#include "RawVolumetricGiGlint.hlsli"
 Texture2D<float4> TransLut    : register(t1);
 Texture2D<float4> AtmoSkyView : register(t2);
 Texture2D<float4> FroxelPrev  : register(t3);
 Texture2D<float>  Depth       : register(t4);
+Texture2D<float4> RtGiBounce  : register(t5);
 SamplerState      Lin         : register(s0);
 #endif
 
@@ -354,6 +356,7 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         // caused a periodic timed pulse across snow/glacier/ice scenes whenever coldAmt > 0.25!
     }
     // Clustered local lights in 3D froxel space (hearths, torches, braziers, 3D window portal lights, spells).
+    float3 worldFireBounce = 0.0f.xxx;
     if (tune2.y > 0.0f && flags.y > 0u) {
         const uint tx = min(uint(uv.x * TILES_X), TILES_X - 1u);
         const uint ty = min(uint(uv.y * TILES_Y), TILES_Y - 1u);
@@ -429,9 +432,27 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
                     sigma = max(sigma, 0.000014f * att * lampWeather * steamBoost * lerp(0.35f, 1.0f, localVis));
                 }
                 const float fillRestraint = isInt ? (isWarmFire ? 0.022f : 0.011f) : (isWarmFire ? 0.16f : 0.10f);
-                inScat += min(lightColS[li].rgb * (att * phL * localVis * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * fillRestraint), (isInt ? 0.018f : 0.20f).xxx);
+                const float3 localContrib = min(lightColS[li].rgb * (att * phL * localVis * tune2.y * intSmoke * lampWeather * steamBoost * fireFlicker * fillRestraint), (isInt ? 0.018f : 0.20f).xxx);
+                inScat += localContrib;
+                worldFireBounce += lightColS[li].rgb * (att * localVis * fireFlicker * (isWarmFire ? 0.34f : 0.16f));
             }
         }
+    }
+    // Wave 77: World-Space Multi-Bounce GI Injection into Froxel Volumetrics (Wave 75 L=8 hash cascade + depth-gated RtGiBounce):
+    // Strict finite clamping + albedo-bounded bounce energy + 3D world-space depth proximity gate (0 screen-space glow bleed!).
+    {
+        const float rawSurfD = Depth.Load(int3(clamp(int2(fullPx), int2(0, 0), int2(dims.xy) - 1), 0));
+        const float zSurfW77 = (rawSurfD > 0.0f && rawSurfD < 0.9999f) ? viewZOf(rawSurfD) : -1.0f;
+        const float3 cacheGiRad = ((flags.x & FLAG_BOUNCE) != 0u)
+            ? sanitizeFroxel3(RtGiBounce.SampleLevel(Lin, uv, 0.0f).rgb)
+            : 0.0f.xxx;
+        const float3 shAmbW77 = max(float3(ambient[0].w, ambient[1].w, ambient[2].w), 0.0f.xxx);
+        const float3 worldBounceIn = sanitizeFroxel3(worldFireBounce + shAmbW77 * (isInt ? 0.22f : 0.14f));
+        const RawFroxelGiResult giFroxW77 = rawEvalFroxelWorldGiBounce(
+            wp, farDir, rayDist, zMid, zSurfW77,
+            cacheGiRad, worldBounceIn,
+            isInt ? 0.62f : 0.72f, isInt, weather.z);
+        inScat += giFroxW77.bounceInScat;
     }
     float4 curVoxel = sanitizeFroxel4(float4(inScat * sigma, sigma));
     // Hillaire (SIGGRAPH 2015) Temporal 3D Froxel Reprojection using unjittered slice center pRelCenter:

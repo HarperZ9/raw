@@ -17,6 +17,7 @@
 #include "SpectralTransport.hlsli"
 #include "RawWorldDynamics.hlsli"
 #include "RawPrecipThermal.hlsli"
+#include "RawVolumetricGiGlint.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -1445,21 +1446,16 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             ? evalMicroReliefSelfShadow(p + camPosW.xyz, s.n, sunDir.xyz, mrStrength, mrScale) : 1.0f;
         const float sunPunch = (!match && sunColour.w > 0.5f) ? lerp(1.24f, 0.85f, nightDir) : 1.0f;
         addLight(s, sunDir.xyz, dirCol * (sunSh * lerp(0.50f, 1.0f, microSh) * sunMicroRelief * sunPunch), dirCol * sunPunch, diff, spec);
-        // Wave 34 OverdrawGames UE5 Substrate IOR 1.31 Micro-Facet Snow & Hoar-Frost Diamond Glints:
-        // Dual-tier pinpoint ice-crystal sparkles (F0=0.018, tight pow-220 diamond flash + pow-52 frost twinkle)
-        // on BOTH live snowfall and permanent snowpacks, anchored in world space for natural camera-motion twinkle!
-        if (!match && sunColour.w > 0.5f && z < 1800.0f && sunShadow > 0.20f && nightDir < 0.75f &&
-            (wet.snow > 0.20f || ((base == 4u || base == 1u) && min(albedo.r, min(albedo.g, albedo.b)) > 0.26f && s.n.z > 0.48f))) {
-            const float3 wpGl = (p + camPosW.xyz) * 0.52f;
-            const float3 gCell = floor(wpGl);
-            const float3 gRand = float3(cHash(gCell), cHash(gCell + 19.3f), cHash(gCell + 47.1f)) - 0.5f;
-            const float3 microN = normalize(s.n + gRand * 0.72f);
-            const float3 hGl = rawSafeHalfVec(s.v, sunDir.xyz, s.n);
-            const float nhGl = saturate(dot(microN, hGl));
-            const float fIce = 0.018f + 0.982f * pow(1.0f - saturate(dot(s.v, hGl)), 5.0f);
-            const float diamond = pow(nhGl, 220.0f) * step(0.84f, cHash(gCell + 83.7f)) * 4.5f;
-            const float frost   = pow(nhGl,  52.0f) * step(0.76f, cHash(gCell + 29.1f)) * 0.65f;
-            spec += dirCol * ((diamond + frost) * (0.45f + 2.2f * fIce) * sunShadow * saturate(1.0f - z / 1800.0f) * (1.0f - nightDir));
+        // Wave 77: Energy-Conserving World-Space Micro-Flake Snow & Hoar-Frost Glints (IOR 1.31):
+        // Anchored strictly to fixed dyadic 3D world-space grids (0.0 screen-UV drift on camera pan,
+        // algebraic white-furnace upper bound <= 1.0, 0 NaN/Inf; replaces unbounded stacked sparkle lobes).
+        if (!match && sunColour.w > 0.5f && z < 2000.0f && sunShadow > 0.12f && nightDir < 0.75f &&
+            (wet.snow > 0.12f || ((base == 4u || base == 1u) && min(albedo.r, min(albedo.g, albedo.b)) > 0.26f && s.n.z > 0.48f))) {
+            const float snowCovGl = max(wet.snow, ((base == 4u || base == 1u) && min(albedo.r, min(albedo.g, albedo.b)) > 0.26f) ? 0.65f : 0.0f);
+            const float maxSnowAlb = max(albedo.r, max(albedo.g, albedo.b));
+            const RawSnowGlintResult glW77 = rawEvalMicroFlakeSnowGlint(
+                p + camPosW.xyz, s.n, s.v, sunDir.xyz, z, snowCovGl, maxSnowAlb);
+            spec += dirCol * (glW77.glintSpec * sunShadow * (1.0f - nightDir));
         }
         // Foliage (base == 5u) single unified energy-conserving backlit transmission runs once at line ~1491
         // (removed duplicate stacked diff/spec glow lobes that quadruple-counted chlorophyll and made trees glow!).
@@ -1497,14 +1493,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             spec += dirCol * (cornea * 0.28f * (0.35f + 0.65f * sunShadow));
             diff += dirCol * float3(0.14f, 0.08f, 0.07f) * (0.25f * saturate(dot(s.n, sunDir.xyz) + 0.4f));
         }
-        if (wet.snow > 0.0f && sunShadow > 0.0f) {
-            // arXiv:2505.08985 (Wu/Luan/Hasan/Ramamoorthi 2025) Dual-Scale Position-Normal Manifold Micro-Glints:
-            // Resolves crisp footprint-clamped snow crystal sparkle without temporal pixel-shimmer.
-            const float fp = max(1.2f, z * 0.0025f);
-            const float gFine = snowGlint(p + camPosW.xyz, s.n, s.v, sunDir.xyz, fp);
-            const float gBroad = snowGlint(p + camPosW.xyz + 13.7f, s.n, s.v, sunDir.xyz, fp * 2.1f) * 0.45f;
-            spec += sunColour.rgb * (sunShadow * wet.snow * 2.4f * (gFine + gBroad));
-        }
+        // Wave 77 unified micro-flake snow glint already evaluated above with strict white-furnace conservation <= 1.0
+        // (eliminates duplicate unbounded snowGlint stacking and camera-distance quantization cell swimming).
         // Wave 44 Physical Brushed-Metal Anisotropic GGX + Complex-IOR Conductor Fresnel (forged steel, iron, Dwemer bronze, silver, gold):
         // Replaces flat circular highlights on armor/weapons with elongated anisotropic brushed-steel curves!
         if (useAnisoMetal && sunShadow > 0.02f && z < 2600.0f) {

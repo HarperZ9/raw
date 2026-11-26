@@ -18,6 +18,7 @@
 #include "RawWorldDynamics.hlsli"
 #include "RawPrecipThermal.hlsli"
 #include "RawVolumetricGiGlint.hlsli"
+#include "RawSplitTemporalAerial.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -2303,11 +2304,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float backEdgeGate = 1.0f - frontSun * 0.78f;
             const float3 sssCol = leafBudget.albedoEff * float3(0.84f, 1.18f, 0.24f);
             const float transScale = saturate(leafBudget.directTransWeight / 0.24f);
-            lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate * lerp(0.65f, 1.15f, transScale));
+            // Wave 78: World-space sub-pixel foliage anti-shimmer & coverage preservation (strictly !isWoodBark!):
+            const float maxLeafAlb = max(leafBudget.albedoEff.r, max(leafBudget.albedoEff.g, leafBudget.albedoEff.b));
+            const RawFoliageAntiShimmerResult folW78 = rawEvalFoliageCoverageAntiShimmer(
+                wpCan, s.n, s.v, z, maxLeafAlb, leafBudget.directTransWeight, skyVis, isWoodBark);
+            lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate * lerp(0.65f, 1.15f, transScale) * folW78.translucencyScale);
             // Balanced 3D vertical crown-to-underside pine self-shadowing (rich green shadow volume, never black or chalk!):
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
             const float canopyOcc = saturate(skyVis * 0.62f + sunShadow * 0.24f + crownUp * 0.22f);
-            lit *= lerp(float3(0.42f, 0.54f, 0.38f), 1.0f.xxx, canopyOcc);
+            lit *= lerp(float3(0.42f, 0.54f, 0.38f) * max(folW78.canopyFloorScale, 0.92f), 1.0f.xxx, canopyOcc) * folW78.coverageScale;
             // Preserve rich emerald needle saturation under bright midday sunlight (prevents white-grey highlight wash!):
             if (wet.snow < 0.15f) {
                 const float pLum = dot(lit, float3(0.2126f, 0.7152f, 0.0722f));

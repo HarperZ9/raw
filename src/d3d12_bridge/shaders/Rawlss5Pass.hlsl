@@ -9,6 +9,7 @@
 #include "LightingCommon.hlsli"
 #include "RawTensorMath.hlsli"
 #include "RawWorldDynamics.hlsli"
+#include "RawSplitTemporalAerial.hlsli"
 
 Texture2D<float4> CurHdr    : register(t0);
 Texture2D<float>  Depth     : register(t1);
@@ -456,16 +457,18 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float triChromaDrift = (!isActor) ? saturate((chrDelta - (lumDelta * 1.25f + 0.08f)) * 3.2f) : 0.0f;
         const float3 curYStable = lerp(curY, rgbToYCoCg(tonemapKaris(max(curRgb * cavityScale, 0.0f.xxx))), triChromaDrift * 0.45f * saturate(speedRamp + mvDivDisocc));
 
-        // Tightened YCoCg Ellipsoid + Variance Clipping (Wave 66 anti-outline silhouette guard):
-        // On high motion-divergence silhouettes (mvDivPx > 1.5), clamp neighborhood variance box cleanly toward
-        // coplanar local mean rather than darkest cross-depth outlier so moving silhouettes NEVER form dark rims!
+        // Tightened YCoCg Ellipsoid + Variance Clipping (Wave 66 anti-outline silhouette guard)
+        // + Wave 78 Specular-Diffuse Split Temporal Disocclusion Guard:
+        // Separates roughness-adaptive specular reflection parallax clamping from smooth diffuse GI history
+        // so wet stone, snow glint, and water reflections stay razor-sharp without dragging dark trails!
         const float tightDrive = saturate(max(max(speedRamp, mvDivDisocc * 0.95f), reactiveMask));
-        const float gammaClip  = lerp(1.28f, 0.62f, tightDrive);
+        const float baseGammaDiff = lerp(1.28f, 0.62f, tightDrive);
+        const float estRoughW78 = isWater ? 0.06f : (isMetal ? 0.18f : clamp(1.0f - saturate(specTap.x * 0.85f), 0.14f, 0.95f));
+        const float specLobeW78 = (!isActor && !isFoliage) ? saturate(max(specPeakW, (isWater ? 0.85f : 0.0f))) : 0.0f;
         const float silDivW    = smoothstep(1.20f, 2.50f, mvDivPx);
         const float3 silMeanY  = lerp(m1, copMeanY, silDivW);
         const float3 silMinY   = lerp(nMinY, max(copMinY, copMeanY - stdDev * 0.45f), silDivW);
         const float3 silMaxY   = lerp(nMaxY, min(copMaxY, copMeanY + stdDev * 0.45f), silDivW);
-        const float3 clippedY  = clipYCoCgEllipse(min(silMinY, curY), max(silMaxY, curY), silMeanY, stdDev, gammaClip, prevY);
 
         // Material-aware & reactive history flush (zero dark outline/trails on moving actors, creatures, dogs & weapons!):
         const float actorReact = isActor ? (0.52f + speedRamp * 0.44f) : 0.0f;
@@ -476,7 +479,12 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
                                                                     : (isFoliage ? lerp(0.32f, 0.90f, speedRamp)
                                                                                  : (isIceLike > 0.25f ? lerp(0.24f, 0.84f, speedRamp)
                                                                                                       : lerp(0.26f, 0.88f, speedRamp)))));
-        const float alpha = saturate(max(baseAlpha, reactiveFinal));
+        const float diffAlphaIn = saturate(max(baseAlpha, reactiveFinal));
+        const RawSplitTemporalGuard splitW78 = rawEvalSplitTemporalGuard(
+            estRoughW78, specLobeW78, speedPx, mvDivPx, disocc, baseGammaDiff, diffAlphaIn);
+        const float gammaClip  = splitW78.gammaEff;
+        const float3 clippedY  = clipYCoCgEllipse(min(silMinY, curY), max(silMaxY, curY), silMeanY, stdDev, gammaClip, prevY);
+        const float alpha = splitW78.alphaEff;
         const float3 blendedY = lerp(clippedY, curYStable, alpha);
         // Wave 73: Deja-inspired null-space 10-step chromatic/luminance anti-drift guard.
         // Clamps blended YCoCg chroma within the [cur, clipped] saturation envelope (zero bloom-bleed)

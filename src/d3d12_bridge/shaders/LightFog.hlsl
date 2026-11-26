@@ -15,6 +15,7 @@
 #include "RawWeatherAtmo.hlsli"
 #include "RawCosmosSky.hlsli"
 #include "RawSpells3D.hlsli"
+#include "RawSplitTemporalAerial.hlsli"
 
 Texture2D<float4> Lit         : register(t0);
 Texture2D<float>  Depth       : register(t1);
@@ -1299,8 +1300,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Exact front-to-back Beer-Lambert composition:
         //   lit * (froxT * Tfar) + froxScat (0..42k 3D volume) + farInScat (42k..horizon, attenuated by froxT) + shafts
-        //   composed with dynamic mountain/valley weather fog, sub-zero thermal steam wisps, then scene-anchored 3D fire & smoke!
-        const float3 farInScat = atmoCol * (1.0f.xxx - Tfar) * froxT;
+        //   composed with dynamic mountain/valley weather fog, Wave 78 analytical height-fog aerial coupling, then 3D fire/smoke!
+        const RawAerialHeightFogResult aerialW78 = rawEvalAnalyticalAerialHeightFog(
+            camPosW.z + eye.z, w.z, max(dist - 12000.0f, 0.0f), tideWaterZ,
+            baseSigma * 0.65f, lerp(2200.0f, 4200.0f, saturate(clouds.x * 0.6f + weather.w * 0.4f)),
+            fogCloudVis, cosSunF, atmoCol, uSunF, nightF);
+        const float aerialMixW = smoothstep(12000.0f, 55000.0f, dist) * 0.35f;
+        const float3 farTCombined = lerp(Tfar, aerialW78.transmittance.xxx, aerialMixW);
+        const float3 farInScat = lerp(atmoCol * (1.0f.xxx - Tfar), aerialW78.inScatter, aerialMixW) * froxT;
+        T = froxT * farTCombined;
         const float dynW = 0.52f * smoothstep(260.0f, 1800.0f, dist);
         const float dynT = lerp(1.0f, dynFog.transmittance, dynW);
         const float3 dynScatRaw = dynFog.inscatter * (dynW * lerp(0.55f, 1.0f, froxT));

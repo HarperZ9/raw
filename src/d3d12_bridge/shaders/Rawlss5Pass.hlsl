@@ -464,7 +464,30 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
                                                                                                       : lerp(0.26f, 0.88f, speedRamp)))));
         const float alpha = saturate(max(baseAlpha, reactiveFinal));
         const float3 blendedY = lerp(clippedY, curYStable, alpha);
-        recon = sanitizeFiniteRgb(invTonemapKaris(max(yCoCgToRgb(blendedY), 0.0f.xxx)));
+        // Wave 73: Deja-inspired null-space 10-step chromatic/luminance anti-drift guard.
+        // Clamps blended YCoCg chroma within the [cur, clipped] saturation envelope (zero bloom-bleed)
+        // and projects out Jensen-inequality Karis darkening along the linear-energy null-space while
+        // staying strictly bounded inside [min, max] luminance (firefly-safe & dark-bark-safe).
+        const float maxChromaEnv = max(length(curYStable.yz), length(clippedY.yz));
+        const float blendChromaMag = length(blendedY.yz);
+        const float chromaKeep = (blendChromaMag > maxChromaEnv && blendChromaMag > 1.0e-5f) ? (maxChromaEnv / blendChromaMag) : 1.0f;
+        const float3 blendedYConserv = float3(blendedY.x, blendedY.yz * chromaKeep);
+        recon = sanitizeFiniteRgb(invTonemapKaris(max(yCoCgToRgb(blendedYConserv), 0.0f.xxx)));
+        const float3 clippedLinRgb = sanitizeFiniteRgb(invTonemapKaris(max(yCoCgToRgb(clippedY), 0.0f.xxx)));
+        const float3 curStabLinRgb = sanitizeFiniteRgb(invTonemapKaris(max(yCoCgToRgb(curYStable), 0.0f.xxx)));
+        const float clippedLinL = max(dot(clippedLinRgb, float3(0.2126f, 0.7152f, 0.0722f)), 0.0f);
+        const float curStabLinL = max(dot(curStabLinRgb, float3(0.2126f, 0.7152f, 0.0722f)), 0.0f);
+        const float reconLinL = max(dot(recon, float3(0.2126f, 0.7152f, 0.0722f)), 0.0f);
+        const float maxPairLinL = max(clippedLinL, curStabLinL);
+        const float minPairLinL = min(clippedLinL, curStabLinL);
+        const float antiDriftGate = smoothstep(0.015f, 0.06f, reconLinL)
+                                  * (1.0f - smoothstep(4.0f, 8.0f, maxPairLinL))
+                                  * (1.0f - saturate(max(disocc, reactiveFinal) * 0.85f));
+        if (antiDriftGate > 1.0e-3f && reconLinL > 1.0e-4f) {
+            const float targetLinL = clamp(lerp(clippedLinL, curStabLinL, alpha), minPairLinL, maxPairLinL);
+            const float rawDriftCorr = clamp(targetLinL / reconLinL, 0.90f, 1.25f);
+            recon = sanitizeFiniteRgb(recon * lerp(1.0f, rawDriftCorr, antiDriftGate));
+        }
 
         // Zero-Lag Disocclusion Split-Manifold Prior + Native-Resolution Albedo Sharpness Preservation:
         // Suppresses priorRgb on moving silhouette divergence & high reactiveMask so dynamic FX stay razor-sharp!

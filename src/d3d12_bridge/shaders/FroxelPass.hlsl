@@ -449,7 +449,30 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             const float scatRel = abs(prevScatL - curScatL) / max(max(prevScatL, curScatL), 1.0e-5f);
             const float disocc = max(smoothstep(0.45f, 1.35f, sigRel), smoothstep(0.55f, 1.45f, scatRel));
             const float histKeep = (1.0f - lerp(0.22f, 0.84f, max(motMag, disocc))) * edgeFade;
-            curVoxel = lerp(curVoxel, prevVoxel, saturate(histKeep));
+            const float wHist = saturate(histKeep);
+            // Wave 73: Albedo-preserving 10-step volumetric anti-drift guard (Deja null-space energy conservation).
+            // Blending pre-multiplied (inScat * sigma, sigma) directly across fog density transitions darkens
+            // shafts or bleeds bloom energy over 10+ frames; preserve scattering radiance inside the exact
+            // convex hull of [curRad, prevRad] and bound blended scattering luminance within [min, max].
+            const float curExt = max(curVoxel.a, 0.0f);
+            const float prevExt = max(prevVoxel.a, 0.0f);
+            const float blendExt = lerp(curExt, prevExt, wHist);
+            const float3 curRad = (curExt > 1.0e-6f) ? (curVoxel.rgb / curExt) : inScat;
+            const float3 prevRad = (prevExt > 1.0e-6f) ? (prevVoxel.rgb / prevExt) : curRad;
+            const float3 radMin = min(curRad, prevRad);
+            const float3 radMax = max(curRad, prevRad);
+            const float3 blendRad = clamp(lerp(curRad, prevRad, wHist), radMin, radMax);
+            const float3 rawBlendRgb = lerp(curVoxel.rgb, prevVoxel.rgb, wHist);
+            const float3 albBlendRgb = blendRad * blendExt;
+            const float denseGate = smoothstep(1.0e-6f, 2.5e-5f, min(curExt, prevExt));
+            float3 safeScatRgb = lerp(rawBlendRgb, albBlendRgb, denseGate * 0.65f);
+            const float safeScatL = dot(safeScatRgb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float minScatL = min(curScatL, prevScatL);
+            const float maxScatL = max(curScatL, prevScatL);
+            if (safeScatL > 1.0e-6f && (safeScatL < minScatL || safeScatL > maxScatL)) {
+                safeScatRgb *= clamp(safeScatL, minScatL, maxScatL) / safeScatL;
+            }
+            curVoxel = float4(safeScatRgb, blendExt);
         }
     }
     return sanitizeFroxel4(curVoxel);

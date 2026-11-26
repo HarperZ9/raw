@@ -282,7 +282,25 @@ void cs_tsr_resolve(uint3 dtid : SV_DispatchThreadID)
 
     const float  histWeight = saturate(1.0f - curAlpha);
     const float3 blendedYcc = lerp(curYCoCg, clippedHistYcc, histWeight);
-    const float3 resolved   = ToneExpand(YCoCgToRgb(blendedYcc));
+    // Wave 73: Deja-inspired null-space 10-step chromatic/luminance anti-drift guard.
+    const float  maxChromaEnv  = max(length(curYCoCg.yz), length(clippedHistYcc.yz));
+    const float  blendChroma   = length(blendedYcc.yz);
+    const float  chromaScale   = (blendChroma > maxChromaEnv && blendChroma > 1.0e-5f) ? (maxChromaEnv / blendChroma) : 1.0f;
+    const float3 blendedYccEnv = float3(blendedYcc.x, blendedYcc.yz * chromaScale);
+    float3       resolved      = ToneExpand(YCoCgToRgb(blendedYccEnv));
+    const float  curLinL       = max(Luma709(curHdrRgb), 0.0f);
+    const float  clipLinL      = max(Luma709(ToneExpand(YCoCgToRgb(clippedHistYcc))), 0.0f);
+    const float  resLinL       = max(Luma709(resolved), 0.0f);
+    const float  minPairL      = min(curLinL, clipLinL);
+    const float  maxPairL      = max(curLinL, clipLinL);
+    const float  antiDriftGate = smoothstep(0.015f, 0.06f, resLinL)
+                               * (1.0f - smoothstep(4.0f, 8.0f, maxPairL))
+                               * (1.0f - saturate(max(motionReject, maxReactive) * 0.85f));
+    if (antiDriftGate > 1.0e-3f && resLinL > 1.0e-4f) {
+        const float targetLinL = clamp(lerp(curLinL, clipLinL, histWeight), minPairL, maxPairL);
+        const float driftCorr  = clamp(targetLinL / resLinL, 0.90f, 1.25f);
+        resolved *= lerp(1.0f, driftCorr, antiDriftGate);
+    }
     const float  newConf    = saturate(histConf * (1.0f - 0.5f * motionReject) * (1.0f - maxReactive) + subpixelHit * 0.25f);
 
     OutputTex[dtid.xy] = float4(Sanitize3(resolved), newConf);

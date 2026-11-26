@@ -10,6 +10,7 @@
 
 #include "D3D12Bridge.h"
 #include "HardwareProfile.h"
+#include "RawFramePacing.h"
 #include "../common/raw_engine_profile.h"
 
 namespace raw::bridge {
@@ -58,6 +59,7 @@ struct NativeDx12Capabilities {
     bool supportsAsyncFroxelOverlap = false;
     bool usesReversedZ             = false;
     bool usesMinusMotionVectorSign = false;
+    FramePacingPolicy pacingPolicy{};
 };
 
 struct NativeDx12ValidationResult {
@@ -126,6 +128,7 @@ inline NativeDx12ValidationResult ValidateNativeDx12HostContract(
     res.caps.supportsAsyncFroxelOverlap = (desc.asyncComputeQueue != nullptr) || allowNullGpuPointersForOfflineTest;
     res.caps.usesReversedZ = (rc.depthConvention == raw::versions::DepthConvention::ReversedZ_1to0);
     res.caps.usesMinusMotionVectorSign = (rc.mvSign == raw::versions::MotionVectorSign::MinusUv_PrevEqCurMinusMv);
+    res.caps.pacingPolicy = ResolveFramePacingPolicy(ep);
     return res;
 }
 

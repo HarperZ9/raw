@@ -276,6 +276,9 @@ bool SetGameHour(float hour);
 bool IsMenuPausedOrModal() noexcept;
 bool IsCameraSweepActive() noexcept;
 void SetCameraSweepActiveFlag(bool active) noexcept;
+// Wave 68: Deterministic in-process UIMessageQueue::AddMessage("MessageBoxMenu", kHide, nullptr)
+// so Creation Club / Survival Mode modals dismiss cleanly without OS window focus or SendInput.
+bool DismissMessageBoxMenuInProcess(uint32_t* outAddMsgRva = nullptr) noexcept;
 
 }  // namespace raw::rt
 

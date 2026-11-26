@@ -19,6 +19,9 @@ namespace {
 const uint8_t* g_base = nullptr;
 // from the version table at ViewInit; a part whose address is 0 reads as not available
 uint32_t kGraphicsState = 0, kPlayerCamera = 0, kPlayer = 0, kGetSky = 0, kCalendar = 0, kWorldSpace = 0, kUiSingleton = 0;
+uint32_t kUiMessageQueue = 0, kInterfaceStrings = 0, kAddUiMessageRva = 0;
+uint64_t kMessageBoxVtableVa = 0;
+uint32_t kMessageBoxBtnPressRva = 0;
 uint32_t kCellWaterHeightOff = 0x78u, kWorldDefaultWaterOff = 0x214u;
 uint64_t g_frame = 0;
 EngineView g_view{};
@@ -317,6 +320,187 @@ bool SehSetGameHour(float hour) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+uint32_t DiscoverAddUiMessageRva(const Image& img, uint32_t uiMqRva) {
+    if (!img.base || !uiMqRva || img.textEnd <= img.textBegin + 32u) return 0u;
+    std::unordered_map<uint32_t, uint32_t> counts;
+    const uint8_t* base = img.base;
+    const uint32_t limit = img.textEnd - 12u;
+    for (uint32_t rva = img.textBegin; rva < limit; ++rva) {
+        // Match: 48 8B 0D <disp32> (mov rcx, [rip + disp32]) loading UIMessageQueue::Singleton.
+        if (base[rva] == 0x48u && base[rva + 1u] == 0x8Bu && base[rva + 2u] == 0x0Du) {
+            int32_t disp = 0;
+            std::memcpy(&disp, base + rva + 3u, sizeof(disp));
+            const int64_t target = static_cast<int64_t>(rva) + 7 + static_cast<int64_t>(disp);
+            if (target != static_cast<int64_t>(uiMqRva)) continue;
+            const uint32_t scanEnd = std::min(rva + 36u, img.textEnd - 5u);
+            for (uint32_t j = rva + 7u; j < scanEnd; ++j) {
+                if (base[j] == 0xE8u) {
+                    int32_t rel = 0;
+                    std::memcpy(&rel, base + j + 1u, sizeof(rel));
+                    const int64_t callee = static_cast<int64_t>(j) + 5 + static_cast<int64_t>(rel);
+                    if (callee >= static_cast<int64_t>(img.textBegin) && callee < static_cast<int64_t>(img.textEnd)) {
+                        ++counts[static_cast<uint32_t>(callee)];
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    uint32_t bestRva = 0u, bestCount = 0u;
+    for (const auto& [callee, cnt] : counts) {
+        if (cnt > bestCount) { bestCount = cnt; bestRva = callee; }
+    }
+    return (bestCount >= 40u) ? bestRva : 0u;
+}
+
+void DiscoverMessageBoxButtonPress(const Image& img, uint64_t& outVtblVa, uint32_t& outBtnPressRva) {
+    outVtblVa = 0;
+    outBtnPressRva = 0;
+    if (!img.base || img.sizeOfImage < 0x1000u || img.textEnd <= img.textBegin + 64u) return;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(img.base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(img.base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+    const auto* secs = IMAGE_FIRST_SECTION(nt);
+    uint32_t rdataBegin = 0, rdataEnd = 0, dataBegin = 0, dataEnd = 0;
+    for (uint16_t i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        if (std::strncmp(reinterpret_cast<const char*>(secs[i].Name), ".rdata", 6) == 0) {
+            rdataBegin = secs[i].VirtualAddress;
+            rdataEnd   = rdataBegin + std::max(secs[i].Misc.VirtualSize, secs[i].SizeOfRawData);
+        } else if (std::strncmp(reinterpret_cast<const char*>(secs[i].Name), ".data", 5) == 0) {
+            dataBegin = secs[i].VirtualAddress;
+            dataEnd   = dataBegin + std::max(secs[i].Misc.VirtualSize, secs[i].SizeOfRawData);
+        }
+    }
+    if (rdataEnd <= rdataBegin + 24u || dataEnd <= dataBegin + 24u) return;
+    const uintptr_t baseAddr = reinterpret_cast<uintptr_t>(img.base);
+    const uint64_t rdataLo = static_cast<uint64_t>(baseAddr) + rdataBegin;
+    const uint64_t rdataHi = static_cast<uint64_t>(baseAddr) + rdataEnd;
+    __try {
+    for (uint32_t rva = (rdataBegin + 7u) & ~7u; rva + 24u <= rdataEnd; rva += 8u) {
+        const uint64_t colVa = *reinterpret_cast<const uint64_t*>(img.base + rva);
+        if (colVa < rdataLo || colVa >= rdataHi || (rdataHi - colVa) < 24u) continue;
+        const uint32_t colRva = static_cast<uint32_t>(colVa - static_cast<uint64_t>(baseAddr));
+        const auto* col = reinterpret_cast<const uint32_t*>(img.base + colRva);
+        if (col[0] != 1u || col[1] != 0u || col[5] != colRva) continue;
+        const uint32_t tdRva = col[3];
+        if (tdRva < dataBegin || tdRva >= dataEnd || (dataEnd - tdRva) < 40u) continue;
+        const char* mangled = reinterpret_cast<const char*>(img.base + tdRva + 16u);
+        if (std::strncmp(mangled, ".?AVMessageBoxMenu@@", 21) != 0) continue;
+        const uint64_t fn0 = *reinterpret_cast<const uint64_t*>(img.base + rva + 8u);
+        const uint64_t fn1 = *reinterpret_cast<const uint64_t*>(img.base + rva + 16u);  // slot[1] = Accept
+        if (fn0 < baseAddr + img.textBegin || fn0 >= baseAddr + img.textEnd) continue;
+        if (fn1 < baseAddr + img.textBegin || fn1 >= baseAddr + img.textEnd) continue;
+        const uint32_t acceptRva = static_cast<uint32_t>(fn1 - baseAddr);
+        const uint32_t scanEnd = std::min(acceptRva + 96u, img.textEnd - 7u);
+        for (uint32_t j = acceptRva; j < scanEnd; ++j) {
+            // Match: 4C 8D 05 <disp32> (lea r8, [rip + disp32]) registering MessageBoxMenu::ButtonPress
+            if (img.base[j] == 0x4Cu && img.base[j + 1u] == 0x8Du && img.base[j + 2u] == 0x05u) {
+                int32_t disp = 0;
+                std::memcpy(&disp, img.base + j + 3u, sizeof(disp));
+                const int64_t cb = static_cast<int64_t>(j) + 7 + static_cast<int64_t>(disp);
+                if (cb >= static_cast<int64_t>(img.textBegin) && cb < static_cast<int64_t>(img.textEnd)) {
+                    outVtblVa = baseAddr + rva + 8u;
+                    outBtnPressRva = static_cast<uint32_t>(cb);
+                    return;
+                }
+            }
+        }
+    }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        outVtblVa = 0;
+        outBtnPressRva = 0;
+    }
+}
+
+bool SehDismissMessageBoxMenuInProcess(uint32_t* outAddMsgRva) {
+    if (outAddMsgRva) *outAddMsgRva = kMessageBoxBtnPressRva ? kMessageBoxBtnPressRva : kAddUiMessageRva;
+    __try {
+        if (!g_base) return false;
+        // 1. Primary Wave 68 path: locate live MessageBoxMenu* in UI::Singleton->menuStack (+0x110/+0x118/+0x120)
+        //    by exact RTTI vtable match and invoke MessageBoxMenu::ButtonPress("No" = buttonIndex 1.0) directly.
+        //    This pops MessageBoxData from Skyrim's global queue, queues kHide, and fires callback->Run(1)
+        //    so Creation Club Survival Mode closes permanently without OS focus or SendInput!
+        if (kUiSingleton && kMessageBoxVtableVa && kMessageBoxBtnPressRva) {
+            if (const uint8_t* ui = At<const uint8_t*>(g_base, kUiSingleton)) {
+                const auto* stackData = At<const uint64_t*>(ui, 0x110u);
+                const uint32_t stackCap = At<uint32_t>(ui, 0x118u);
+                const uint32_t stackSz  = At<uint32_t>(ui, 0x120u);
+                if (stackData && stackSz > 0u && stackSz < 64u && stackCap < 256u && stackSz <= stackCap) {
+                    for (uint32_t i = 0u; i < stackSz; ++i) {
+                        const uint64_t menuPtr = stackData[i];
+                        if (menuPtr < 0x10000ull || menuPtr > 0x00007FFFFFFFFFFFull) continue;
+                        const uint64_t vtbl = *reinterpret_cast<const uint64_t*>(menuPtr);
+                        if (vtbl == kMessageBoxVtableVa) {
+                            struct FakeGFxValue {
+                                uint64_t pad0;
+                                uint64_t type;
+                                double   num;
+                            };
+                            struct FakeFxArgs {
+                                uint64_t      pad0;
+                                uint64_t      pad1;
+                                uint64_t      pad2;
+                                void*         menu;
+                                uint64_t      pad4;
+                                FakeGFxValue* args;
+                                uint32_t      nargs;
+                                uint32_t      pad6;
+                            };
+                            static_assert(offsetof(FakeGFxValue, num) == 0x10u);
+                            static_assert(offsetof(FakeFxArgs, menu) == 0x18u);
+                            static_assert(offsetof(FakeFxArgs, args) == 0x28u);
+                            FakeGFxValue val{};
+                            val.type = 3u;     // GFxValue::VT_Number
+                            val.num  = 1.0;    // buttonIndex 1 = "No" (or dismiss on 1-button OK boxes)
+                            FakeFxArgs fxArgs{};
+                            fxArgs.menu  = reinterpret_cast<void*>(menuPtr);
+                            fxArgs.args  = &val;
+                            fxArgs.nargs = 1u;
+                            using ButtonPressFn = void (*)(const FakeFxArgs* args);
+                            auto fn = reinterpret_cast<ButtonPressFn>(const_cast<uint8_t*>(g_base) + kMessageBoxBtnPressRva);
+                            fn(&fxArgs);
+                            if (outAddMsgRva) *outAddMsgRva = kMessageBoxBtnPressRva;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        // 2. Fallback path: UIMessageQueue::AddMessage("MessageBoxMenu", kHide, nullptr).
+        if (!kUiMessageQueue || !kInterfaceStrings || !kAddUiMessageRva) return false;
+        void* uimq = At<void*>(g_base, kUiMessageQueue);
+        const uint8_t* ifs = At<const uint8_t*>(g_base, kInterfaceStrings);
+        if (!uimq || !ifs) return false;
+
+        auto isMessageBoxStr = [](const uint8_t* baseIfs, uint32_t off) -> bool {
+            const char* s = At<const char*>(baseIfs, off);
+            if (!s) return false;
+            const uintptr_t p = reinterpret_cast<uintptr_t>(s);
+            if (p < 0x10000ull || p > 0x00007FFFFFFFFFFFull) return false;
+            return std::strncmp(s, "MessageBoxMenu", 15) == 0;
+        };
+
+        uint32_t strOff = 0u;
+        if (isMessageBoxStr(ifs, 0xB8u)) {
+            strOff = 0xB8u;
+        } else {
+            for (uint32_t off = 0x08u; off <= 0x3F8u; off += 8u) {
+                if (isMessageBoxStr(ifs, off)) { strOff = off; break; }
+            }
+        }
+        if (strOff == 0u) return false;
+
+        using AddUiMessageFn = void (*)(void* self, const void* bsFixedMenuName, uint32_t msgType, void* data);
+        auto fn = reinterpret_cast<AddUiMessageFn>(const_cast<uint8_t*>(g_base) + kAddUiMessageRva);
+        fn(uimq, ifs + strOff, 3u /* UI_MESSAGE_TYPE::kHide */, nullptr);
+        if (outAddMsgRva) *outAddMsgRva = kAddUiMessageRva;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 }  // namespace
 
 void ViewInit(const Image& img) {
@@ -327,6 +511,10 @@ void ViewInit(const Image& img) {
     if (const uint32_t wh = Off("off:TESObjectCELL::waterHeight")) kCellWaterHeightOff = wh;
     if (const uint32_t dw = Off("off:TESWorldSpace::defaultWaterHeight")) kWorldDefaultWaterOff = dw;
     kUiSingleton = Addr("UI::Singleton");
+    kUiMessageQueue = Addr("UIMessageQueue::Singleton");
+    kInterfaceStrings = Addr("InterfaceStrings::Singleton");
+    kAddUiMessageRva = DiscoverAddUiMessageRva(img, kUiMessageQueue);
+    DiscoverMessageBoxButtonPress(img, kMessageBoxVtableVa, kMessageBoxBtnPressRva);
     if (HMODULE proxy = GetModuleHandleA("d3d11.dll")) {
         g_setCam = reinterpret_cast<SetCamFn>(GetProcAddress(proxy, "PG_SetEngineCamera"));
         g_setWorld = reinterpret_cast<SetWorldFn>(GetProcAddress(proxy, "PG_SetEngineWorld"));
@@ -424,6 +612,10 @@ bool IsCameraSweepActive() noexcept {
 
 void SetCameraSweepActiveFlag(bool active) noexcept {
     g_sweepActiveFlag.store(active, std::memory_order_release);
+}
+
+bool DismissMessageBoxMenuInProcess(uint32_t* outAddMsgRva) noexcept {
+    return SehDismissMessageBoxMenuInProcess(outAddMsgRva);
 }
 
 std::string ViewJson() {

@@ -395,7 +395,14 @@ RawMaterialEvalResult evalFrostGlacier3D(
                          + (fractureScatter + bubbleVeil) * clamp(baseLum * 1.32f + 0.26f, 0.34f, 1.28f);
 
     const float frostBlend = saturate(max(dust * 0.52f, hoarEdge * 0.28f));
-    const float3 finalAlbedo = saturate(lerp(iceBody, float3(0.76f, 0.86f, 0.94f), frostBlend));
+    const float3 rawIceAlb = lerp(iceBody, float3(0.68f, 0.78f, 0.86f), frostBlend);
+    // Wave 68: Smooth physical dielectric albedo soft-shoulder (prevents hard G/B=1.00 clipping
+    // on un-SSAO glacial cave walls while preserving translucent sapphire-cyan chroma).
+    const float maxIceC = max(rawIceAlb.r, max(rawIceAlb.g, rawIceAlb.b));
+    const float softIceScale = (maxIceC > 0.50f)
+        ? ((0.50f + 0.28f * ((maxIceC - 0.50f) / (maxIceC - 0.50f + 0.45f))) / maxIceC)
+        : 1.0f;
+    const float3 finalAlbedo = saturate(rawIceAlb * softIceScale);
     const float3 finalSpecAdd = min(safeLight * (Fdie * (specLobe * 0.46f + crystalSheen * 0.16f) + rimCrystalSpec + flakeGlint.xxx + bubbleGlint * 0.68f) + sssGlow, 3.2f.xxx);
 
     res.albedo = all(isfinite(finalAlbedo)) ? finalAlbedo : safeBase;

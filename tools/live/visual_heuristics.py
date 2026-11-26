@@ -157,13 +157,13 @@ def _match_shape(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def _hud_valid_mask(h: int, w: int) -> np.ndarray:
     """Boolean mask excluding static Skyrim HUD pixels:
     - Top compass bar (`y < 0.11 * h`)
-    - Center 18x18 crosshair box (`cy-9..cy+9, cx-9..cx+9`) on frames >= 64px.
+    - Center crosshair box (`cy-half..cy+half, cx-half..cx+half`, up to 40x40 at 1080p) on frames >= 64px.
     """
     mask = np.ones((h, w), dtype=bool)
     top_cut = int(h * 0.11)
     if top_cut > 0:
         mask[:top_cut, :] = False
-    half = min(9, max(2, min(h, w) // 20)) if min(h, w) >= 64 else 0
+    half = min(20, max(2, min(h, w) // 20)) if min(h, w) >= 64 else 0
     if half > 0:
         cy, cx = h // 2, w // 2
         mask[max(0, cy - half) : min(h, cy + half), max(0, cx - half) : min(w, cx + half)] = False

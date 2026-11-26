@@ -1211,9 +1211,9 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (iceNear > 0.02f) {
                 const RawMaterialEvalResult glac = evalFrostGlacier3D(
                     wpAbsI, s.n, s.v, iceLDir, iceLCol, albedo, lerp(14.0f, 44.0f, iceNear), saturate(wet.snow * 0.65f));
-                // Preserve 75%+ of Skyrim's authored glacial ice wall relief and shading while layering static Beer-Lambert depth:
+                // Preserve Skyrim's authored glacial ice wall relief and shading while layering static Beer-Lambert depth:
                 s.n     = normalize(lerp(s.n, glac.normal, iceMask * iceNear * 0.45f));
-                albedo  = lerp(albedo, glac.albedo, iceMask * (0.34f + 0.28f * iceNear));
+                albedo  = lerp(albedo, glac.albedo, iceMask * (0.42f + 0.30f * iceNear));
                 s.alpha = lerp(s.alpha, glac.roughness, iceMask * 0.85f);
             } else {
                 // Distant glacial ice (z >= 2200u): cheap static Warren & Brandt sapphire-turquoise optical body.
@@ -1221,6 +1221,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 farGlac = float3(0.055f, 0.215f, 0.345f) * lerp(0.78f, 1.14f, nvIce);
                 albedo  = lerp(albedo, farGlac, iceMask * 0.38f);
                 s.alpha = lerp(s.alpha, 0.22f, iceMask * 0.80f);
+            }
+            // Wave 68: Physical PBR dielectric albedo highlight rolloff for bright glacial ice walls
+            // (prevents un-SSAO cave ice albedo from exceeding 0.88 sRGB while preserving translucent cyan hue).
+            const float iceMaxC = max(albedo.r, max(albedo.g, albedo.b));
+            if (iceMaxC > 0.58f) {
+                const float iceSoft = 0.58f + 0.18f * ((iceMaxC - 0.58f) / (iceMaxC - 0.58f + 0.30f));
+                albedo *= lerp(1.0f, iceSoft / iceMaxC, saturate(iceMask * 1.25f));
             }
             s.f0 = lerp(s.f0, 0.018f, iceMask * 0.88f);
             s.mask = max(s.mask, iceMask * 0.76f);

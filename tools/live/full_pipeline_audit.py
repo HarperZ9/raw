@@ -462,16 +462,23 @@ def dismiss_survival_modal_if_paused(
         if not paused and not (force_check_first and attempt == 0 and v is None):
             break
         emit_dismiss_modal(game_dir)
+        dismissed_any = True
+        time.sleep(0.25)
+        v_after = query_engine_view_state(game_dir, engine_out, timeout_sec=1.5)
+        still_paused = (v_after is not None) and (
+            int(v_after.get("menu_paused", 0)) != 0 or int(v_after.get("menu_stack_depth", 1)) > 1
+        )
+        if v_after is not None and not still_paused:
+            break
+        # Fallback if in-process UIMessageQueue kHide did not close a non-MessageBox modal
         pid = proc.pid if (proc is not None and proc.poll() is None) else None
-        # Click "No" button at (0.531, 0.761) inside Skyrim's MessageBoxMenu, then fallback Right -> Enter
         _click_skyrim_client_frac(pid, fx=0.531, fy=0.761, hold_sec=0.06)
         time.sleep(0.15)
         if _focus_skyrim_window(pid):
             _send_win32_scancode_key(0x4D, extended=True, hold_sec=0.07)   # Right Arrow
             time.sleep(0.12)
             _send_win32_scancode_key(0x1C, extended=False, hold_sec=0.07)  # Enter
-        dismissed_any = True
-        time.sleep(0.30)
+        time.sleep(0.25)
     return dismissed_any
 
 

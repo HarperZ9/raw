@@ -318,11 +318,15 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(jb);
         } else if (op == "dismiss_modal") {
             const HWND hwnd = FindMainGameWindow();
-            TriggerModalDismiss(g_modalDismiss);
-            char jb[192];
+            uint32_t addRva = 0u;
+            const bool uiQueued = DismissMessageBoxMenuInProcess(&addRva);
+            if (!uiQueued) TriggerModalDismiss(g_modalDismiss);
+            char jb[256];
             std::snprintf(jb, sizeof jb,
-                          "{\"cmd\":\"dismiss_modal\",\"ok\":%s,\"hwnd_found\":%s,\"auto_dismiss\":%s}",
-                          hwnd ? "true" : "false", hwnd ? "true" : "false",
+                          "{\"cmd\":\"dismiss_modal\",\"ok\":%s,\"ui_queued\":%s,\"add_msg_rva\":\"0x%X\",\"hwnd_found\":%s,\"auto_dismiss\":%s}",
+                          (uiQueued || hwnd) ? "true" : "false",
+                          uiQueued ? "true" : "false", addRva,
+                          hwnd ? "true" : "false",
                           g_modalDismiss.autoDismissEnabled ? "true" : "false");
             Result(jb);
         } else if (op == "auto_dismiss") {
@@ -435,9 +439,18 @@ void ControlOnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
     }
     if (g_busy) Step(ctx, sc);
     {
-        const ModalKeyAction act = StepModalDismissState(g_modalDismiss, IsMenuPausedOrModal(), g_camSweep.active);
-        if (act != ModalKeyAction::None) {
-            if (const HWND hwnd = FindMainGameWindow()) {
+        const bool pausedNow = IsMenuPausedOrModal();
+        const ModalKeyAction act = StepModalDismissState(g_modalDismiss, pausedNow, g_camSweep.active);
+        if (act != ModalKeyAction::None && pausedNow) {
+            uint32_t addRva = 0u;
+            const bool uiQueued = (act == ModalKeyAction::PostRight) && DismissMessageBoxMenuInProcess(&addRva);
+            if (uiQueued) {
+                char jb[192];
+                std::snprintf(jb, sizeof jb,
+                              "{\"cmd\":\"dismiss_modal\",\"event\":\"ui_hide_queued\",\"ok\":true,\"add_msg_rva\":\"0x%X\",\"count\":%u}",
+                              addRva, g_modalDismiss.dismissedCount + 1u);
+                Result(jb);
+            } else if (const HWND hwnd = FindMainGameWindow()) {
                 const UINT vk = (act == ModalKeyAction::PostRight) ? VK_RIGHT : VK_RETURN;
                 PostBackgroundVirtualKey(hwnd, vk);
                 if (act == ModalKeyAction::PostReturn) {

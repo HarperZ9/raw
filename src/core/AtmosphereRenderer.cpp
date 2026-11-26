@@ -1014,9 +1014,10 @@ void AtmosphereRenderer::RenderCelestials(float sunZenithCos, float sunAzimuth)
 
 void AtmosphereRenderer::ExecuteSkyPass(PassContext& ctx)
 {
-    // TODO: Replace game sky shader with physically-based evaluation
-    // using the precomputed LUTs. For now, LUTs are available to any
-    // shader that samples t23/t24.
+    // Legacy D3D11 pass stub: live physically-based sky & atmosphere evaluation runs
+    // natively in the DX12 bridge (LightFog.hlsl / EnvCubePass.hlsl / RawWeatherAtmo.hlsli).
+    // Precomputed D3D11 LUTs remain bound at t23/t24 for any legacy consumers.
+    (void)ctx;
 }
 
 } // namespace SB

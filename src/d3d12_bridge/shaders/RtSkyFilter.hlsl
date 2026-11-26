@@ -280,13 +280,32 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (any(tc < 0) || tc.x >= int(dims.x) || tc.y >= int(dims.y)) { continue; }
                 const float4 shc = SunHistIn[tc];
                 if (all(isfinite(shc)) && shc.y > 0.0f && abs(shc.y - zClamped) <= zTol) {
-                    sSum += 0.22f * saturate(shc.x);
-                    sW += 0.22f;
+                    sSum += 0.24f * saturate(shc.x);
+                    sW += 0.24f;
                 }
             }
             pastSun = saturate(sSum / sW);
             pastSunN = hsunN / hsunW;
             haveSun = true;
+        } else if (mvDivPx < 1.05f) {
+            // Wave 74: Thin-foliage / grass sub-pixel fallback on read-only SunHistIn during rigid camera pan
+            // (prevents 1-pixel swaying grass/needle depth misses from hard-resetting sun shadow to 0/1 binary noise).
+            float fbSum = 0.0f, fbW = 0.0f;
+            static const int2 kFbOff[4] = { int2(-1, 0), int2(1, 0), int2(0, -1), int2(0, 1) };
+            [unroll] for (int fi = 0; fi < 4; ++fi) {
+                const int2 tc = pb + kFbOff[fi];
+                if (any(tc < 0) || tc.x >= int(dims.x) || tc.y >= int(dims.y)) { continue; }
+                const float4 shc = SunHistIn[tc];
+                if (all(isfinite(shc)) && shc.y > 0.0f && abs(shc.y - zClamped) <= zTol * 2.2f) {
+                    fbSum += saturate(shc.x);
+                    fbW += 1.0f;
+                }
+            }
+            if (fbW > 0.5f) {
+                pastSun = saturate(fbSum / fbW);
+                pastSunN = 4.0f;
+                haveSun = true;
+            }
         }
     }
 
@@ -357,17 +376,19 @@ void main(uint3 id : SV_DispatchThreadID) {
     const float3 skyAuroraTint = sanitizeSkyRgb(evalNightAuroraSkyBounce(vis));
     const float3 bOutDisplay = min(bFiltered + skyAuroraTint, 1.85f.xxx);
 
-    // Wave 69 + Wave 70: Motion-reprojected temporal exterior sun-shadow stabilization (zero read/write race:
+    // Wave 69 + Wave 70 + Wave 74: Motion-reprojected temporal exterior sun-shadow stabilization (zero read/write race:
     // Vis is read & written strictly at own pixel p; SunHistIn/SunHistOut ping-pong cleanly).
+    // Note: Vis.x carries pure geometric/foliage DXR sun visibility (volumetric cloudTransL is applied analytically
+    // in Lighting.hlsl & RtWater.hlsl with zero lag), so never flush geometric shadow history on 2-spp foliage ray noise!
     if (sunColour.w > 0.5f) {
         const float4 rawVis = Vis[p];
         const float curSun = isfinite(rawVis.x) ? saturate(rawVis.x) : 1.0f;
-        const bool sunHardDisocc = (mvDivPx > 1.35f) || !haveSun;
+        const bool sunHardDisocc = (mvDivPx > 1.30f) || !haveSun;
         const float sunN = sunHardDisocc ? 1.0f : min(pastSunN + 1.0f, 16.0f);
         const float sunDelta = haveSun ? abs(curSun - pastSun) : 0.0f;
-        const float sunMvBoost = smoothstep(0.65f, 1.55f, mvDivPx) * 0.85f;
-        const float sunCloudBoost = smoothstep(0.08f, 0.35f, sunDelta) * cloudTransW * 0.45f;
-        const float alphaSun = saturate(max(max(1.0f / sunN, lerp(0.08f, 0.16f, rigidPanFactor)), max(sunMvBoost, sunCloudBoost)));
+        const float sunMvBoost = smoothstep(0.65f, 1.45f, mvDivPx) * 0.88f;
+        const float sunSilSnap = smoothstep(0.70f, 1.35f, mvDivPx) * smoothstep(0.50f, 0.85f, sunDelta) * 0.72f;
+        const float alphaSun = saturate(max(max(1.0f / sunN, lerp(0.065f, 0.11f, rigidPanFactor)), max(sunMvBoost, sunSilSnap)));
         const float filtSun = saturate(haveSun ? lerp(pastSun, curSun, alphaSun) : curSun);
         SunHistOut[p] = float4(filtSun, min(z, 65000.0f), sunN, filtSun * filtSun);
         Vis[p] = float4(filtSun, rawVis.y, rawVis.z, rawVis.w);

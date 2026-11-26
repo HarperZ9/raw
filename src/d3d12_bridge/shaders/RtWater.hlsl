@@ -18,6 +18,7 @@
 #include "RtShadow.hlsl"
 #include "RawProceduralNoise.hlsli"
 #include "RawSeasonsThermals.hlsli"
+#include "RawWorldDynamics.hlsli"
 
 #define Layer Normal
 #define BedAlbedo Spec
@@ -540,21 +541,31 @@ void water(uint3 id : SV_DispatchThreadID) {
                      + refl * crestSheen;
             }
 
+            // Wave 74: Volumetric cloud-shadow extinction & coherent wind-gust roughness coupling on water surface
+            // (attenuates direct sun glint, riverbed caustics & crest SSS under rolling clouds; keeps sky reflection intact).
+            const float cloudTransW = (sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u)
+                ? pow(saturate(cloudShadow(wpW)), 1.25f) : 1.0f;
+            const float4 wGustWater = rawEvalCoherentWindGust4(wpW, cloudWind, weather, camPosW.w);
+            const RawWaterCloudCoupling wCloudCoup = rawEvalWaterCloudRoughnessCoupling(cloudTransW, wGustWater.z, weather.w);
+
             // Triple-lobe GGX sun glint driven by FULL crisp wave normal `n`:
-            // tight mirror sparkle + mid sheen + broad grazing-angle golden glitter road (photos 1/2/4/8) cut sharply by DXR shadows!
+            // tight mirror sparkle + mid sheen + broad grazing-angle golden glitter road (photos 1/2/4/8) cut sharply by DXR + cloud shadows!
             float3 glint = 0.0f;
             const float3 l = sunDir.xyz;
             const float nl = dot(n, l);
             if (sunDir.w > 0.5f && nl > 0.0f && waterA.w > 0.0f) {
                 const float3 hv = normalize(v + l);
                 const float nh = saturate(dot(n, hv));
-                const float dd1 = nh * nh * (0.0035f - 1.0f) + 1.0f;
-                const float dd2 = nh * nh * (0.0220f - 1.0f) + 1.0f;
-                const float dd3 = nh * nh * (0.0750f - 1.0f) + 1.0f;
+                const float a1W = clamp(0.0035f * wCloudCoup.roughScale, 0.0035f, 0.012f);
+                const float a2W = clamp(0.0220f * wCloudCoup.roughScale, 0.0220f, 0.055f);
+                const float a3W = clamp(0.0750f * wCloudCoup.roughScale, 0.0750f, 0.160f);
+                const float dd1 = nh * nh * (a1W - 1.0f) + 1.0f;
+                const float dd2 = nh * nh * (a2W - 1.0f) + 1.0f;
+                const float dd3 = nh * nh * (a3W - 1.0f) + 1.0f;
                 const float lowSunRoad = saturate(1.0f - l.z * 2.2f);
-                const float D = (0.0035f / (PI * dd1 * dd1)) * 0.62f
-                              + (0.0220f / (PI * dd2 * dd2)) * 0.26f
-                              + (0.0750f / (PI * dd3 * dd3)) * (0.12f + 0.34f * lowSunRoad);
+                const float D = (a1W / (PI * dd1 * dd1)) * 0.62f
+                              + (a2W / (PI * dd2 * dd2)) * 0.26f
+                              + (a3W / (PI * dd3 * dd3)) * (0.12f + 0.34f * lowSunRoad);
                 // Wave 47 Crisp Anisotropic River Sun-Glitter across moving cross-stream facets:
                 const float3 rFlow3 = normalize(float3(riverFlowDir, 0.0f));
                 const float3 rPerp3 = float3(-rFlow3.y, rFlow3.x, 0.0f);
@@ -562,7 +573,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float anisoDen = max((thR * thR) / (0.042f * 0.042f) + (bhR * bhR) / (0.165f * 0.165f) + nh * nh, 1.0e-4f);
                 const float dAnisoRiver = (1.0f / (PI * 0.042f * 0.165f * anisoDen * anisoDen)) * (riverFlowSpeed * 0.085f);
                 const float Fh = 0.02f + 0.98f * pow(1.0f - saturate(dot(v, hv)), 5.0f);
-                const float vis = sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f;
+                const float vis = (sunColour.w > 0.5f ? visible(o, l, 0.0f, sunLength) : 1.0f) * wCloudCoup.sunTransmittance;
                 glint = min(sunColour.rgb * ((D + dAnisoRiver) * Fh * nl / (4.0f * max(nv, 0.08f))) * vis, 8.0f.xxx) * waterA.w;
             }
             // Dual-lobe elongated liquid specular reflections on water:
@@ -650,7 +661,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const bool isSeaCaus = (abs((p.z + camPosW.z) - (-14000.0f)) < 450.0f);
                 const float3 throughRGB = evalSpectralWaterTransmittance(depthV + length(pb - p), waterA.z * 0.55f, true, isSeaCaus, saturate(weather.w * 0.5f));
                 const float focus = saturate(depthV / 22.0f) * exp(-min(depthV / 340.0f, 20.0f));
-                const float clearSun = max(1.0f - saturate(clouds.x * 0.80f), 0.22f);
+                const float clearSun = max(1.0f - saturate(clouds.x * 0.80f), 0.22f) * wCloudCoup.causticTransmittance;
                 const float troughFade = saturate(focus * sunVis * clearSun * (1.0f - smoothstep(2600.0f, 5200.0f, wDist)));
                 causTrough = lerp(1.0f.xxx, clamp(jacFocus, 0.62f.xxx, 1.25f.xxx), troughFade * 0.65f);
                 const float3 jacFilament = max(jacFocus - 1.0f.xxx, 0.0f.xxx) * 0.68f + net * 0.72f;
@@ -729,7 +740,7 @@ void water(uint3 id : SV_DispatchThreadID) {
                 const float crestThin = saturate(waveHeight3D * 0.14f + (1.0f - n.z) * 4.4f);
                 const float sssVisW = (isExtBody && sunDir.w > 0.5f) ? (0.30f + 0.70f * pow(saturate(dot(-v, sunDir.xyz)), 2.8f) + 0.35f * saturate(dot(n, sunDir.xyz))) : 0.0f;
                 const float3 waveSSS = (isExtBody && sunDir.w > 0.5f)
-                    ? float3(0.020f, 0.092f, 0.076f) * sunColour.rgb * (sssVisW * crestThin * (1.0f - saturate(clouds.x * 0.72f)) * 0.44f)
+                    ? float3(0.020f, 0.092f, 0.076f) * sunColour.rgb * (sssVisW * crestThin * (1.0f - saturate(clouds.x * 0.72f)) * wCloudCoup.crestSssTransmittance * 0.44f)
                     : 0.0f.xxx;
                 // Wave 38 + Wave 64 Weighty Organic Cellular Lacy Foam (~0.25x speed, coherent SWE advection):
                 const float wtF = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;

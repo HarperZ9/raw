@@ -15,6 +15,7 @@
 #include "CloudCommon.hlsli"
 #include "StrataBRDF.hlsli"
 #include "SpectralTransport.hlsli"
+#include "RawWorldDynamics.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -1358,6 +1359,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float zJumpSil = (abs(ddx(z)) + abs(ddy(z))) / max(z, 1.0f);
     const float silEdgeAtten = smoothstep(0.035f, 0.11f, zJumpSil);
 
+    float cloudTransL = 1.0f;
     if (sunDir.w > 0.5f) {
         // Interiors (sunColour.w < 0.5): NEVER read m4.x (that is vanilla's flickering point-light shadow channel 0!).
         // Keep interior directional fill unshadowed and calm so turning the camera never flickers the whole room!
@@ -1373,7 +1375,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         if (rt && sunColour.w > 0.5f) {
             sunShadow = (!isActorFeat && !isActorCloth) ? rv.x : lerp(m4.x, rv.x, 0.72f);
         }
-        if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) { sunShadow *= pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f); }   // SKY-02 rolling cloud-shadow contrast
+        if (!match && sunColour.w > 0.5f && (flags.x & FLAG_CLOUDS) != 0u) {
+            cloudTransL = pow(saturate(cloudShadow(p + camPosW.xyz)), 1.25f);
+            sunShadow *= cloudTransL;
+        }   // SKY-02 + Wave 74 unified volumetric cloud-shadow transmittance
         // Wave 29 Chromatic Shadow-Boundary Penumbra Splitting (neighbor-reactive quad derivative of sunShadow):
         // Uses hardware ddx/ddy on sunShadow (uniform sunDir.w branch) to detect the active penumbra boundary:
         // outer sunlit edge warms via solar limb darkening (~4200K) while inner shadow edge shifts cobalt Rayleigh (~12000K)!
@@ -2156,8 +2161,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float cvh = saturate(dot(s.v, ch));
                 const float cnv = max(dot(s.n, s.v), 1.0e-4f);
                 const float cF = saturate(0.0204f + 0.9796f * pow(1.0f - cvh, 5.0f));
-                // Primary sharp mirror-film lobe (alpha = 0.058 -> a2 = 0.003364) + secondary capillary sheen lobe (alpha = 0.22 -> a2 = 0.0484):
-                const float ca1 = 0.003364f, ca2 = 0.0484f;
+                // Wave 58 + Wave 74: Primary mirror-film lobe + secondary capillary sheen lobe coupled to
+                // volumetric cloud-shadow transmittance & coherent wind-gust ripple broadening (leaves sky ambient intact):
+                const float4 wGustWet = rawEvalCoherentWindGust4(p + camPosW.xyz, cloudWind, weather, camPosW.w);
+                const float wetRoughBroad = 1.0f + (1.0f - cloudTransL) * 0.25f + wGustWet.z * 0.22f + weather.w * 0.18f;
+                const float ca1 = clamp(0.003364f * wetRoughBroad, 0.003364f, 0.0120f);
+                const float ca2 = clamp(0.0484f * wetRoughBroad, 0.0484f, 0.1200f);
                 const float cd1 = max(cnh * cnh * (ca1 - 1.0f) + 1.0f, 1.0e-4f);
                 const float cd2 = max(cnh * cnh * (ca2 - 1.0f) + 1.0f, 1.0e-4f);
                 const float cD1 = ca1 / (PI * cd1 * cd1);
@@ -2165,7 +2174,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float cV1 = 0.5f / (cnl * sqrt(cnv * cnv * (1.0f - ca1) + ca1) + cnv * sqrt(cnl * cnl * (1.0f - ca1) + ca1) + 1.0e-5f);
                 const float cV2 = 0.5f / (cnl * sqrt(cnv * cnv * (1.0f - ca2) + ca2) + cnv * sqrt(cnl * cnl * (1.0f - ca2) + ca2) + 1.0e-5f);
                 const float dualLobe = (cD1 * cV1 * 0.68f + cD2 * cV2 * 0.32f) * PI * cF * cnl;
-                lit += min(sunColour.rgb * (dualLobe * sunShadow * horizonOcc * 0.65f), 2.2f.xxx) * wetFilmGlint;
+                lit += min(sunColour.rgb * (dualLobe * sunShadow * lerp(0.84f, 1.0f, cloudTransL) * horizonOcc * 0.65f), 2.2f.xxx) * wetFilmGlint;
             }
         }
         // Wave 58: Sub-Zero Hoarfrost / Rime Crystal Micro-Sparkle (crisp sunlit frost needle glints on sub-zero edges):
@@ -2274,12 +2283,17 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float cloudClear = 1.0f - saturate(clouds.x * 0.82f);
             const float dayGate = smoothstep(0.02f, 0.14f, astroSunElev());
             const float foliageThickness = lerp(0.45f, 1.0f, cNoise(wpCan * 0.024f + 5.1f));
-            // Backlit warm golden-emerald chlorophyll rim translucency (strictly gated away from front-lit needles):
+            // Wave 74: World-space coherent gust + white-furnace energy-conserving wet-leaf subsurface budget
+            // (albedo_eff + Fresnel + transmission <= 1.0; cloudTransL dims direct backlit glow once, never sky ambient):
+            const float4 wGustLeaf = rawEvalCoherentWindGust4(wpCan, cloudWind, weather, camPosW.w);
+            const float nvLeaf = saturate(dot(s.n, s.v));
+            const RawWetLeafBudget leafBudget = rawEvalWetLeafRadiativeBudget(albedo, wet.wet, nvLeaf, cloudTransL, wGustLeaf.z);
             const float frontSun = saturate(dot(s.n, sunDir.xyz));
             const float backTight = pow(saturate(dot(-s.v, sunDir.xyz)), 5.0f);
             const float backEdgeGate = 1.0f - frontSun * 0.78f;
-            const float3 sssCol = albedo * float3(0.84f, 1.18f, 0.24f);
-            lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate);
+            const float3 sssCol = leafBudget.albedoEff * float3(0.84f, 1.18f, 0.24f);
+            const float transScale = saturate(leafBudget.directTransWeight / 0.24f);
+            lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate * lerp(0.65f, 1.15f, transScale));
             // Balanced 3D vertical crown-to-underside pine self-shadowing (rich green shadow volume, never black or chalk!):
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
             const float canopyOcc = saturate(skyVis * 0.62f + sunShadow * 0.24f + crownUp * 0.22f);
@@ -2303,6 +2317,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float skyBounceScale = (skin ? 0.08f : isBotanicalCard ? 0.030f : 0.14f) * (1.0f - metallic * 0.55f);
         const float3 skyBounceTint = isExterior ? lerp(1.0f.xxx, float3(0.86f, 0.94f, 1.12f), skyVisShaped * (1.0f - (skin ? 0.92f : 0.0f)) * 0.45f) : 1.0f.xxx;
         lit += amb * skyBounceTint * (fGraze * skyBounceScale * horizBounceOcc * (0.25f + 0.75f * skyVisShaped) * combinedOcc * (1.0f - iceMask * 0.55f)) + decalEmit;
+        // Wave 74: Radiatively consistent overcast diffuse sky-bounce preservation on vertical exterior tree bark
+        // (volumetric cloud shadows attenuate direct sun, NOT indirect sky hemisphere fill on shaded pine trunks!).
+        if (isWoodBark && isExterior) {
+            lit += max(albedo, float3(0.060f, 0.048f, 0.036f)) * max(amb, float3(0.085f, 0.095f, 0.105f))
+                 * (0.26f + 0.20f * (1.0f - cloudTransL)) * (0.48f + 0.52f * skyVisShaped);
+        }
         // Note: removed redundant 3rd Mie scatter wash in Lighting.hlsl; FroxelPass.hlsl (0..42,000u) + LightFog.hlsl
         // now own unified engine-level 3D volumetric transmittance and Hillaire aerial perspective with zero double-fogging.
     }

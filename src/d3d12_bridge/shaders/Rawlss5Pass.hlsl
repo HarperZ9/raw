@@ -8,6 +8,7 @@
 // Original work, MIT.
 #include "LightingCommon.hlsli"
 #include "RawTensorMath.hlsli"
+#include "RawWorldDynamics.hlsli"
 
 Texture2D<float4> CurHdr    : register(t0);
 Texture2D<float>  Depth     : register(t1);
@@ -386,7 +387,18 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
     // silhouettes (3x3 luminance variance + motion-vector divergence) so dynamic FX & moving actors NEVER ghost!
     const float2 uv = (floor(at.xy) + 0.5f) * dims.zw;
     const float2 mvSafe = (any(isnan(mv)) || any(isinf(mv))) ? 0.0f.xx : mv;
-    const float2 puv = uv + mvSafe;
+    // Wave 74: World-space coherent gust field + foliage phase-locked temporal MV compensation.
+    // Aligns untracked wind-sway foliage history along the analytical gust phase derivative (clamped <= 1.25 px)
+    // and drives gust-front reactivity so pine needles stay sharp under wind gusts & camera sweeps.
+    float4 foliageGustW = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float2 gustMvComp = 0.0f.xx;
+    if (isFoliage && z < 2800.0f) {
+        foliageGustW = rawEvalCoherentWindGust4(pW + camPosW.xyz, cloudWind, weather, camPosW.w);
+        const float gustFadeF = smoothstep(2800.0f, 180.0f, z) * (1.0f - smoothstep(4.0f, 10.0f, speedPx));
+        gustMvComp = clamp(foliageGustW.xy * (dims.zw * 0.65f * gustFadeF), -dims.zw * 1.25f, dims.zw * 1.25f);
+        if (any(isnan(gustMvComp)) || any(isinf(gustMvComp))) { gustMvComp = 0.0f.xx; }
+    }
+    const float2 puv = uv + mvSafe + gustMvComp;
     if (all(puv > 0.004f) && all(puv < 0.996f)) {
         // High-contrast reactive mask (0 on calm static scenery -> 1 on dynamic embers, water glints, precip & sword swings):
         const float depthDisocc  = smoothstep(max(z * 0.022f, 2.2f), max(z * 0.085f, 10.0f), maxDz);
@@ -405,11 +417,13 @@ float4 rawlss5_fs(float4 at : SV_Position) : SV_Target0 {
         const float varMotionReact = smoothstep(0.20f, 0.72f, relLumVar) * saturate(speedPx * 0.42f + mvDivPx * 0.78f);
         const float spikeContrastReact = smoothstep(0.65f, 2.20f, (lumMax3 - lumMean3) / max(lumMean3 + 0.15f, 0.15f))
             * saturate(mvDivDisocc + speedRamp * 0.65f);
-        // Wave 71: Foliage Micro-Motion Reactivity (untracked vertex wind sway on pine needles & grass cards).
-        // Prevents temporal needle smearing under wind gusts & camera sweeps without introducing static shimmer.
+        // Wave 71 + Wave 74: Foliage Micro-Motion & Phase-Locked Gust-Front Reactivity (untracked vertex wind sway).
+        // Prevents temporal needle smearing under wind gusts & camera sweeps while preserving Deja 10-step anti-drift.
         const float windMagF = saturate(length(cloudWind.xy) * 0.018f + weather.w * 0.30f + weather.z * 0.25f);
+        const float gustFrontF = isFoliage ? saturate(abs(foliageGustW.w) * foliageGustW.z * 0.85f) : 0.0f;
         const float foliageMicroReact = isFoliage
-            ? saturate(smoothstep(0.14f, 0.58f, relLumVar + quadIrradStd * 0.35f) * (0.28f + 0.42f * windMagF + 0.30f * speedRamp)
+            ? saturate(smoothstep(0.14f, 0.58f, relLumVar + quadIrradStd * 0.35f) * (0.28f + 0.42f * windMagF + 0.22f * gustFrontF + 0.30f * speedRamp)
+                       + gustFrontF * 0.14f * smoothstep(0.08f, 0.35f, relLumVar)
                        + (fgSilhouetteNeighbor ? 0.45f : 0.0f))
             : 0.0f;
         // Wave 72: Specular Motion-Vector Guard (parallax reflection highlights on metal/water/wet stone move at

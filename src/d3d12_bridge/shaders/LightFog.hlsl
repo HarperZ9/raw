@@ -16,6 +16,7 @@
 #include "RawCosmosSky.hlsli"
 #include "RawSpells3D.hlsli"
 #include "RawSplitTemporalAerial.hlsli"
+#include "RawBlackbodySss.hlsli"
 
 Texture2D<float4> Lit         : register(t0);
 Texture2D<float>  Depth       : register(t1);
@@ -258,10 +259,10 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
                 flameDens = smoothstep(lerp(0.22f, 0.58f, uf), 0.90f, fShape + (turb - 0.42f) * lerp(0.55f, 1.05f, uf));
                 if (flameDens > 0.01f) {
                     const float temp01 = saturate(flameDens * (1.12f - uf * 0.65f) + (1.0f - saturate(rFNorm)) * 0.28f * (1.0f - uf));
-                    const float tempK = lerp(1400.0f, 3400.0f, temp01);
-                    float hdrRad = 0.0f;
-                    const float3 bbRgb = rawPlanckBlackbodyRGB(tempK, hdrRad);
-                    flameCol = bbRgb * min(hdrRad * 0.54f, 4.4f);
+                    const float tempK = lerp(1400.0f, 3200.0f, temp01);
+                    // Wave 79: Hue-preserving Rec.709/Rec.2020-safe Planck blackbody fire emission + Beer-Lambert smoke self-shadowing:
+                    const RawBlackbodyFireSmokeResult bbW79 = rawEvalBoundedBlackbodyFireSmoke(tempK, 0.72f, (1.0f - T) * 0.85f, 0.36f);
+                    flameCol = bbW79.fireEmission;
                 }
             }
         }
@@ -287,10 +288,12 @@ float4 evalVolumetricFirePlumes(float3 eye, float3 w, float dist, float curZ, fl
                     const float downFace = saturate(-g1.w * 0.95f + 0.48f);
                     const float upFace   = saturate( g1.w * 0.72f + 0.52f);
                     const float selfAtten = exp(-smokeDens * 0.62f);
-                    const float3 orangeUnder = float3(3.35f, 0.96f, 0.14f) * (fireIrradHot * lerp(0.18f, 1.42f, downFace) * selfAtten);
-                    const float3 crimsonCore = float3(1.65f, 0.26f, 0.03f) * (fireIrradDeep * lerp(0.25f, 0.95f, downFace) * 0.38f);
+                    const RawBlackbodyFireSmokeResult smokeBbW79 = rawEvalBoundedBlackbodyFireSmoke(
+                        lerp(1500.0f, 2400.0f, fireIrradHot), fireIrradHot * lerp(0.25f, 1.35f, downFace), smokeDens * 0.75f, 0.40f);
+                    const float3 orangeUnder = smokeBbW79.smokeUnderScatter * (1.45f * selfAtten);
+                    const float3 crimsonCore = float3(1.65f, 0.26f, 0.03f) * (fireIrradDeep * lerp(0.25f, 0.95f, downFace) * 0.28f);
                     const float3 ambCharcoal = sootAlbedo * ambTop * lerp(0.38f, 1.25f, upFace);
-                    smokeScatter = ambCharcoal + (orangeUnder + crimsonCore) * (0.26f + 0.36f * (1.0f - smokeDens));
+                    smokeScatter = ambCharcoal + (orangeUnder + crimsonCore) * (0.28f + 0.36f * (1.0f - smokeDens));
                 }
             }
         }

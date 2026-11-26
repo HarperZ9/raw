@@ -19,6 +19,7 @@
 #include "RawPrecipThermal.hlsli"
 #include "RawVolumetricGiGlint.hlsli"
 #include "RawSplitTemporalAerial.hlsli"
+#include "RawBlackbodySss.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -2042,6 +2043,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             if (st.coatWeight > 0.02f || st.fuzzWeight > 0.02f) {
                 const float3 stKeyDir = (isExterior && sunDir.w > 0.5f) ? sunDir.xyz : normalize(s.v + float3(0.12f, 0.08f, 0.62f));
                 const float3 stKeyCol = isExterior ? (sunColour.rgb * (0.20f + 0.80f * sunShadow) + amb * 0.35f) : max(amb * 1.25f, 0.05f.xxx);
+                if (isActorCloth) {
+                    const RawBurleySssBudget clothW79 = rawEvalBurleySkinClothSss(albedo, dot(nSmooth, stKeyDir), nv, s.alpha, false);
+                    st.fuzzWeight = min(st.fuzzWeight, max(1.0f - clothW79.totalEnergyMax + clothW79.fresnelSpec, 0.25f));
+                }
                 float3 baseTrans = 1.0f.xxx;
                 const float3 upperSlab = evalStrataUpperSlabs(st, nSmooth, s.v, stKeyDir, stKeyCol, specOcc, baseTrans);
                 lit = lit * baseTrans + upperSlab;
@@ -2223,19 +2228,19 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 }
             }
             const float nlRaw = dot(s.n, skKeyDir);
-            // Wave 63: Smooth Gaussian hemoglobin terminator warmth + crisp dual-lobe sebum sheen (zero blotchy cusp!):
-            const float termSss = exp(-nlRaw * nlRaw * 5.2f);
-            lit += albedo * float3(0.82f, 0.26f, 0.14f) * min(skKeyCol, 0.90f.xxx) * (termSss * 0.085f);
+            // Wave 63 + Wave 79: Burley-normalized hemoglobin terminator SSS + energy-conserving sebum Fresnel (<= 1.0):
+            const RawBurleySssBudget skinW79 = rawEvalBurleySkinClothSss(albedo, nlRaw, nvSkin, s.alpha, true);
+            lit += skinW79.sssWrap * min(skKeyCol, 0.90f.xxx) * 0.55f;
             const float3 shv = rawSafeHalfVec(s.v, skKeyDir, s.n);
             const float snh = saturate(dot(s.n, shv));
             const float sa1 = 0.048f, sa2 = 0.240f;
             const float sd1 = max(snh * snh * (sa1 - 1.0f) + 1.0f, 1.0e-4f);
             const float sd2 = max(snh * snh * (sa2 - 1.0f) + 1.0f, 1.0e-4f);
             const float sD = (sa1 / (PI * sd1 * sd1)) * 0.30f + (sa2 / (PI * sd2 * sd2)) * 0.70f;
-            const float sF = 0.026f + 0.974f * pow(1.0f - saturate(dot(s.v, shv)), 5.0f);
+            const float sF = min(skinW79.fresnelSpec, 0.026f + 0.974f * pow(1.0f - saturate(dot(s.v, shv)), 5.0f));
             lit += min(skKeyCol * (sD * sF * saturate(nlRaw) * 0.14f), 0.24f.xxx);
             const float fuzzRim = pow(1.0f - nvSkin, 4.0f) * saturate(nlRaw * 0.5f + 0.5f) * 0.032f;
-            lit += albedo * float3(1.04f, 0.92f, 0.86f) * (min(skKeyCol, 0.90f.xxx) * fuzzRim);
+            lit += skinW79.albedoEff * float3(1.04f, 0.92f, 0.86f) * (min(skKeyCol, 0.90f.xxx) * fuzzRim);
         } else if (base == 11u) {
             // 2) Hair (base==11): Wave 40 Physical Marschner 3-Lobe Anisotropic Hair Shading (R + TT + TRT)
             // driven by actual strongest local hearth/candle/torch key light indoors or sun+sky fill outdoors!

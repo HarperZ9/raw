@@ -19,6 +19,7 @@
 #include "RawProceduralNoise.hlsli"
 #include "RawSeasonsThermals.hlsli"
 #include "RawWorldDynamics.hlsli"
+#include "RawPrecipThermal.hlsli"
 
 #define Layer Normal
 #define BedAlbedo Spec
@@ -825,9 +826,10 @@ void water(uint3 id : SV_DispatchThreadID) {
             const float3 deepOceanBody = float3(0.013f, 0.022f, 0.024f) * max(ambientAt(float3(0.0f, 0.0f, 1.0f)), float3(0.08f, 0.10f, 0.12f)) * 1.42f;
             const float farF = saturate(max(F * max(waterA.x, 0.85f) * 0.90f, smoothstep(5500.0f, 36000.0f, wDist) * 0.68f));
             const float3 farOcean = lerp(deepOceanBody, farSkyRefl, farF);
-            // Wave 33: ALWAYS use continuous Beer-Lambert `body` even when `!refr` (dBed == 1.0 in adjacent distant cell!)
-            // so rivers & lakes NEVER draw a hard cell-boundary seam against `game.rgb`!
-            const float3 nearCol = lerp(body, refl, effF) + (refr ? 0.0f.xxx : caus * (1.0f - effF));
+            // Wave 33 + Wave 76: Continuous Beer-Lambert `body` coupled with anisotropic sky-to-water multi-scattering
+            // (white-furnace bounded between body & refl, zero hard cell-boundary seams or blown grazing highlights!):
+            const float3 coupledWater = rawEvalSkyWaterMultiScatter(refl, body, effF, cloudTransW, nv, wGustWater.z);
+            const float3 nearCol = coupledWater + (refr ? 0.0f.xxx : caus * (1.0f - effF));
             col = lerp(farOcean, nearCol, cellFeather) + glint * shoreFeather;
             // Wave 39 Live Freezing-Degree-Day Winter Shoreline & Shallow-Lake Ice Crust (RawSeasonsThermals.hlsli):
             // Forms crisp static IOR 1.31 crystalline ice shelves along frozen shores/lakes with organic spring fracture

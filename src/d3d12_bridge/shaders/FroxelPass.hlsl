@@ -21,6 +21,7 @@ Texture2D<float4> FroxelIn     : register(t0);
 #include "CloudCommon.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawWeatherAtmo.hlsli"
+#include "RawPrecipThermal.hlsli"
 Texture2D<float4> TransLut    : register(t1);
 Texture2D<float4> AtmoSkyView : register(t2);
 Texture2D<float4> FroxelPrev  : register(t3);
@@ -281,10 +282,12 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         // Disciplined twilight luminance envelope (prevents bright hazy mountain fogs during sunrise/sunset shifts!):
         const float todAmbGain = lerp(1.0f, 0.62f, twilightW) * lerp(0.46f, 0.94f, cs);
         const float3 ambInScat = lerp(syncSkyFr * todAmbGain, nightFogCol, nightW);
-        // Dynamically lit 3D solar in-scattering with spectral crepuscular cloud-gap coupling:
+        // Wave 71 + Wave 76: Dynamically lit 3D solar in-scattering with energy-conserving two-order cloud-crepuscular shafts:
         const float3 crepSunFr = evalSpectralCrepuscularCoupling(syncSunFr, syncSkyFr, hTrans, cs, aElevF, cosT, overcastFr, nightW);
+        const float crepPhaseW76 = rawEvalCrepuscularPhase(cosT, localOd, cs);
+        const float phCoupled = lerp(ph, crepPhaseW76, 0.35f * (1.0f - nightW));
         const float sunInGain = tune2.z * lerp(0.38f, 0.18f, twilightW) * (1.0f - nightW * 0.78f) * (1.0f - overcastFr * 0.55f);
-        inScat += ambInScat + crepSunFr * (sh * ph * sunInGain * moteBoost);
+        inScat += ambInScat + crepSunFr * (sh * phCoupled * sunInGain * moteBoost);
 
         // Wave 62: Moonlight Rayleigh + Mie Night-Halo Scattering (moonlit mist corona + 22-deg lunar ice-mist ring):
         // Strictly active at night (nightW > 0.02); carves silver-indigo lunar shafts through mountain passes & canopies!

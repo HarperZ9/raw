@@ -16,6 +16,7 @@
 #include "StrataBRDF.hlsli"
 #include "SpectralTransport.hlsli"
 #include "RawWorldDynamics.hlsli"
+#include "RawPrecipThermal.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -643,6 +644,25 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 // 4) Puddle evaporation & snowmelt runoff balance:
                 wet.puddle = lerp(wet.puddle, st.puddleMask01, 0.60f);
                 wet.wet    = max(wet.wet * saturate(1.0f - phenology1.w * 0.45f), st.wetBoost01 * 0.72f);
+            } else if (!isWoodBark && !isGreenPine && z < 2600.0f && (fireHeat01 > 0.03f || wet.snow > 0.05f || weather.z > 0.08f)) {
+                // Wave 76: World-space thermal/wind precipitation & torch/brazier melt active even without external season uniforms
+                // (100% absolute world-space, 0 screen-UV dependence; melts snow around Windhelm braziers & guard torches into wet stone):
+                const float3 wpPt = p + camPosW.xyz;
+                const float4 wGustPt = rawEvalCoherentWindGust4(wpPt, cloudWind, weather, camPosW.w);
+                const float natSnowPt = (base == 4u || base == 1u)
+                    ? saturate((min(albedo.r, min(albedo.g, albedo.b)) - 0.32f) * 4.2f) : 0.0f;
+                const float baseSnowPt = max(wet.snow, max(natSnowPt * saturate(weather.z * 1.4f + (fireHeat01 > 0.03f ? 0.65f : 0.0f)), weather.z * 0.65f));
+                const float tempPt = lerp(4.0f, -6.0f, saturate(weather.z + natSnowPt * 0.55f));
+                const RawThermalPrecipResult ptRes = rawEvalWorldThermalSnowAccum(
+                    wpPt, s.n, cloudWind.xy, wGustPt.z, baseSnowPt, tempPt, fireHeat01, sv);
+                if (ptRes.wetSlush01 > 0.02f && fireHeat01 > 0.03f) {
+                    const float meltFade = smoothstep(2600.0f, 180.0f, z) * saturate(ptRes.wetSlush01 * 0.65f);
+                    wet.snow *= (1.0f - ptRes.meltCore01 * 0.75f);
+                    wet.wet   = max(wet.wet, meltFade * 0.75f);
+                    albedo   *= lerp(1.0f, ptRes.albedoScale, meltFade * 0.65f);
+                    s.alpha   = lerp(s.alpha, ptRes.meltRoughness, meltFade * 0.65f);
+                    lobe      = lobe || (meltFade > 0.12f);
+                }
             } else if (fireHeat01 > 0.02f && (wet.snow > 0.05f || base == 4u) && s.n.z > 0.35f) {
                 // Fallback when RawWeatherSim uniforms are zeroed (e.g. legacy synthetic WARP tests):
                 const float meltMask  = smoothstep(0.10f, 0.70f, fireHeat01);

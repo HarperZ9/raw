@@ -1,0 +1,85 @@
+// SPDX-FileCopyrightText: 2026 RAW Engine Contributors
+// SPDX-License-Identifier: MIT
+//
+// Wave 86: Sandboxed BuildLang FFI Contract for RAW Mod-Developer SDK ABI v2.0.
+// Mirrors include/raw_mod_sdk_abi.h (0x00020000) for effect-typed mod scripting,
+// capability enforcement, and per-mod CPU/VRAM budget governance.
+
+pub struct ModBudgetVerdict {
+    mod_id: u32,
+    cpu_us: u64,
+    vram_bytes: u64,
+    status: i32,
+}
+
+pub struct ModPassNode {
+    pass_id: u32,
+    depends_on: u32,
+    required_caps: u32,
+}
+
+pub fn raw_mod_sdk_abi_version() -> u32 {
+    131072
+}
+
+pub fn raw_mod_cap_read_gbuffer() -> u32 { 1 }
+pub fn raw_mod_cap_read_actors() -> u32 { 2 }
+pub fn raw_mod_cap_read_navmesh() -> u32 { 4 }
+pub fn raw_mod_cap_render_pass() -> u32 { 8 }
+pub fn raw_mod_cap_debug_view() -> u32 { 16 }
+pub fn raw_mod_cap_buildlang_ffi() -> u32 { 32 }
+
+pub fn check_abi_version(requested: u32) -> i32 {
+    let major: u32 = (requested >> 16) & 65535;
+    if major == 2 {
+        return 0;
+    }
+    -2
+}
+
+pub fn check_has_capability(granted: u32, required: u32) -> i32 {
+    if (granted & required) == required {
+        return 0;
+    }
+    -7
+}
+
+pub fn check_debug_view_slot(slot: u32) -> i32 {
+    if slot >= 100 && slot <= 255 {
+        return 0;
+    }
+    -8
+}
+
+pub fn check_mod_budget(
+    mod_id: u32,
+    cpu_us: u64,
+    hard_cpu_us: u64,
+    vram_bytes: u64,
+    hard_vram_bytes: u64,
+) -> ModBudgetVerdict {
+    if cpu_us > hard_cpu_us || vram_bytes > hard_vram_bytes {
+        return ModBudgetVerdict {
+            mod_id: mod_id,
+            cpu_us: cpu_us,
+            vram_bytes: vram_bytes,
+            status: -5,
+        };
+    }
+    ModBudgetVerdict {
+        mod_id: mod_id,
+        cpu_us: cpu_us,
+        vram_bytes: vram_bytes,
+        status: 0,
+    }
+}
+
+pub fn clamp_calibrated_peak_nits(peak_nits: f64) -> f64 {
+    if peak_nits < 100.0 {
+        return 100.0;
+    }
+    if peak_nits > 4000.0 {
+        return 4000.0;
+    }
+    peak_nits
+}

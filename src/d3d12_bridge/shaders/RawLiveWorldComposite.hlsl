@@ -553,11 +553,15 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             const float  char01    = saturate(isfinite(gBend.w) ? gBend.w : 0.0f);
 
             // Step front-to-back across 4 physical 3D Nordic sedge/meadow height shells (0.44m -> 0.08m):
+            // Wave 90 Part 3: Henyey-Greenstein (OPT-032, g=0.58) backlit blade translucency + coherent wind-gust micro-shadowing!
             const float  heightScale = (1.0f - 0.55f * droop01) * (1.0f - 0.60f * char01);
             const float  invRayZ     = 1.0f / max(abs(rayDir.z), 0.35f);
-            const float  backLit     = pow(saturate(dot(rayDir, sD)), 2.6f) * max(sunDir.w, 0.15f);
+            const float  cosBladeHG  = saturate(dot(rayDir, sD));
+            const float  hgGrassDen  = max(1.0f + 0.58f * 0.58f - 2.0f * 0.58f * cosBladeHG, 0.10f);
+            const float  backLit     = saturate(((1.0f - 0.58f * 0.58f) / (hgGrassDen * sqrt(hgGrassDen))) * 0.24f) * max(sunDir.w, 0.15f);
             const float3 bladeNorm   = normalize(float3(-bendXZ.x * 0.78f, -bendXZ.y * 0.78f, 1.0f));
             const float  sunBlade    = 0.35f + 0.65f * saturate(dot(bladeNorm, sD));
+            const float  gustShadow  = lerp(0.84f, 1.14f, gustWave);
             const float  gustSheen   = saturate(bendMag * 0.68f) * sunBlade * (0.75f + 0.25f * gustWave);
 
             float3 shellColor = float3(0.0f, 0.0f, 0.0f);
@@ -573,12 +577,12 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
                 const float dens = EvalGrassShellDensity(pShell, hFrac, distM, hueVar);
                 const float a    = dens * lerp(0.60f, 0.40f, hFrac) * (1.0f - shellAlpha);
 
-                // Deep mossy root AO -> rich Nordic sedge-meadow golden-emerald tips + backlit translucency:
+                // Deep mossy root AO -> rich Nordic sedge-meadow golden-emerald tips + HG backlit translucency + wind gust wave:
                 const float3 rootCol = float3(0.06f, 0.12f, 0.04f);
                 const float3 tipCol  = lerp(float3(0.21f, 0.40f, 0.10f), float3(0.38f, 0.50f, 0.14f), hueVar);
-                float3 bCol = lerp(rootCol, tipCol, hFrac) * lerp(0.48f, 1.15f, hFrac) * sunBlade;
+                float3 bCol = lerp(rootCol, tipCol, hFrac) * lerp(0.48f, 1.15f, hFrac) * sunBlade * lerp(1.0f, gustShadow, hFrac);
                 bCol *= max(sC, float3(0.32f, 0.36f, 0.30f));
-                bCol += float3(0.28f, 0.40f, 0.09f) * (backLit * hFrac * 0.68f + gustSheen * hFrac * 0.42f);
+                bCol += float3(0.30f, 0.44f, 0.10f) * (backLit * hFrac * 0.62f + gustSheen * hFrac * 0.24f);
 
                 shellColor += bCol * a;
                 shellAlpha += a;
@@ -648,12 +652,16 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             col += float3(0.032f, 0.022f, 0.008f) * shadowLift * (0.60f + 0.40f * needleN);
             col += float3(0.075f, 0.052f, 0.014f) * (backLit * 0.34f * needleN * distFade * hiSafeA);
         } else {
-            // Frosted winter twigs & snow brambles: bright crystalline hoarfrost micro-sparkle & neutral silver rim!
-            const float frostSpark = smoothstep(0.72f, 0.95f, ValueNoise2D(worldM.xy * 28.0f + worldM.z * 14.0f));
-            const float hiSafeF    = 1.0f - smoothstep(0.32f, 0.68f, lum);
-            const float shadowLift = saturate((0.11f - lum) * 9.0f) * distFade;
-            col += float3(0.030f, 0.032f, 0.038f) * shadowLift * (0.65f + 0.35f * needleN);
-            col += float3(0.062f, 0.066f, 0.076f) * ((backLit * 0.32f + frostSpark * 0.22f) * distFade * hiSafeF);
+            // Wave 90 Defect B Refinement: Bright crystalline white hoarfrost rime + cold rim scatter on snow-biome twigs!
+            const float frostSpark = smoothstep(0.68f, 0.94f, ValueNoise2D(worldM.xy * 28.0f + worldM.z * 14.0f));
+            const float hiSafeF    = 1.0f - smoothstep(0.42f, 0.82f, lum);
+            const float coldRim    = pow(saturate(1.0f - abs(dot(N, -rayDir))), 2.2f);
+            const float shadowLift = saturate((0.20f - lum) * 6.5f) * distFade;
+            const float snowRimeW  = saturate(0.36f + waterAndCaustics.w * 0.64f) * distFade;
+            const float3 hoarTarget = float3(0.48f, 0.52f, 0.58f) * (0.78f + 0.32f * needleN);
+            col = lerp(col, max(col, hoarTarget), snowRimeW * 0.42f * hiSafeF);
+            col += float3(0.055f, 0.060f, 0.072f) * shadowLift * (0.65f + 0.35f * needleN);
+            col += float3(0.095f, 0.105f, 0.125f) * ((backLit * 0.34f + coldRim * 0.32f + frostSpark * 0.28f) * distFade * hiSafeF);
         }
         modified = true;
     } else if (!isInt && base == 1u && abs(N.z) < 0.55f && distM < 60.0f) {

@@ -923,33 +923,42 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 const float3 goldTint = float3(1.16f, 0.96f, 0.70f) * lerp(0.90f, 1.10f, crownDepthAo);
                 albedo = saturate(albedo * lerp(1.0f.xxx, goldTint, fFade * 0.55f));
             } else {
-                // Wave 89 Defect B fix: Frosted winter twigs stay bright crystalline hoarfrost silver-white (ZERO spring green, ZERO mud!).
-                const float frostSparkle = smoothstep(0.58f, 0.88f, cNoise(wpF * 0.55f + float3(3.7f, 11.1f, 5.3f)));
-                const float3 frostLift = lerp(albedo, max(albedo, float3(0.46f, 0.48f, 0.52f)), fFade * 0.34f);
-                albedo = saturate(frostLift * lerp(1.0f.xxx, float3(1.04f, 1.06f, 1.10f), fFade * 0.45f) + float3(0.065f, 0.070f, 0.080f) * frostSparkle * fFade);
+                // Wave 90 Defect B Refinement: Bright crystalline white hoarfrost rime + cold rim scatter on winter twigs!
+                const float frostSparkle = smoothstep(0.54f, 0.86f, cNoise(wpF * 0.62f + float3(3.7f, 11.1f, 5.3f)));
+                const float snowBiomeW   = saturate(weather.z * 1.35f + smoothstep(0.05f, 0.25f, wet.snow) + (seasonF == 4u ? 1.0f : 0.0f));
+                const float frostRimeW   = saturate(0.42f + 0.50f * snowBiomeW) * fFade;
+                const float3 hoarWhite   = float3(0.76f, 0.80f, 0.86f) * lerp(0.88f, 1.08f, saturate(s.n.z * 0.5f + 0.5f));
+                albedo = saturate(lerp(albedo, max(albedo, hoarWhite), frostRimeW * 0.68f) + float3(0.095f, 0.105f, 0.120f) * frostSparkle * fFade);
             }
-            // Wave 39 + Wave 64 Live Seasonal Botanical Phenology (RawSeasonsThermals.hlsli):
-            // Strictly gate winter bough snow & frost rim on genuine freezing/snowy conditions so clear-day
-            // Riverwood pine boughs NEVER pick up pale grey-white frost bleach!
+            // Wave 39 + Wave 64 + Wave 90 Live Seasonal Botanical Phenology (RawSeasonsThermals.hlsli):
+            // Strictly gate evergreen dark-green albedo cap on genuinely living green conifers so snow-frosted winter
+            // twigs in Windhelm stay bright crystalline white/silver instead of clamping to (0.22, 0.34, 0.19) dark olive!
             const bool hasLivePhen = (sunColour.w > 0.5f)
                 && ((phenology0.x + phenology0.y + phenology0.z + phenology0.w + phenology1.x + phenology1.y) > 0.01f);
             const bool activeSnowFrost = (weather.z > 0.08f || seasonThermal0.x > 0.05f || seasonF == 4u
                 || (seasonThermal0.y > 0.05f && seasonThermal0.w < -1.5f));
-            if (hasLivePhen) {
-                const bool isEvergreenConifer = (base == 1u) || (albedo.g < 0.26f && albedo.b >= albedo.r * 0.65f);
-                const SeasonalFoliageEval sf = evalSeasonalFoliagePhenology(
-                    wpF, s.n, albedo, phenology0, phenology1, seasonThermal0, seasonThermal1, isEvergreenConifer);
-                albedo = saturate(albedo * sf.albedoTint);
-                const float boughSnow = activeSnowFrost ? (sf.canopySnowCov01 * (isEvergreenConifer ? 0.22f : 0.28f) * fFade) : 0.0f;
-                const float frostEdge = activeSnowFrost ? (sf.frostRim01 * 0.12f * fFade) : 0.0f;
-                if (boughSnow + frostEdge > 0.005f) {
-                    albedo = lerp(albedo, float3(0.58f, 0.65f, 0.72f), saturate(boughSnow + frostEdge));
+            if (isLivingGreenFoliage) {
+                if (hasLivePhen) {
+                    const bool isEvergreenConifer = (base == 1u) || (albedo.g < 0.26f && albedo.b >= albedo.r * 0.65f);
+                    const SeasonalFoliageEval sf = evalSeasonalFoliagePhenology(
+                        wpF, s.n, albedo, phenology0, phenology1, seasonThermal0, seasonThermal1, isEvergreenConifer);
+                    albedo = saturate(albedo * sf.albedoTint);
+                    const float boughSnow = activeSnowFrost ? (sf.canopySnowCov01 * (isEvergreenConifer ? 0.22f : 0.28f) * fFade) : 0.0f;
+                    const float frostEdge = activeSnowFrost ? (sf.frostRim01 * 0.12f * fFade) : 0.0f;
+                    if (boughSnow + frostEdge > 0.005f) {
+                        albedo = lerp(albedo, float3(0.58f, 0.65f, 0.72f), saturate(boughSnow + frostEdge));
+                    }
+                    albedo = isEvergreenConifer
+                        ? min(albedo, lerp(float3(0.22f, 0.34f, 0.19f), float3(0.42f, 0.48f, 0.46f), boughSnow))
+                        : min(albedo, float3(0.46f, 0.38f, 0.24f));
+                } else {
+                    albedo = min(albedo, float3(0.22f, 0.34f, 0.19f));
                 }
-                albedo = isEvergreenConifer
-                    ? min(albedo, lerp(float3(0.22f, 0.34f, 0.19f), float3(0.42f, 0.48f, 0.46f), boughSnow))
-                    : min(albedo, float3(0.46f, 0.38f, 0.24f));
+            } else if (isAutumnWarmFoliage) {
+                albedo = min(albedo, float3(0.66f, 0.54f, 0.28f));
             } else {
-                albedo = min(albedo, float3(0.22f, 0.34f, 0.19f));
+                // Frosted winter twigs: crisp crystalline hoarfrost albedo ceiling (ZERO dark olive clamp!)
+                albedo = min(albedo, float3(0.86f, 0.90f, 0.96f));
             }
         }
     }
@@ -1790,13 +1799,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Exteriors: ray-traced sky visibility (RtSky.cpp). Interiors (!match): local SM6.9 RayQuery RTAO from RtShadow.hlsl.
     const bool isExterior = sunColour.w > 0.5f;
     const float rawSkyVis = rt && (flags.x & FLAG_SKY) != 0u && (isExterior || !match) ? RtIdx.Load(ip).w : 1.0f;
+    const bool isFrostedWinterTwig = (isBotanicalCard && !isLivingGreenFoliage && !isAutumnWarmFoliage);
     const float skyVis = isActorFeat ? lerp(0.28f, 1.0f, rawSkyVis)
                        : (isActorCloth ? lerp(0.26f, 1.0f, rawSkyVis)
                        : (isWoodBark ? lerp(0.44f, 1.0f, rawSkyVis)
-                       : (isBotanicalCard ? lerp(0.24f, 1.0f, rawSkyVis) : rawSkyVis)));
+                       : (isFrostedWinterTwig ? lerp(0.58f, 1.0f, rawSkyVis)
+                       : (isBotanicalCard ? lerp(0.24f, 1.0f, rawSkyVis) : rawSkyVis))));
     // Physical directional skylighting falloff: roofs, covered walkways, arches & dense foliage cores drop to deep rich shade
-    // while vertical pine tree trunks (isWoodBark) enforce a realistic >= 0.36 skyVisShaped floor so ZERO bark pixels crush!
-    const float skyVisPow = !match ? pow(saturate(skyVis), isBotanicalCard ? 1.50f : 1.85f) : skyVis;
+    // while vertical pine tree trunks (isWoodBark) & frosted snow twigs keep crisp snow-bounce illumination!
+    const float skyVisPow = !match ? pow(saturate(skyVis), isFrostedWinterTwig ? 0.85f : (isBotanicalCard ? 1.50f : 1.85f)) : skyVis;
     const float skyVisShaped = (!match && isWoodBark) ? max(skyVisPow, 0.36f) : skyVisPow;
     const float rtOccRaw = isExterior ? lerp(1.0f, lerp(0.10f, 1.0f, skyVisShaped), max(cluster.w, 0.88f)) : lerp(0.12f, 1.0f, skyVisShaped);
     const float rtOcc = (!match && isWoodBark) ? max(rtOccRaw, 0.40f) : rtOccRaw;
@@ -2411,15 +2422,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float frontSun = saturate(dot(s.n, sunDir.xyz));
             const float backTight = pow(saturate(dot(-s.v, sunDir.xyz)), 5.0f);
             const float backEdgeGate = 1.0f - frontSun * 0.78f;
-            const float3 sssCol = leafBudget.albedoEff * (isLivingGreenFoliage ? float3(0.84f, 1.18f, 0.24f)
-                                                        : (isAutumnWarmFoliage ? float3(1.20f, 0.92f, 0.34f)
-                                                                               : float3(0.98f, 1.00f, 1.06f)));
+            // Wave 90 Part 3: Henyey-Greenstein (OPT-032, g=0.62) + Beer-Lambert (OPT-033) backlit subsurface leaf translucency
+            // and cold rim-scatter on frost-encrusted winter twigs!
+            const float cosBackHG = saturate(dot(-s.v, sunDir.xyz));
+            const float gHG = 0.62f;
+            const float hgDen = max(1.0f + gHG * gHG - 2.0f * gHG * cosBackHG, 0.08f);
+            const float hgLobe = saturate(((1.0f - gHG * gHG) / (hgDen * sqrt(hgDen))) * 0.22f);
+            const float3 sssCol = leafBudget.albedoEff * (isLivingGreenFoliage ? float3(0.84f, 1.24f, 0.24f)
+                                                        : (isAutumnWarmFoliage ? float3(1.26f, 0.92f, 0.30f)
+                                                                               : float3(1.02f, 1.06f, 1.14f)));
             const float transScale = saturate(leafBudget.directTransWeight / 0.24f);
             // Wave 78: World-space sub-pixel foliage anti-shimmer & coverage preservation (strictly !isWoodBark!):
             const float maxLeafAlb = max(leafBudget.albedoEff.r, max(leafBudget.albedoEff.g, leafBudget.albedoEff.b));
             const RawFoliageAntiShimmerResult folW78 = rawEvalFoliageCoverageAntiShimmer(
                 wpCan, s.n, s.v, z, maxLeafAlb, leafBudget.directTransWeight, skyVis, isWoodBark);
-            lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate * lerp(0.65f, 1.15f, transScale) * folW78.translucencyScale);
+            lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.16f + hgLobe * 0.14f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate * lerp(0.65f, 1.15f, transScale) * folW78.translucencyScale);
+            if (isFrostedWinterTwig) {
+                // Crisp cold Fresnel hoarfrost rim-scatter in winter blizzards (zero spring green!)
+                const float frostRim = pow(1.0f - saturate(dot(s.n, s.v)), 2.4f);
+                lit += max(amb, float3(0.14f, 0.16f, 0.20f)) * float3(0.82f, 0.88f, 0.98f) * (frostRim * 0.42f + 0.18f);
+            }
             // Balanced 3D vertical crown-to-underside self-shadowing (rich green on pines, warm gold on aspens, bright silver on frosted twigs!):
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
             const float canopyOcc = saturate(skyVis * 0.62f + sunShadow * 0.24f + crownUp * 0.22f);

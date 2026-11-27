@@ -310,8 +310,7 @@ PbrPixel EvalProceduralPixel(ProceduralTextureKind kind, float u, float v, uint3
             px.ao        = Clamp01(0.48f + 0.52f * h);
             break;
         }
-        case ProceduralTextureKind::BraidedRiverPebbles:
-        default: {
+        case ProceduralTextureKind::BraidedRiverPebbles: {
             const auto peb = PeriodicWorley2D(u, v, 8, 8, 0.82f, seed + 223u, false);
             const float dome = Smoothstep(0.01f, 0.22f, peb.edgeDist);
             const float grit = TorusFbm2D(u, v, 16.0f, 16.0f, seed + 239u, 3);
@@ -324,6 +323,128 @@ PbrPixel EvalProceduralPixel(ProceduralTextureKind kind, float u, float v, uint3
             px.height    = h;
             px.roughness = Lerp(0.58f, 0.20f, dome * 0.85f); // Smooth wet river stones, matte sand gaps
             px.ao        = Clamp01(0.32f + 0.68f * dome);
+            break;
+        }
+        case ProceduralTextureKind::NordicTerrainLoam: {
+            const float loam  = TorusFbm2D(u, v, 5.0f, 5.0f, seed + 251u, 4);
+            const float grit  = TorusNoise2D(u, v, 24.0f, 24.0f, seed + 263u);
+            const float root  = TorusRidged2D(u, v, 7.0f, 7.0f, seed + 277u, 3);
+            const float h     = Clamp01(0.50f * loam + 0.25f * grit + 0.25f * root);
+            px.albedo[0] = Clamp01(Lerp(0.16f, 0.36f, h));
+            px.albedo[1] = Clamp01(Lerp(0.13f, 0.29f, h));
+            px.albedo[2] = Clamp01(Lerp(0.09f, 0.20f, h));
+            px.height    = h;
+            px.roughness = Lerp(0.76f, 0.94f, 1.0f - 0.3f * grit);
+            px.ao        = Clamp01(0.42f + 0.58f * h);
+            break;
+        }
+        case ProceduralTextureKind::FlagstoneCobbleRoad: {
+            const float cu = u + 0.17f - std::floor(u + 0.17f);
+            const float cv = v + 0.23f - std::floor(v + 0.23f);
+            const auto stone = PeriodicWorley2D(cu, cv, 6, 6, 0.42f, seed + 293u, true);
+            const float bevel = Smoothstep(0.025f, 0.16f, stone.edgeDist);
+            const float grain = TorusFbm2D(u, v, 14.0f, 14.0f, seed + 307u, 3);
+            const float mossCrev = (1.0f - bevel) * Smoothstep(0.52f, 0.82f, TorusFbm2D(u, v, 4.0f, 4.0f, seed + 313u, 3));
+            const float h = Clamp01(0.14f + 0.72f * bevel + 0.10f * stone.cellRand + 0.06f * grain);
+            const float val = Lerp(0.28f, 0.54f, stone.cellRand) * (0.86f + 0.24f * grain);
+            const float mort = Lerp(0.18f, 0.26f, grain);
+            px.albedo[0] = Clamp01(Lerp(Lerp(mort * 1.04f, 0.14f, mossCrev), val * 0.97f, bevel));
+            px.albedo[1] = Clamp01(Lerp(Lerp(mort * 0.98f, 0.27f, mossCrev), val * 0.99f, bevel));
+            px.albedo[2] = Clamp01(Lerp(Lerp(mort * 0.90f, 0.09f, mossCrev), val * 1.03f, bevel));
+            px.height    = h;
+            px.roughness = Lerp(0.84f, 0.46f, bevel * 0.75f);
+            px.ao        = Clamp01(0.30f + 0.70f * bevel);
+            break;
+        }
+        case ProceduralTextureKind::NordicCutMasonry: {
+            const float mu  = u + 0.08f - std::floor(u + 0.08f);
+            const float mv  = v + 0.08f - std::floor(v + 0.08f);
+            const float row = std::floor(mv * 6.0f);
+            const float bu  = mu * 3.0f + 0.5f * std::fmod(row, 2.0f);
+            const float fx  = bu - std::floor(bu);
+            const float fy  = (mv * 6.0f) - row;
+            const float edge = std::min(std::min(fx, 1.0f - fx) * 1.4f, std::min(fy, 1.0f - fy));
+            const float joint = Smoothstep(0.03f, 0.14f, edge);
+            const float chisel = TorusFbm2D(u, v, 12.0f, 12.0f, seed + 331u, 4);
+            const float blockVar = Hash4To01(WrapMod(int32_t(std::floor(bu)), 3), WrapMod(int32_t(row), 6), 0, 0, seed + 337u);
+            const float h = Clamp01(0.15f + 0.65f * joint + 0.12f * blockVar + 0.10f * chisel);
+            const float stone = Lerp(0.28f, 0.56f, 0.5f * blockVar + 0.5f * chisel);
+            px.albedo[0] = Clamp01(Lerp(0.19f, stone * 0.98f, joint));
+            px.albedo[1] = Clamp01(Lerp(0.19f, stone * 0.99f, joint));
+            px.albedo[2] = Clamp01(Lerp(0.18f, stone * 1.02f, joint));
+            px.height    = h;
+            px.roughness = Lerp(0.88f, 0.62f, joint);
+            px.ao        = Clamp01(0.32f + 0.68f * joint);
+            break;
+        }
+        case ProceduralTextureKind::HandHewnTimberPlanks: {
+            const float pu = u + 0.0833f - std::floor(u + 0.0833f);
+            const float plankU = pu * 6.0f;
+            const float fx = plankU - std::floor(plankU);
+            const float seam = Smoothstep(0.02f, 0.08f, std::min(fx, 1.0f - fx));
+            const float grain = TorusFbm2D(u, v, 24.0f, 3.0f, seed + 353u, 4);
+            const float adze  = TorusNoise2D(u, v, 8.0f, 14.0f, seed + 367u);
+            const float h = Clamp01(0.18f + 0.54f * seam + 0.20f * grain + 0.08f * adze);
+            const float wood = Lerp(0.16f, 0.44f, 0.65f * grain + 0.35f * adze) * (0.45f + 0.55f * seam);
+            px.albedo[0] = Clamp01(wood * 1.12f);
+            px.albedo[1] = Clamp01(wood * 0.80f);
+            px.albedo[2] = Clamp01(wood * 0.54f);
+            px.height    = h;
+            px.roughness = Lerp(0.84f, 0.58f, grain * seam);
+            px.ao        = Clamp01(0.34f + 0.66f * seam);
+            break;
+        }
+        case ProceduralTextureKind::WindPackedSnowpack: {
+            const float sastrugi = TorusFbm2D(u, v, 3.0f, 9.0f, seed + 383u, 4);
+            const float crystal  = TorusNoise2D(u, v, 32.0f, 32.0f, seed + 397u);
+            const float h = Clamp01(0.68f * sastrugi + 0.32f * crystal);
+            const float snow = Lerp(0.76f, 0.94f, h);
+            px.albedo[0] = Clamp01(snow * 0.96f);
+            px.albedo[1] = Clamp01(snow * 0.98f);
+            px.albedo[2] = Clamp01(snow * 1.02f);
+            px.height    = h;
+            px.roughness = Lerp(0.30f, 0.56f, 1.0f - crystal * 0.55f);
+            px.ao        = Clamp01(0.72f + 0.28f * h);
+            break;
+        }
+        case ProceduralTextureKind::ConiferNeedleCanopy: {
+            const float whorl = TorusRidged2D(u, v, 12.0f, 12.0f, seed + 409u, 3);
+            const float tips  = TorusFbm2D(u, v, 18.0f, 18.0f, seed + 421u, 3);
+            const float h = Clamp01(0.55f * whorl + 0.45f * tips);
+            px.albedo[0] = Clamp01(Lerp(0.08f, 0.22f, h));
+            px.albedo[1] = Clamp01(Lerp(0.18f, 0.38f, h));
+            px.albedo[2] = Clamp01(Lerp(0.07f, 0.16f, h));
+            px.height    = h;
+            px.roughness = Lerp(0.62f, 0.86f, 1.0f - 0.35f * tips);
+            px.ao        = Clamp01(0.38f + 0.62f * h);
+            break;
+        }
+        case ProceduralTextureKind::HighlandMeadowSedge: {
+            const float blades = TorusFbm2D(u, v, 14.0f, 22.0f, seed + 433u, 4);
+            const float clover = TorusNoise2D(u, v, 10.0f, 10.0f, seed + 449u);
+            const float h = Clamp01(0.65f * blades + 0.35f * clover);
+            px.albedo[0] = Clamp01(Lerp(0.16f, 0.36f, h));
+            px.albedo[1] = Clamp01(Lerp(0.28f, 0.48f, h));
+            px.albedo[2] = Clamp01(Lerp(0.09f, 0.18f, h));
+            px.height    = h;
+            px.roughness = Lerp(0.72f, 0.90f, 1.0f - 0.3f * blades);
+            px.ao        = Clamp01(0.44f + 0.56f * h);
+            break;
+        }
+        case ProceduralTextureKind::WovenNordicWoolCloth:
+        default: {
+            const float warpW = 0.5f + 0.5f * std::sin(u * kTwoPi * 12.0f + std::sin(v * kTwoPi * 6.0f) * 1.2f);
+            const float weftW = 0.5f + 0.5f * std::sin(v * kTwoPi * 12.0f);
+            const float weave = 0.5f * warpW + 0.5f * weftW;
+            const float dye   = TorusFbm2D(u, v, 5.0f, 5.0f, seed + 463u, 3);
+            const float h     = Clamp01(0.65f * weave + 0.35f * dye);
+            const float cloth = Lerp(0.24f, 0.46f, 0.6f * dye + 0.4f * weave);
+            px.albedo[0] = Clamp01(cloth * 1.06f);
+            px.albedo[1] = Clamp01(cloth * 0.96f);
+            px.albedo[2] = Clamp01(cloth * 0.88f);
+            px.height    = h;
+            px.roughness = Lerp(0.78f, 0.95f, 1.0f - 0.25f * weave);
+            px.ao        = Clamp01(0.50f + 0.50f * h);
             break;
         }
     }
@@ -342,6 +463,14 @@ const char* GetProceduralTextureKindName(ProceduralTextureKind kind) {
         case ProceduralTextureKind::VolcanicMagmaCrust:   return "VolcanicMagmaCrust";
         case ProceduralTextureKind::AlpineMossMeadow:     return "AlpineMossMeadow";
         case ProceduralTextureKind::BraidedRiverPebbles:  return "BraidedRiverPebbles";
+        case ProceduralTextureKind::NordicTerrainLoam:    return "NordicTerrainLoam";
+        case ProceduralTextureKind::FlagstoneCobbleRoad:  return "FlagstoneCobbleRoad";
+        case ProceduralTextureKind::NordicCutMasonry:     return "NordicCutMasonry";
+        case ProceduralTextureKind::HandHewnTimberPlanks: return "HandHewnTimberPlanks";
+        case ProceduralTextureKind::WindPackedSnowpack:   return "WindPackedSnowpack";
+        case ProceduralTextureKind::ConiferNeedleCanopy:  return "ConiferNeedleCanopy";
+        case ProceduralTextureKind::HighlandMeadowSedge:  return "HighlandMeadowSedge";
+        case ProceduralTextureKind::WovenNordicWoolCloth: return "WovenNordicWoolCloth";
         default:                                          return "UnknownProceduralTexture";
     }
 }

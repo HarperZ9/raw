@@ -21,9 +21,17 @@ enum class ProceduralTextureKind : uint8_t {
     BorealPineBark       = 3, // Deep longitudinal bark furrows, reddish inner plates, mossy crevices
     HexagonalBasalt      = 4, // Periodic hexagonal columnar basalt with crisp weathered joint bevels
     VolcanicMagmaCrust   = 5, // Dark vesicular cooling basalt plates over glowing incandescent magma cracks
-    AlpineMossMeadow     = 6, // Organic boreal moss humus, woven lichen fibers, clover variation
-    BraidedRiverPebbles  = 7, // Smooth water-worn rounded granite/slate cobblestones with wet sand interstices
-    Count                = 8,
+    AlpineMossMeadow     = 6,  // Organic boreal moss humus, woven lichen fibers, clover variation
+    BraidedRiverPebbles  = 7,  // Smooth water-worn rounded granite/slate cobblestones with wet sand interstices
+    NordicTerrainLoam    = 8,  // Rich highland forest loam, root humus, fine glacial gravel
+    FlagstoneCobbleRoad  = 9,  // Interlocking chamfered flagstones with sandy mortar & moss crevices
+    NordicCutMasonry     = 10, // Hand-dressed ashlar stone blocks, chiseled bevels, lime mortar joints
+    HandHewnTimberPlanks = 11, // Split Nordic oak/pine planks, adze grooves, wood-grain rings
+    WindPackedSnowpack   = 12, // Wind-sculpted sastrugi snow ripples & micro-crystalline facets
+    ConiferNeedleCanopy  = 13, // Overlapping boreal spruce needle whorls & resin flecks
+    HighlandMeadowSedge  = 14, // Fine woven highland meadow sedge & wild clover turf
+    WovenNordicWoolCloth = 15, // Herringbone woven wool & tanned leather craft weave (biome/actor reserve)
+    Count                = 16,
 };
 
 struct TextureMipLevel {

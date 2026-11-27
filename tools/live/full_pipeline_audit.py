@@ -907,6 +907,28 @@ def run_live_audit(
                         time.sleep(1.5 if not spec.is_interior else 0.45)
                         dismiss_survival_modal_if_paused(game_dir, engine_out, proc=proc, max_attempts=4)
 
+                        # Wave 88: For interiors (no CC Survival Mode popup!), capture the exact matched-pose
+                        # Vanilla vs RAW-2027 comparison pair at the iconic spawn view BEFORE cam_sweep starts.
+                        if spec.is_interior and proc.poll() is None:
+                            done_file.unlink(missing_ok=True)
+                            matched_lines = [
+                                f"scene={spec.name}",
+                                "keyframe=matched",
+                                "steps=game,improved",
+                                "hold=12",
+                                "burst=1",
+                                "stride=1",
+                                f"dir={scene_out}",
+                            ]
+                            go_file.write_text("\n".join(matched_lines) + "\n", encoding="utf-8")
+                            m_deadline = time.time() + 25.0
+                            while time.time() < m_deadline:
+                                if done_file.exists() or proc.poll() is not None:
+                                    break
+                                time.sleep(0.15)
+                            done_file.unlink(missing_ok=True)
+                            go_file.unlink(missing_ok=True)
+
                         # Wave 67: lock sweep_sign = +1.0 (unidirectional) across improved, view_motion_outline,
                         # and view_sun_shadow so MV reprojection compares identical camera pan direction (+mv)!
                         sweep_sign = 1.0
@@ -960,6 +982,28 @@ def run_live_audit(
                                 )
                                 last_sweep_emit = now_t
                             time.sleep(0.35)
+
+                        # Wave 88: For exteriors, stop camera sweep AFTER the moving-camera audit burst (once all
+                        # CC Survival Mode modals are 100% dismissed!) and capture an exact static matched-pose pair.
+                        if (not spec.is_interior) and proc.poll() is None:
+                            emit_engine_commands(game_dir, ["dismiss_modal", build_cam_sweep_command(0.0, 0.0, 0.0, 1)])
+                            time.sleep(0.25)
+                            done_file.unlink(missing_ok=True)
+                            matched_lines = [
+                                f"scene={spec.name}",
+                                "keyframe=matched",
+                                "steps=game,improved",
+                                "hold=12",
+                                "burst=1",
+                                "stride=1",
+                                f"dir={scene_out}",
+                            ]
+                            go_file.write_text("\n".join(matched_lines) + "\n", encoding="utf-8")
+                            m_deadline = time.time() + 25.0
+                            while time.time() < m_deadline:
+                                if done_file.exists() or proc.poll() is not None:
+                                    break
+                                time.sleep(0.15)
                 finally:
                     _stop_skyrim(proc)
                     for tmpf in (go_file, done_file, engine_go):

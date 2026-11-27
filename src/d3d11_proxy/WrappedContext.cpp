@@ -62,6 +62,9 @@ void WrappedContext::ResetFrameStats()
     m_drawCalls     = 0;
     m_rtSwitches    = 0;
     m_shaderChanges = 0;
+    m_vanillaDrawCalls = 0;
+    m_transformedDrawCalls = 0;
+    std::memset(m_classDrawHistogram, 0, sizeof(m_classDrawHistogram));
 
     // Reset state cache redundancy counters
     m_redundantSRV   = 0;
@@ -85,6 +88,7 @@ void WrappedContext::ResetStateCache()
     m_cachedRSState    = nullptr;
     std::memset(m_cachedPSSRVs, 0, sizeof(m_cachedPSSRVs));
     std::memset(m_cachedPSSamplers, 0, sizeof(m_cachedPSSamplers));
+    m_drawBindState = {};
 }
 
 // ============================================================================

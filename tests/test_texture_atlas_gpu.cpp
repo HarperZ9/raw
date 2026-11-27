@@ -271,8 +271,8 @@ bool RunAtlasGpuProof(bool useWarp)
                 modeLabel, int(initOk), initMs, int(host.TerrainUsesMeshShaders()),
                 host.PbrAtlasSliceCount(), host.PbrAtlasResolution(), host.PbrAtlasMipLevels(), err.c_str());
     Check(initOk && host.TerrainReady(), useWarp ? "WARP: RawMeshHost::Init + TerrainReady" : "HW: RawMeshHost::Init + TerrainReady");
-    Check(host.PbrAtlasSliceCount() == 8u && host.PbrAtlasResolution() == 128u && host.PbrAtlasMipLevels() == 8u,
-          useWarp ? "WARP: 8x128x128x8-mip PBR atlas configured" : "HW: 8x128x128x8-mip PBR atlas configured");
+    Check(host.PbrAtlasSliceCount() == 16u && host.PbrAtlasResolution() == 512u && host.PbrAtlasMipLevels() == 10u,
+          useWarp ? "WARP: 16x512x512x10-mip PBR atlas configured" : "HW: 16x512x512x10-mip PBR atlas configured");
 
     // 2. Upload multi-material 8-strip slab mesh
     const auto slabMesh = BuildMultiMaterialAtlasShowcaseSlab();

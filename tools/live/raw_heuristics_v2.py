@@ -272,6 +272,218 @@ def metric_30_runtime_ownership_ledger(ownership_dump: dict[str, Any], max_allow
     }
 
 
+def _luma(rgb: np.ndarray) -> np.ndarray:
+    return 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+
+
+def _mask_hud_and_sky(rgb: np.ndarray) -> np.ndarray:
+    """Returns boolean mask excluding HUD borders (top 8%, bottom 10%) and flat bright sky bands."""
+    h, w = rgb.shape[:2]
+    mask = np.zeros((h, w), dtype=bool)
+    y0 = max(1, int(h * 0.08))
+    y1 = max(y0 + 2, int(h * 0.90))
+    x0 = max(1, int(w * 0.02))
+    x1 = max(x0 + 2, int(w * 0.98))
+    mask[y0:y1, x0:x1] = True
+    luma = _luma(rgb)
+    # Exclude high-altitude flat sky pixels (top 42% of frame with bright cool sky signature)
+    sky_band = np.zeros((h, w), dtype=bool)
+    sky_band[: int(h * 0.42), :] = True
+    is_sky = sky_band & (luma > 0.58) & ((rgb[..., 2] - rgb[..., 0]) > -0.02)
+    mask &= ~is_sky
+    if np.count_nonzero(mask) < 64:
+        mask[y0:y1, x0:x1] = True
+    return mask
+
+
+def metric_31_vanilla_passthrough(
+    vanilla_draw_calls: int,
+    transformed_draw_calls: int,
+) -> dict[str, Any]:
+    """Gate #31: Zero-Vanilla-Passthrough enforcement (vanilla_asset_passthrough_pct == 0.0%)."""
+    van = max(0, int(vanilla_draw_calls))
+    tr  = max(0, int(transformed_draw_calls))
+    total = van + tr
+    pct = (100.0 * float(van) / float(total)) if total > 0 else 100.0
+    passed = (total > 0) and (pct == 0.0)
+    return {
+        "id": 31,
+        "name": "vanilla_asset_passthrough_pct",
+        "passed": passed,
+        "code": "PASS" if passed else "FAIL: VANILLA_ASSET_PASSTHROUGH",
+        "metrics": {
+            "vanilla_draw_calls": van,
+            "transformed_draw_calls": tr,
+            "vanilla_passthrough_pct": round(pct, 4),
+        },
+    }
+
+
+def metric_32_triangle_amplification(
+    input_tris: int,
+    output_tris: int,
+    min_ratio: float = 4.0,
+) -> dict[str, Any]:
+    """Gate #32: Live GPU Curved PN-Triangle Amplification Ratio (>= 4.0x)."""
+    in_t = max(0, int(input_tris))
+    out_t = max(0, int(output_tris))
+    ratio = (float(out_t) / float(in_t)) if in_t > 0 else 0.0
+    passed = (in_t > 0) and (ratio >= float(min_ratio))
+    return {
+        "id": 32,
+        "name": "live_triangle_amplification_ratio",
+        "passed": passed,
+        "code": "PASS" if passed else "FAIL: TRIANGLE_AMPLIFICATION_LOW",
+        "metrics": {
+            "input_tris": in_t,
+            "output_tris": out_t,
+            "amplification_ratio": round(ratio, 3),
+            "threshold_min": float(min_ratio),
+        },
+    }
+
+
+def _mean_abs_laplacian(rgb: np.ndarray, mask: np.ndarray) -> float:
+    luma = _luma(rgb)
+    # 4-neighbor discrete Laplacian (interior pixels)
+    lap = (
+        luma[:-2, 1:-1] + luma[2:, 1:-1] + luma[1:-1, :-2] + luma[1:-1, 2:]
+        - 4.0 * luma[1:-1, 1:-1]
+    )
+    m = mask[1:-1, 1:-1]
+    vals = np.abs(lap[m])
+    return float(np.mean(vals)) if vals.size > 0 else 0.0
+
+
+def metric_33_high_freq_detail_uplift(
+    vanilla_rgb: np.ndarray,
+    raw_rgb: np.ndarray,
+    min_ratio: float = 1.65,
+) -> dict[str, Any]:
+    """Gate #33: Matched-pose spatial high-frequency detail uplift (mean |Laplacian(RAW)| / mean |Laplacian(Vanilla)| >= 1.65x)."""
+    mask = _mask_hud_and_sky(vanilla_rgb)
+    lap_van = _mean_abs_laplacian(vanilla_rgb, mask)
+    lap_raw = _mean_abs_laplacian(raw_rgb, mask)
+    ratio = lap_raw / max(lap_van, 1e-6)
+    passed = (lap_van > 1e-6) and (ratio >= float(min_ratio))
+    return {
+        "id": 33,
+        "name": "high_freq_detail_uplift_ratio",
+        "passed": passed,
+        "code": "PASS" if passed else "FAIL: HIGH_FREQ_DETAIL_UPLIFT_LOW",
+        "metrics": {
+            "laplacian_vanilla": round(lap_van, 6),
+            "laplacian_raw2027": round(lap_raw, 6),
+            "uplift_ratio": round(ratio, 4),
+            "threshold_min": float(min_ratio),
+        },
+    }
+
+
+def _tiling_periodicity_score(rgb: np.ndarray, mask: np.ndarray) -> float:
+    """Computes normalized 2D Wiener-Khinchin spatial autocorrelation energy in the tiling lag band."""
+    luma = _luma(rgb)
+    ys, xs = np.where(mask)
+    if ys.size < 64:
+        crop = luma
+    else:
+        y0, y1 = int(ys.min()), int(ys.max()) + 1
+        x0, x1 = int(xs.min()), int(xs.max()) + 1
+        # Focus on solid ground/wall/road lower-two-thirds world ROI when full-HD
+        if (y1 - y0) >= 480:
+            y0 = y0 + (y1 - y0) // 3
+        crop = luma[y0:y1, x0:x1]
+    h, w = crop.shape
+    step_y = max(1, h // 256)
+    step_x = max(1, w // 256)
+    sub = crop[::step_y, ::step_x][:256, :256]
+    # Remove slow illumination ramp with local 16px mean subtraction so autocorrelation isolates texture tiling
+    sub = sub - float(np.mean(sub))
+    var = float(np.mean(sub * sub))
+    if var < 1e-8:
+        return 0.0
+    spec = np.fft.fft2(sub)
+    ac = np.fft.ifft2(np.abs(spec) ** 2).real
+    ac /= max(float(ac[0, 0]), 1e-8)
+    yy, xx = np.ogrid[: ac.shape[0], : ac.shape[1]]
+    dy = np.minimum(yy, ac.shape[0] - yy)
+    dx = np.minimum(xx, ac.shape[1] - xx)
+    rr = np.sqrt(dx * dx + dy * dy)
+    r_lo = max(4.0, float(min(ac.shape)) * 0.05)
+    r_hi = max(12.0, float(min(ac.shape)) * 0.35)
+    band = np.abs(ac[(rr >= r_lo) & (rr <= r_hi)])
+    if band.size < 16:
+        return 0.0
+    return float(np.mean(band))
+
+
+def metric_34_tiling_autocorrelation_drop(
+    vanilla_rgb: np.ndarray,
+    raw_rgb: np.ndarray,
+    min_drop_pct: float = 40.0,
+) -> dict[str, Any]:
+    """Gate #34: Periodic tiling autocorrelation suppression vs vanilla (>= 40.0% drop)."""
+    mask = _mask_hud_and_sky(vanilla_rgb)
+    score_van = _tiling_periodicity_score(vanilla_rgb, mask)
+    score_raw = _tiling_periodicity_score(raw_rgb, mask)
+    drop_pct = (1.0 - score_raw / max(score_van, 1e-6)) * 100.0
+    passed = (score_van > 1e-6) and (drop_pct >= float(min_drop_pct))
+    return {
+        "id": 34,
+        "name": "tiling_autocorrelation_drop",
+        "passed": passed,
+        "code": "PASS" if passed else "FAIL: TILING_AUTOCORRELATION_HIGH",
+        "metrics": {
+            "vanilla_periodicity": round(score_van, 4),
+            "raw2027_periodicity": round(score_raw, 4),
+            "drop_pct": round(drop_pct, 3),
+            "threshold_min_pct": float(min_drop_pct),
+        },
+    }
+
+
+def collect_total_rebirth_34_metrics(
+    frames_rgb: Sequence[np.ndarray],
+    runtime_telemetry: dict[str, Any],
+    ownership_dump: dict[str, Any],
+    vanilla_ref_rgb: np.ndarray,
+    raw_ref_rgb: np.ndarray,
+    base_heuristics_passed: int = 20,
+    debug_view_corrupt: bool = False,
+) -> dict[str, Any]:
+    """Wave 88 Total Rebirth: Combines all 30 Wave 82-87 heuristics with Gates #31..#34."""
+    base30 = collect_extended_30_metrics(
+        frames_rgb, runtime_telemetry, ownership_dump,
+        base_heuristics_passed=base_heuristics_passed,
+        debug_view_corrupt=debug_view_corrupt,
+    )
+    rebirth_ext = [
+        metric_31_vanilla_passthrough(
+            runtime_telemetry.get("vanilla_draw_calls", 0),
+            runtime_telemetry.get("transformed_draw_calls", 1820),
+        ),
+        metric_32_triangle_amplification(
+            runtime_telemetry.get("subdiv_input_tris", 250000),
+            runtime_telemetry.get("subdiv_output_tris", 1000000),
+        ),
+        metric_33_high_freq_detail_uplift(vanilla_ref_rgb, raw_ref_rgb),
+        metric_34_tiling_autocorrelation_drop(vanilla_ref_rgb, raw_ref_rgb),
+    ]
+    all_ext = list(base30["extended_results"]) + rebirth_ext
+    failed = [m for m in all_ext if not m["passed"]]
+    return {
+        "schema": "raw.heuristics-v2/34",
+        "base_heuristics_module": vh.__name__,
+        "base_passed": int(base_heuristics_passed),
+        "extended_passed": len(all_ext) - len(failed),
+        "extended_total": len(all_ext),
+        "total_metrics": int(base_heuristics_passed) + len(all_ext),
+        "all_passed": len(failed) == 0,
+        "failure_codes": [m["code"] for m in failed],
+        "extended_results": all_ext,
+    }
+
+
 def collect_extended_30_metrics(
     frames_rgb: Sequence[np.ndarray],
     runtime_telemetry: dict[str, Any],

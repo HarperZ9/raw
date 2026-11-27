@@ -12,8 +12,10 @@
 #include "raw_terrain_ps.h"  // kDxil_raw_terrain_ps (dxc, ps_6_6)
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
+#include <thread>
 
 namespace raw::bridge
 {
@@ -522,17 +524,39 @@ bool RawMeshHost::CreatePbrAtlasResources()
         return false;
     }
 
-    bool genOk = true;
+    // Wave 88: Parallelize 16x512x512 procedural PBR texture forge generation across hardware threads (<0.3s startup!).
+    std::vector<raw::materials::ProceduralPbrTextureSet> sets(kPbrAtlasSlices);
+    std::atomic<uint32_t> nextSlice{0u};
+    std::atomic<bool> allGenOk{true};
+    const uint32_t hwThreads = std::max(1u, std::thread::hardware_concurrency());
+    const uint32_t workerCount = std::min(kPbrAtlasSlices, hwThreads);
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+    for (uint32_t t = 0u; t < workerCount; ++t) {
+        workers.emplace_back([&]() {
+            for (;;) {
+                const uint32_t slice = nextSlice.fetch_add(1u, std::memory_order_relaxed);
+                if (slice >= kPbrAtlasSlices) break;
+                const auto kind = static_cast<raw::materials::ProceduralTextureKind>(slice);
+                raw::materials::ProceduralPbrTextureSet localSet;
+                if (!raw::materials::GenerateProceduralPbrTextureSet(kind, kPbrAtlasRes, 202647u + slice * 131u, &localSet) ||
+                    localSet.albedo.MipCount() < kPbrAtlasMips ||
+                    localSet.normal.MipCount() < kPbrAtlasMips ||
+                    localSet.ormh.MipCount() < kPbrAtlasMips) {
+                    allGenOk.store(false, std::memory_order_relaxed);
+                    break;
+                }
+                sets[slice] = std::move(localSet);
+            }
+        });
+    }
+    for (auto& w : workers) {
+        if (w.joinable()) w.join();
+    }
+
+    const bool genOk = allGenOk.load(std::memory_order_relaxed);
     for (uint32_t slice = 0u; slice < kPbrAtlasSlices && genOk; ++slice) {
-        raw::materials::ProceduralPbrTextureSet set;
-        const auto kind = static_cast<raw::materials::ProceduralTextureKind>(slice);
-        if (!raw::materials::GenerateProceduralPbrTextureSet(kind, kPbrAtlasRes, 202647u + slice * 131u, &set) ||
-            set.albedo.MipCount() < kPbrAtlasMips ||
-            set.normal.MipCount() < kPbrAtlasMips ||
-            set.ormh.MipCount() < kPbrAtlasMips) {
-            genOk = false;
-            break;
-        }
+        const auto& set = sets[slice];
         for (uint32_t mip = 0u; mip < kPbrAtlasMips; ++mip) {
             const uint32_t subIdx = slice * kPbrAtlasMips + mip;
             const auto& fp = m_pbrFootprints[subIdx];
@@ -925,6 +949,42 @@ void RawMeshHost::SubdivideMesh(ID3D12GraphicsCommandList* cmd,
     cmd->SetComputeRootUnorderedAccessView(3, outVertsUav);
     cmd->SetComputeRootUnorderedAccessView(4, outIdxUav);
     cmd->Dispatch((cb.inTriangleCount + 63u) / 64u, 1u, 1u);
+
+    m_subdivTelemetry.inputTriangles  += cb.inTriangleCount;
+    m_subdivTelemetry.outputTriangles += static_cast<uint64_t>(cb.inTriangleCount) * 4u;
+    ++m_subdivTelemetry.dispatchCount;
+    m_subdivTelemetry.amplificationRatio = m_subdivTelemetry.inputTriangles > 0u
+        ? (static_cast<double>(m_subdivTelemetry.outputTriangles) / static_cast<double>(m_subdivTelemetry.inputTriangles))
+        : 1.0;
+}
+
+void RawMeshHost::SubdivideMeshCascade(ID3D12GraphicsCommandList* cmd,
+                                       D3D12_GPU_VIRTUAL_ADDRESS inVertsSrv, D3D12_GPU_VIRTUAL_ADDRESS inIdxSrv,
+                                       D3D12_GPU_VIRTUAL_ADDRESS midVertsUav, D3D12_GPU_VIRTUAL_ADDRESS midIdxUav,
+                                       D3D12_GPU_VIRTUAL_ADDRESS outVertsUav, D3D12_GPU_VIRTUAL_ADDRESS outIdxUav,
+                                       const RawSubdivCB& cb, uint32_t passes)
+{
+    if (!cmd || cb.inTriangleCount == 0u || passes == 0u) return;
+    if (passes == 1u) {
+        RawSubdivCB p0 = cb;
+        p0.subdivPassIndex = 0u;
+        SubdivideMesh(cmd, inVertsSrv, inIdxSrv, outVertsUav, outIdxUav, p0);
+        return;
+    }
+    // 2-pass cascade (1 -> 4 -> 16 curved PN-Triangles) with explicit UAV barrier between passes
+    RawSubdivCB p0 = cb;
+    p0.subdivPassIndex = 0u;
+    SubdivideMesh(cmd, inVertsSrv, inIdxSrv, midVertsUav, midIdxUav, p0);
+
+    D3D12_RESOURCE_BARRIER uavBarrier{};
+    uavBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    uavBarrier.UAV.pResource = nullptr;
+    cmd->ResourceBarrier(1, &uavBarrier);
+
+    RawSubdivCB p1 = cb;
+    p1.inTriangleCount = cb.inTriangleCount * 4u;
+    p1.subdivPassIndex = 1u;
+    SubdivideMesh(cmd, midVertsUav, midIdxUav, outVertsUav, outIdxUav, p1);
 }
 
 } // namespace raw::bridge

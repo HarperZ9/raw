@@ -17,6 +17,10 @@ cbuffer SubdivParams : register(b0) {
     float snowDepthU;       // volumetric snowpack buildup depth in world units (0..48)
     float snowAvalancheCos; // minimum n.z cosine for snow accumulation (default 0.42)
     float3 camPosW;
+    uint  assetClass14;     // Wave 88: AssetClass14 (1..14) for class-specific 3D displacement
+    uint  subdivPassIndex;  // 0 = 1->4 pass, 1 = 1->16 cascade pass
+    float mossLiftAmp;      // 3D velvet moss cushion loft on upward rock/masonry
+    float pad0;
 };
 
 StructuredBuffer<SubdivVertex>   InVerts  : register(t0);
@@ -40,6 +44,36 @@ float subNoise3(float3 p) {
     const float n011 = subHash31(i + float3(0, 1, 1)), n111 = subHash31(i + float3(1, 1, 1));
     return lerp(lerp(lerp(n000, n100, u.x), lerp(n010, n110, u.x), u.y),
                 lerp(lerp(n001, n101, u.x), lerp(n011, n111, u.x), u.y), u.z);
+}
+
+// Wave 88: Crack-free deterministic class-specific 3D world-space displacement (matches RawTotalRebirth.h).
+float evalClassDisplacement3D(float3 wp, float3 n, uint classId, float amp) {
+    if (amp <= 1.0e-5f || classId == 14u || classId == 8u) { return 0.0f; }
+    const float baseN = subNoise3(wp * 0.07f);
+    if (classId == 3u) { // RockCliffBoulder: fractured sedimentary rock strata + basalt ridges
+        const float strata = sin(wp.z * 0.16f + baseN * 2.2f);
+        return (strata * 0.55f + (baseN - 0.5f) * 1.15f) * amp;
+    }
+    if (classId == 2u) { // CobbleRoadPath: chamfered cobblestone domes with recessed mortar
+        const float2 g = frac(wp.xy * 0.045f);
+        const float edge = min(min(g.x, 1.0f - g.x), min(g.y, 1.0f - g.y));
+        return (smoothstep(0.04f, 0.22f, edge) - 0.35f) * amp * 1.10f;
+    }
+    if (classId == 11u) { // NordicStoneMasonry: hand-dressed ashlar stone bevels
+        const float gx = frac((wp.x + wp.y) * 0.025f);
+        const float gy = frac(wp.z * 0.040f);
+        const float bevel = smoothstep(0.03f, 0.14f, min(min(gx, 1.0f - gx), min(gy, 1.0f - gy)));
+        return (bevel - 0.40f + (baseN - 0.5f) * 0.35f) * amp;
+    }
+    if (classId == 5u) { // TreeTrunkBark: longitudinal corrugated bark furrows
+        const float ridge = abs(subNoise3(float3((wp.x + wp.y) * 0.22f, wp.z * 0.035f, 1.7f)) * 2.0f - 1.0f);
+        return (0.5f - ridge) * amp * 1.25f;
+    }
+    if (classId == 9u) { // GlacierIce: sharp faceted conchoidal ridges
+        const float facet = abs(sin((wp.x * 0.05f - wp.y * 0.04f + wp.z * 0.06f) + baseN));
+        return (facet - 0.5f) * amp * 1.15f;
+    }
+    return (baseN - 0.5f) * amp * 1.85f;
 }
 
 float3 pnEdge(float3 p, float3 n, float3 q, float creaseW) {
@@ -88,10 +122,16 @@ void subdiv_main(uint tid : SV_DispatchThreadID) {
                          + b021 * u * u * v + b102 * w * v * v + b012 * u * v * v)
                  + 6.0f * b111 * u * v * w;
         const float3 n = normalize(n0 * w + n1 * u + n2 * v);
-        // Crack-free micro-displacement on subdivided edge midpoints (k >= 3):
+        // Crack-free class-specific 3D displacement on subdivided edge midpoints (k >= 3):
+        const float passScale = (subdivPassIndex == 0u) ? 1.0f : 0.45f;
         if (k >= 3u && displaceAmp > 0.001f) {
-            const float wpDisp = (subNoise3((p + camPosW) * 0.07f) - 0.5f) * displaceAmp * 1.85f;
+            const float wpDisp = evalClassDisplacement3D(p + camPosW, n, assetClass14, displaceAmp * passScale);
             p += n * wpDisp;
+        }
+        // Organic 3D velvet moss cushion loft on upward-facing rock/masonry/road edges:
+        if (k >= 3u && mossLiftAmp > 0.001f && n.z > 0.40f && (assetClass14 == 3u || assetClass14 == 4u || assetClass14 == 11u)) {
+            const float mPatch = smoothstep(0.48f, 0.78f, subNoise3((p + camPosW) * 0.025f));
+            p.z += mPatch * smoothstep(0.40f, 0.80f, n.z) * mossLiftAmp * passScale;
         }
         // True 3D volumetric snow buildup lift on upward-facing surfaces above angle of repose:
         if (snowDepthU > 0.05f && n.z > snowAvalancheCos) {

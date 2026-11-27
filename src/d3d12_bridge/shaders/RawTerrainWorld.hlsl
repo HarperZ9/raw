@@ -16,6 +16,7 @@
 #include "RawMaterials3D.hlsli"
 #include "RawFloraWind.hlsli"
 #include "RawSeasonsThermals.hlsli"
+#include "RawTotalMaterialOverhaul.hlsli"
 
 // Matches raw::worldgen::MeshletDesc (48 bytes)
 struct TerrainMeshletDesc {
@@ -50,9 +51,8 @@ StructuredBuffer<TerrainMeshletDesc> TerrainMeshlets : register(t0);
 StructuredBuffer<TerrainVertex>      TerrainVertices : register(t1);
 ByteAddressBuffer                    TerrainIndices  : register(t2);
 Texture2D<float>                     SceneDepth      : register(t3);
-// Wave 47: GPU Procedural PBR Texture2DArray Atlas (8 RawTextureForge materials x 8 mips, 128x128):
-//   Slice 0 = NordicGraniteStrata, 1 = GlacialStratifiedIce, 2 = ForgedBrushedSteel, 3 = BorealPineBark,
-//   4 = HexagonalBasalt, 5 = VolcanicMagmaCrust, 6 = AlpineMossMeadow, 7 = BraidedRiverPebbles.
+// Wave 88: GPU Procedural PBR Texture2DArray Atlas (16 RawTextureForge materials x 10 mips, 512x512):
+//   Slice 0..7 = NordicGraniteStrata..BraidedRiverPebbles, 8..15 = Loam, FlagstoneCobble, CutMasonry, Timber, Snow, Canopy, Sedge, Wool.
 Texture2DArray<float4>               g_pbrAlbedo     : register(t5);
 Texture2DArray<float4>               g_pbrNormal     : register(t6);
 Texture2DArray<float4>               g_pbrOrmh       : register(t7);

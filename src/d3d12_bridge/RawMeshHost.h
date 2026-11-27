@@ -65,6 +65,18 @@ struct alignas(256) RawSubdivCB {
     float    snowDepthU       = 0.0f;
     float    snowAvalancheCos = 0.42f;
     float    camPosW[3]       = {};
+    uint32_t assetClass14     = 3u;     // Wave 88: AssetClass14 (1..14) for class-specific 3D displacement
+    uint32_t subdivPassIndex  = 0u;     // 0 = 4x pass, 1 = 16x cascade pass
+    float    mossLiftAmp      = 0.15f;  // 3D velvet moss cushion loft on upward rock/masonry
+    float    pad0             = 0.0f;
+};
+static_assert(sizeof(RawSubdivCB) == 256u, "RawSubdivCB must remain 256B D3D12 CBV-aligned");
+
+struct SubdivTelemetry {
+    uint64_t inputTriangles     = 0u;
+    uint64_t outputTriangles    = 0u;
+    uint32_t dispatchCount      = 0u;
+    double   amplificationRatio = 1.0;
 };
 
 class RawMeshHost {
@@ -96,6 +108,14 @@ public:
                        D3D12_GPU_VIRTUAL_ADDRESS inVertsSrv, D3D12_GPU_VIRTUAL_ADDRESS inIdxSrv,
                        D3D12_GPU_VIRTUAL_ADDRESS outVertsUav, D3D12_GPU_VIRTUAL_ADDRESS outIdxUav,
                        const RawSubdivCB& cb);
+    // Wave 88: Multi-pass 1->4 (passes=1) or 1->16 (passes=2) curved PN-Triangle cascade with live amplification telemetry.
+    void SubdivideMeshCascade(ID3D12GraphicsCommandList* cmd,
+                              D3D12_GPU_VIRTUAL_ADDRESS inVertsSrv, D3D12_GPU_VIRTUAL_ADDRESS inIdxSrv,
+                              D3D12_GPU_VIRTUAL_ADDRESS midVertsUav, D3D12_GPU_VIRTUAL_ADDRESS midIdxUav,
+                              D3D12_GPU_VIRTUAL_ADDRESS outVertsUav, D3D12_GPU_VIRTUAL_ADDRESS outIdxUav,
+                              const RawSubdivCB& cb, uint32_t passes = 1u);
+    const SubdivTelemetry& GetSubdivTelemetry() const { return m_subdivTelemetry; }
+    void ResetSubdivTelemetry() { m_subdivTelemetry = {}; }
 
     // Records and submits live RawTerrainWorld.hlsl pass onto `colorOut` (RGBA16F, COMMON->RT->COMMON)
     // occluded against Skyrim's standard-Z `depthIn` (R32F, COMMON->PS_SRV->COMMON) + hardware D32_FLOAT DSV.
@@ -115,11 +135,13 @@ public:
 private:
     static constexpr uint32_t kTerrainRing = 3u;
     static constexpr uint32_t kMaxTerrainDrawsPerFrame = 256u;
-    static constexpr uint32_t kPbrAtlasSlices = 8u;
-    static constexpr uint32_t kPbrAtlasRes = 128u;
-    static constexpr uint32_t kPbrAtlasMips = 8u; // 128, 64, 32, 16, 8, 4, 2, 1
+    static constexpr uint32_t kPbrAtlasSlices = 16u;
+    static constexpr uint32_t kPbrAtlasRes = 512u;
+    static constexpr uint32_t kPbrAtlasMips = 10u; // 512, 256, 128, 64, 32, 16, 8, 4, 2, 1
     static constexpr uint32_t kPbrAtlasSubresources = kPbrAtlasSlices * kPbrAtlasMips;
     static constexpr uint32_t kPbrSrvBase = kTerrainRing * 2u;
+    static_assert(kPbrAtlasSlices == 16u && kPbrAtlasRes == 512u && kPbrAtlasMips == 10u,
+                  "Wave 88 Total Rebirth PBR Texture2DArray must be 16x512x512 with 10 mips");
 
     bool EnsureTerrainDepth(UINT width, UINT height);
     bool CreatePbrAtlasResources();
@@ -179,6 +201,7 @@ private:
     uint64_t                                           m_pbrUploadDoneFence = 0;
 
     std::vector<std::pair<uint64_t, TerrainGpuChunk>>  m_retiredChunks;
+    SubdivTelemetry                                    m_subdivTelemetry{};
 };
 
 } // namespace raw::bridge

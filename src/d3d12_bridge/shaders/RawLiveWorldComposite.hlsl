@@ -44,6 +44,9 @@ SamplerState LinWrap  : register(s1);
 
 static const float kInvUnitsPerMeter = 1.0f / 70.0f;
 
+#include "RawTotalMaterialOverhaul.hlsli"
+#include "RawMossShader.hlsli"
+
 float3 SanitizeColor3(float3 c)
 {
     return float3(
@@ -387,6 +390,63 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
 
     float3 col    = SanitizeColor3(origColor.rgb);
     bool modified = false;
+
+    // -------------------------------------------------------------------------
+    // 0. WAVE 88 TOTAL REBIRTH: 14-CLASS STOCHASTIC HEX-TILED PBR OVERHAUL +
+    //    SURFACE-INTERIOR MICRO-BEVEL CARVING + LIVE 3D VELVET MOSS (Mode=2 only)
+    // -------------------------------------------------------------------------
+    {
+        const uint class14 = rawRebirthClassifyPixel14(base, alb, N, isInt, isActor);
+        if (class14 != kRawClass14_Unclassified && class14 != kRawClass14_WaterSurface && class14 != kRawClass14_CharacterSkinHairCloth) {
+            // Compute strict 2-pixel silhouette-depth interior mask so relief/moss NEVER causes edge ghosting or dark outlines!
+            const int2 pxL  = int2(max(int(dtid.x) - 1, 0), int(dtid.y));
+            const int2 pxR  = int2(min(int(dtid.x) + 1, int(dimsU.x) - 1), int(dtid.y));
+            const int2 pxU  = int2(int(dtid.x), max(int(dtid.y) - 1, 0));
+            const int2 pxD  = int2(int(dtid.x), min(int(dtid.y) + 1, int(dimsU.y) - 1));
+            const int2 pxL2 = int2(max(int(dtid.x) - 2, 0), int(dtid.y));
+            const int2 pxR2 = int2(min(int(dtid.x) + 2, int(dimsU.x) - 1), int(dtid.y));
+            const int2 pxU2 = int2(int(dtid.x), max(int(dtid.y) - 2, 0));
+            const int2 pxD2 = int2(int(dtid.x), min(int(dtid.y) + 2, int(dimsU.y) - 1));
+            const float dJ1 = max(max(abs(d - SceneDepth.Load(int3(pxL, 0))), abs(d - SceneDepth.Load(int3(pxR, 0)))),
+                                  max(abs(d - SceneDepth.Load(int3(pxU, 0))), abs(d - SceneDepth.Load(int3(pxD, 0)))));
+            const float dJ2 = max(max(abs(d - SceneDepth.Load(int3(pxL2, 0))), abs(d - SceneDepth.Load(int3(pxR2, 0)))),
+                                  max(abs(d - SceneDepth.Load(int3(pxU2, 0))), abs(d - SceneDepth.Load(int3(pxD2, 0)))));
+            const float depthJump = max(dJ1, dJ2 * 0.75f);
+            const float interiorMask = 1.0f - smoothstep(0.00035f, 0.0016f, depthJump);
+
+            // Surface-interior albedo micro-relief gradient & Laplacian (chisels real stones, carvings, wood grain!)
+            float albLap = 0.0f;
+            float2 albGrad = float2(0.0f, 0.0f);
+            if (interiorMask > 0.05f && hasSurf) {
+                const float3 lumaW = float3(0.2126f, 0.7152f, 0.0722f);
+                const float lC = dot(alb, lumaW);
+                const float lL = dot(SceneAlbedo.Load(int3(pxL, 0)).rgb, lumaW);
+                const float lR = dot(SceneAlbedo.Load(int3(pxR, 0)).rgb, lumaW);
+                const float lU = dot(SceneAlbedo.Load(int3(pxU, 0)).rgb, lumaW);
+                const float lD = dot(SceneAlbedo.Load(int3(pxD, 0)).rgb, lumaW);
+                albLap  = lC - 0.25f * (lL + lR + lU + lD);
+                albGrad = float2(lR - lL, lD - lU);
+            }
+
+            float3 nOverhaul = N;
+            col = rawRebirthApplyTotalMaterialOverhaul(
+                col, alb, N, worldM, distM,
+                sD, sC, -rayDir,
+                interiorMask, albLap, albGrad,
+                class14, isInt, nOverhaul);
+
+            const float albLumSnow = dot(alb, float3(0.2126f, 0.7152f, 0.0722f));
+            const float snowCov01  = max(saturate((albLumSnow - 0.56f) * 3.5f) * saturate((N.z - 0.40f) * 2.5f),
+                                         saturate(waterAndCaustics.w * 2.5f));
+            const float waterZ_m   = waterAndCaustics.x * kInvUnitsPerMeter;
+            rawRebirthApply3DMoss(
+                col, alb, nOverhaul, worldM, distM,
+                rayDir, sD, sC, sunDir.w,
+                waterZ_m, snowCov01, windAndWeather.z,
+                interiorMask, base, class14, isInt, isActor);
+            modified = true;
+        }
+    }
 
     // -------------------------------------------------------------------------
     // 1. LIVE GPU SNOW DEFORMATION, FOOTPRINT TRENCHES & CAMPFIRE MELT RINGS

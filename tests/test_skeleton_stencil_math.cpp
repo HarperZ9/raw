@@ -44,12 +44,16 @@ int RunSkeletonStencilMathTests(void (*checkFn)(bool, const char*) = nullptr) {
         ok = ok && IsActorMaterialClass(clsActor3p) && IsActorMaterialClass(clsActor1p) && !IsActorMaterialClass(clsStatic);
         ok = ok && IsFoliageMaterialClass(clsFoliage) && !IsFoliageMaterialClass(clsActor3p) && !IsFoliageMaterialClass(clsStatic);
 
-        // Specialized classes MUST NOT be overwritten by either SkinnedActor or Foliage overrides:
-        const uint8_t preserved[] = {Skin, Hair, Eye, SoftLit, Landscape, EnvironmentMapped, GlowMapped, Parallax, TruePBR, Water, Effect, DistantLod};
+        // Specialized classes MUST NOT be overwritten by either SkinnedActor or Foliage overrides
+        // (Wave 89 exception: SoftLit + SkinnedActor promotes 80-bone skinned furred creatures/horses to SkinnedActor=14!):
+        const uint8_t preserved[] = {Skin, Hair, Eye, Landscape, EnvironmentMapped, GlowMapped, Parallax, TruePBR, Water, Effect, DistantLod};
         for (uint8_t c : preserved) {
             if (ResolveMaterialClass(c, SkinnedActor, 0u) != c) ok = false;
             if (ResolveMaterialClass(c, SoftLit, 0u) != c) ok = false;
         }
+        ok = ok && (ResolveMaterialClass(SoftLit, SkinnedActor, 0u) == SkinnedActor);
+        ok = ok && (ResolveMaterialClass(SoftLit, SoftLit, 0u) == SoftLit);
+        ok = ok && (ResolveMaterialClass(SoftLit, None, 0u) == SoftLit);
         ok = ok && IsActorMaterialClass(Skin) && IsActorMaterialClass(Hair) && IsActorMaterialClass(Eye);
         ok = ok && !IsActorMaterialClass(SoftLit) && !IsActorMaterialClass(Landscape) && !IsActorMaterialClass(EnvironmentMapped);
 

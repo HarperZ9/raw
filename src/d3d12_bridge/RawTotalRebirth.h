@@ -165,6 +165,9 @@ struct MossEvalInput {
     raw::dxbc::material::AssetClass14 assetClass = raw::dxbc::material::AssetClass14::RockCliffBoulder;
     bool  isInterior = false;
     bool  isActor = false;
+    float albedoR = 0.35f;
+    float albedoG = 0.35f;
+    float albedoB = 0.35f;
 };
 
 struct MossEvalResult {
@@ -174,9 +177,18 @@ struct MossEvalResult {
     Vec3  mossColor{};
 };
 
+// Wave 89 Defect B guard: distinguishes genuinely living green foliage from frosted/dead winter brambles.
+constexpr bool IsLivingGreenFoliage(float r, float g, float b) noexcept {
+    return (g > r * 1.04f) && (g > b * 1.08f) && (g > 0.024f);
+}
+
 inline MossEvalResult Evaluate3DMoss(const MossEvalInput& in) noexcept {
     MossEvalResult out{};
     if (in.isInterior || in.isActor || in.distM > 52.0f) return out;
+    // Wave 89 Defect A + D hard hue exclusion: warm fur/wood and painted Nordic blue wood NEVER receive moss.
+    const bool isWarmFurOrWood = (in.albedoR > in.albedoB * 1.16f && in.albedoR >= in.albedoG * 1.02f);
+    const bool isPaintedBlue   = (in.albedoB > in.albedoR * 1.12f && in.albedoG > in.albedoR * 1.02f);
+    if (isWarmFurOrWood || isPaintedBlue) return out;
     using AC = raw::dxbc::material::AssetClass14;
     const bool eligible = (in.assetClass == AC::RockCliffBoulder || in.assetClass == AC::CobbleRoadPath ||
                            in.assetClass == AC::NordicStoneMasonry || in.assetClass == AC::MossLichen ||
@@ -214,6 +226,113 @@ inline MossEvalResult Evaluate3DMoss(const MossEvalInput& in) noexcept {
     return out;
 }
 
+// Wave 89 Part 2: Sharp Voronoi-edge conchoidal glacier fracture crack (mirrors RawTotalMaterialOverhaul.hlsli).
+inline float EvalGlacierConchoidalCrack(Vec2 p) noexcept {
+    const float ix = std::floor(p.x);
+    const float iy = std::floor(p.y);
+    const float fx = p.x - ix;
+    const float fy = p.y - iy;
+    float d1 = 8.0f;
+    float d2 = 8.0f;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            const Vec2 o = Hash22({ix + float(x), iy + float(y)});
+            const float rx = float(x) + (o.x * 0.78f + 0.11f) - fx;
+            const float ry = float(y) + (o.y * 0.78f + 0.11f) - fy;
+            const float d  = rx * rx + ry * ry;
+            if (d < d1) { d2 = d1; d1 = d; }
+            else if (d < d2) { d2 = d; }
+        }
+    }
+    const float edge = std::sqrt(std::max(d2, 0.0f)) - std::sqrt(std::max(d1, 0.0f));
+    return 1.0f - Smoothstep(0.015f, 0.085f, edge);
+}
+
+// Wave 89 Part 2: Organic non-periodic domain-warped glacial flow striations + sparse stress hairlines (zero spots/web).
+inline float EvalGlacierAnisotropicHeight(Vec3 worldM, Vec2 pDom) noexcept {
+    const Vec2 pObl{pDom.x * 0.927f - pDom.y * 0.375f, pDom.x * 0.375f + pDom.y * 0.927f};
+    const float warpA = (EvalHexStochasticNoise({pObl.x * 0.42f + worldM.z * 0.22f, pObl.y * 0.42f + 2.3f}) - 0.5f) * 2.15f;
+    const float warpB = (EvalHexStochasticNoise({pObl.x * 0.96f - worldM.z * 0.31f, pObl.y * 0.96f + 7.1f}) - 0.5f) * 0.85f;
+    const float striaA = EvalHexStochasticNoise({(pObl.x + warpA) * 0.95f, (pObl.y + warpB) * 5.0f + worldM.z * 3.1f});
+    const float striaB = EvalHexStochasticNoise({(pObl.x - warpB) * 2.10f + 5.1f, (pObl.y + warpA * 0.5f) * 9.8f - worldM.z * 4.4f});
+    const float striaC = ValueNoise2D((pObl.x + warpA * 0.6f) * 3.2f, (pObl.y + warpB * 0.5f) * 18.0f + worldM.z * 9.5f);
+    const float striations = striaA * 0.34f + striaB * 0.32f + striaC * 0.34f;
+    const float crackZone = Smoothstep(0.62f, 0.86f, EvalHexStochasticNoise({pObl.x * 0.45f + 4.7f, pObl.y * 0.45f - 1.9f}));
+    const float rawEdge = EvalGlacierConchoidalCrack({(pObl.x + warpA * 0.4f) * 0.55f, (pObl.y + warpB * 0.4f) * 1.95f + worldM.z * 0.45f});
+    const float hairline = Smoothstep(0.55f, 0.95f, rawEdge) * crackZone;
+    return Clamp01(0.86f * striations - 0.22f * hairline + 0.07f);
+}
+
+// Wave 89 Part 2: Strictly directional 22:1 anisotropic wood-grain fibers (zero blotchy wood splatter).
+inline float EvalTimberAnisotropicGrain(Vec3 worldM, Vec3 N) noexcept {
+    const float along  = (std::fabs(N.z) > 0.65f) ? worldM.x : worldM.z;
+    const float across = (std::fabs(N.z) > 0.65f) ? worldM.y : (std::fabs(N.x) > std::fabs(N.y) ? worldM.y : worldM.x);
+    const float grainWarp = (ValueNoise2D(across * 1.4f, along * 0.35f) - 0.5f) * 0.14f;
+    const float fiberA = ValueNoise2D((across + grainWarp) * 24.0f, along * 1.10f);
+    const float fiberB = ValueNoise2D((across + grainWarp) * 52.0f, along * 2.30f);
+    const float ring   = 0.5f + 0.5f * std::sin((across + grainWarp) * 38.0f + fiberA * 2.4f);
+    return Clamp01(0.46f * fiberA + 0.34f * fiberB + 0.20f * ring);
+}
+
+// Wave 89 Part 2: 4-Step Silhouette-Safe POM Height-Field Displacement & Road Wheel-Rut Puddle mirror.
+struct PomEvalResult {
+    Vec3  displacedWorldM{};
+    float pomAo        = 1.0f;
+    float roadPuddle01 = 0.0f;
+    float hitHeight01  = 0.5f;
+};
+
+inline PomEvalResult EvalPomDisplacement4Step(raw::dxbc::material::AssetClass14 cls,
+                                              Vec3 worldM, Vec3 N, Vec3 viewDir,
+                                              float distM, float interiorMask, float rain01) noexcept {
+    PomEvalResult out{worldM, 1.0f, 0.0f, 0.5f};
+    using AC = raw::dxbc::material::AssetClass14;
+    const bool eligible = (cls == AC::CobbleRoadPath || cls == AC::RockCliffBoulder ||
+                           cls == AC::TerrainGround || cls == AC::NordicStoneMasonry);
+    const float pomFade = (1.0f - Smoothstep(8.0f, 24.0f, distM)) * interiorMask;
+    if (!eligible || pomFade <= 0.02f) return out;
+
+    const float ndv = std::max(std::fabs(Dot3(N, viewDir)), 0.38f);
+    const Vec3 tanView = viewDir - N * Dot3(viewDir, N);
+    const float depthM = (cls == AC::RockCliffBoulder) ? 0.075f
+                       : ((cls == AC::CobbleRoadPath) ? 0.055f : 0.040f);
+    const Vec3 stepVec = tanView * (-(depthM * pomFade) / (ndv * 4.0f));
+
+    Vec3 curW = worldM;
+    float curLayer = 1.0f;
+    float hitH = 0.5f;
+    for (int i = 0; i < 4; ++i) {
+        curLayer -= 0.25f;
+        curW = curW + stepVec;
+        const Vec2 pStep = (std::fabs(N.z) >= std::fabs(N.x) && std::fabs(N.z) >= std::fabs(N.y))
+            ? Vec2{curW.x, curW.y} : ((std::fabs(N.x) >= std::fabs(N.y)) ? Vec2{curW.y, curW.z} : Vec2{curW.x, curW.z});
+        float h = 0.5f;
+        if (cls == AC::RockCliffBoulder) {
+            const float warp = (EvalHexStochasticNoise({pStep.x * 0.52f, pStep.y * 0.52f}) - 0.5f) * 1.45f;
+            const float ledge = Smoothstep(0.28f, 0.72f, 0.5f + 0.5f * std::sin(curW.z * 2.8f + warp * 3.4f));
+            const float crack = EvalGlacierConchoidalCrack({pStep.x * 1.15f + curW.z * 0.45f, pStep.y * 1.15f + 1.9f});
+            const float grit  = ValueNoise2D(pStep.x * 18.0f + curW.z * 6.5f, pStep.y * 18.0f + curW.z * 6.5f);
+            h = Clamp01(0.36f * ledge + 0.38f * grit + 0.26f * EvalHexStochasticNoise({pStep.x * 1.7f, pStep.y * 1.7f}) - 0.30f * crack);
+        } else {
+            const float stoneMacro = EvalHexStochasticNoise({pStep.x * 1.55f, pStep.y * 1.55f});
+            const float chiselPit  = ValueNoise2D(pStep.x * 11.5f + stoneMacro * 1.2f, pStep.y * 11.5f + 2.7f);
+            const float quartzGrit = ValueNoise2D(pStep.x * 26.0f + curW.z * 6.0f, pStep.y * 26.0f + curW.z * 6.0f);
+            h = Clamp01(0.36f * stoneMacro + 0.36f * chiselPit + 0.28f * quartzGrit);
+        }
+        hitH = h;
+        if (h >= curLayer) break;
+    }
+    out.displacedWorldM = curW;
+    out.hitHeight01 = hitH;
+    out.pomAo = Lerp(1.0f, Lerp(0.76f, 1.08f, hitH), pomFade * 0.72f);
+    if ((cls == AC::CobbleRoadPath || cls == AC::TerrainGround) && N.z > 0.78f) {
+        const float hollow = Smoothstep(0.46f, 0.20f, hitH);
+        const float rutMacro = Smoothstep(0.54f, 0.80f, EvalHexStochasticNoise({worldM.x * 0.26f + 9.1f, worldM.y * 0.26f + 4.3f}));
+        out.roadPuddle01 = hollow * rutMacro * Clamp01(0.32f + rain01 * 0.68f) * pomFade;
+    }
+    return out;
+}
+
 // Curved Vlachos PN-Triangle 1->4 (and cascaded 1->16) CPU mirror matching RawSubdiv.hlsl bit-for-bit structure.
 struct SubdivVert {
     Vec3 pos{};
@@ -247,8 +366,10 @@ inline float EvalClassDisplacement3D(Vec3 worldPos, Vec3 n, raw::dxbc::material:
         return (0.5f - ridge) * amp * 1.25f;
     }
     if (cls == AC::GlacierIce) {
-        const float facet = std::fabs(std::sin((worldPos.x * 0.05f - worldPos.y * 0.04f + worldPos.z * 0.06f) + baseN));
-        return (facet - 0.5f) * amp * 1.15f;
+        // Wave 89: 6:1 anisotropic glacial flow ridges + conchoidal stepped ledges (zero isotropic blobs)
+        const float stria = ValueNoise2D(worldPos.x * 0.025f + worldPos.y * 0.015f, worldPos.z * 0.16f);
+        const float facet = std::fabs(std::sin((worldPos.x * 0.03f - worldPos.y * 0.02f + worldPos.z * 0.12f) + stria * 1.4f));
+        return (facet * 0.65f + stria * 0.35f - 0.5f) * amp * 1.15f;
     }
     (void)n;
     return (baseN - 0.5f) * amp;

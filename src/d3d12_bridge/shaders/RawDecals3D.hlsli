@@ -318,8 +318,12 @@ RawDecalResult evalDecals3D(float3 albedoIn, float3 nIn, float3 vDir, float3 pRe
 
     // -------------------------------------------------------------------------
     // 2) 3D Frost-Creep & Crystalline Ice-Decal Relief (100% STATIC, ZERO TIME PULSE!)
+    //    Wave 89 Defect D fix: Strictly restrict to parallax ice (base==6) or interior ice caves (sunColour.w < 0.5)
+    //    so exterior painted Nordic blue wooden barns (Whiterun) & cool-grey barrels (Riften) NEVER get frost splatter!
     // -------------------------------------------------------------------------
-    const float frostEdge = saturate((albedoIn.b - albedoIn.r * 1.09f) * 5.2f)
+    const float frostAllowed = (base == 6u || sunColour.w < 0.5f) ? 1.0f : 0.0f;
+    const float frostEdge = frostAllowed
+                          * saturate((albedoIn.b - albedoIn.r * 1.09f) * 5.2f)
                           * smoothstep(0.18f, 0.45f, albedoIn.b)
                           * (1.0f - saturate(iceMask * 1.4f))
                           * (1.0f - saturate(wetSnow * 1.2f))

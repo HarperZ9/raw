@@ -171,10 +171,10 @@ RawWeatheringResult evalSurfaceWeathering3D(
     //    so animals, wooden furniture, and NPC gloves NEVER turn green!
     // -------------------------------------------------------------------------
     if (isExterior && (matBase == 1u || matBase == 4u) && nonSnowIce > 0.05f) {
-        // Guard against warm fur/hide/skin/red-timber hues ever picking up moss if untagged:
-        const float warmHueExcess = saturate((o.albedo.r - o.albedo.b * 1.38f) * 6.0f)
-                                  * saturate((o.albedo.r - o.albedo.g * 1.12f) * 8.0f);
-        const float stoneHueGate = 1.0f - warmHueExcess * 0.92f;
+        // Wave 89: Strict guard against warm fur/hide/skin/painted-wood hues ever picking up moss if untagged:
+        const float warmHueExcess = saturate((o.albedo.r - o.albedo.b * 1.15f) * 8.0f);
+        const float bluePaintExcess = saturate((o.albedo.b - o.albedo.r * 1.12f) * 8.0f);
+        const float stoneHueGate = (1.0f - warmHueExcess * 0.98f) * (1.0f - bluePaintExcess * 0.98f);
         // Suppressed in deep sub-zero blizzard zones unless thermal uniforms are uninitialized (0):
         const float tempGate = hasTherm ? smoothstep(-7.5f, 2.5f, surfTempC) : 1.0f;
         // Altitude transition: damp moss in valleys/foothills -> hardy pale-sage alpine lichen on mid-high crags:

@@ -432,8 +432,17 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             col = rawRebirthApplyTotalMaterialOverhaul(
                 col, alb, N, worldM, distM,
                 sD, sC, -rayDir,
-                interiorMask, albLap, albGrad,
+                interiorMask, albLap, albGrad, windAndWeather.z,
                 class14, isInt, nOverhaul);
+
+            // Wave 89 Defect E: Keep warm hearth ambient bounce readable in shadowed interior back alcoves (black_crush < 0.8%)
+            if (isInt && class14 != kRawClass14_GlacierIce) {
+                const float intLum = dot(col, float3(0.2126f, 0.7152f, 0.0722f));
+                if (intLum < 0.085f) {
+                    const float liftW = saturate((0.085f - intLum) * 14.0f) * (1.0f - smoothstep(14.0f, 40.0f, distM));
+                    col += max(alb, float3(0.11f, 0.08f, 0.055f)) * float3(0.24f, 0.17f, 0.10f) * liftW;
+                }
+            }
 
             const float albLumSnow = dot(alb, float3(0.2126f, 0.7152f, 0.0722f));
             const float snowCov01  = max(saturate((albLumSnow - 0.56f) * 3.5f) * saturate((N.z - 0.40f) * 2.5f),
@@ -612,7 +621,8 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
             modified = true;
         }
     } else if (!isInt && base == 5u && distM < 85.0f) {
-        // Conifer canopy 3D needle-whorl relief, crushed-shadow rescue & backlit emerald translucency:
+        // Wave 89 Defect B: Strictly distinguish living green foliage from frost-covered winter twigs / dry autumn brambles!
+        // NEVER inject chlorophyll spring-green onto white/grey frosted winter twigs (e.g., Windhelm foreground brambles)!
         const float distFade = 1.0f - smoothstep(50.0f, 85.0f, distM);
         const float lum      = dot(col, float3(0.2126f, 0.7152f, 0.0722f));
         const float maxC     = max(col.r, max(col.g, col.b));
@@ -620,14 +630,30 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
         const float sat      = (maxC > 1.0e-4f) ? ((maxC - minC) / maxC) : 0.0f;
         const float needleN  = ValueNoise2D(worldM.xy * 4.2f + worldM.z * 2.1f);
         const float backLit  = pow(saturate(dot(rayDir, sD)), 2.5f) * max(sunDir.w, 0.15f);
+        const bool  isLivingGreen = (alb.g > alb.r * 1.04f) && (alb.g > alb.b * 1.08f) && (alb.g > 0.024f);
+        const bool  isAutumnWarm  = (!isLivingGreen) && (alb.r > alb.b * 1.15f) && (alb.r >= alb.g * 0.96f) && (alb.r > 0.030f);
 
-        const float shadowLift = saturate((0.09f - lum) * 10.0f) * distFade;
-        col += float3(0.018f, 0.032f, 0.013f) * shadowLift * (0.55f + 0.45f * needleN);
-        col += float3(0.048f, 0.090f, 0.025f) * (backLit * 0.38f * needleN * distFade);
-
-        if (waterAndCaustics.w < 0.15f && sat < 0.18f && lum > 0.35f) {
-            const float bleachW = saturate((0.18f - sat) * 5.0f) * saturate((lum - 0.35f) * 3.0f) * distFade;
-            col = lerp(col, col * float3(0.76f, 0.96f, 0.72f), bleachW * 0.45f);
+        if (isLivingGreen) {
+            const float shadowLift = saturate((0.09f - lum) * 10.0f) * distFade;
+            col += float3(0.018f, 0.032f, 0.013f) * shadowLift * (0.55f + 0.45f * needleN);
+            col += float3(0.048f, 0.090f, 0.025f) * (backLit * 0.38f * needleN * distFade);
+            if (waterAndCaustics.w < 0.15f && sat < 0.18f && lum > 0.35f) {
+                const float bleachW = saturate((0.18f - sat) * 5.0f) * saturate((lum - 0.35f) * 3.0f) * distFade;
+                col = lerp(col, col * float3(0.76f, 0.96f, 0.72f), bleachW * 0.45f);
+            }
+        } else if (isAutumnWarm) {
+            // Golden Rift autumn aspen/birch leaves & warm bronze bushes: sunlit amber-gold rim (never olive-green!)
+            const float hiSafeA    = 1.0f - smoothstep(0.28f, 0.62f, lum);
+            const float shadowLift = saturate((0.09f - lum) * 10.0f) * distFade;
+            col += float3(0.032f, 0.022f, 0.008f) * shadowLift * (0.60f + 0.40f * needleN);
+            col += float3(0.075f, 0.052f, 0.014f) * (backLit * 0.34f * needleN * distFade * hiSafeA);
+        } else {
+            // Frosted winter twigs & snow brambles: bright crystalline hoarfrost micro-sparkle & neutral silver rim!
+            const float frostSpark = smoothstep(0.72f, 0.95f, ValueNoise2D(worldM.xy * 28.0f + worldM.z * 14.0f));
+            const float hiSafeF    = 1.0f - smoothstep(0.32f, 0.68f, lum);
+            const float shadowLift = saturate((0.11f - lum) * 9.0f) * distFade;
+            col += float3(0.030f, 0.032f, 0.038f) * shadowLift * (0.65f + 0.35f * needleN);
+            col += float3(0.062f, 0.066f, 0.076f) * ((backLit * 0.32f + frostSpark * 0.22f) * distFade * hiSafeF);
         }
         modified = true;
     } else if (!isInt && base == 1u && abs(N.z) < 0.55f && distM < 60.0f) {

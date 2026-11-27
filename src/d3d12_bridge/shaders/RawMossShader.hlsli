@@ -35,10 +35,16 @@ bool rawRebirthApply3DMoss(
     if (isInt || isActor || distM > 52.0f || interiorMask <= 0.05f) {
         return false;
     }
-    // Strictly eligible world geometry: landscape terrain/roads/banks (base==4) or upward rock/boulder crowns (N.z > 0.66).
-    // Never apply moss to vertical/sloped creature/horse bodies rendered under generic Lit (base==1)!
+    // Wave 89: Strictly eligible world geometry ONLY: landscape terrain/roads/banks (base==4)
+    // OR cool/neutral upward static rock/boulder crowns (N.z > 0.72, warm fur & painted wood strictly excluded!).
+    const bool isWarmFurOrWood = (alb.r > alb.b * 1.16f && alb.r >= alb.g * 1.02f);
+    const bool isPaintedBlue   = (alb.b > alb.r * 1.12f);
+    if (isWarmFurOrWood || isPaintedBlue) {
+        return false;
+    }
     const bool isLandscape = (base == 4u);
-    const bool isUpRock    = (N.z > 0.66f) && (classId == kRawClass14_RockCliffBoulder || classId == kRawClass14_CobbleRoadPath || classId == kRawClass14_MossLichen);
+    const bool isUpRock    = (N.z > 0.72f) && (distM > 1.6f)
+                          && (classId == kRawClass14_RockCliffBoulder || classId == kRawClass14_CobbleRoadPath || classId == kRawClass14_MossLichen);
     if (!isLandscape && !isUpRock) {
         return false;
     }

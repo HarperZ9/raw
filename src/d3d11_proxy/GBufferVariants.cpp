@@ -38,16 +38,16 @@ DrawClassHint ClassifyDrawHint(ID3D11DeviceContext* real, Span span, ID3D11Pixel
     if (outDepthBlendFoliage) *outDepthBlendFoliage = false;
     if (!real || (span != Span::Opaque && span != Span::FirstPerson)) return DrawClassHint::None;
 
+    const bool isAlphaCutout = (span == Span::Opaque) &&
+        ((gamePs && geom::IsDiscardPs(gamePs)) || geom::BlendAlpha(real) == raw::bridge::RtAlphaCoverage);
     const geom::Layout* bound = geom::LayoutOf(geom::BoundLayout(real));
     const bool hasSkinLayout = (bound != nullptr && bound->blendIdx.set && bound->blendW.set);
     if (hasSkinLayout) {
         if (span == Span::FirstPerson) return DrawClassHint::SkinnedActor;
-        if (g_sceneLightsActive) {
-            if (SceneLights_DrawWorld() != nullptr) return DrawClassHint::SkinnedActor;
-            // Wind-skinned non-actor draw (tree trunk or branch): fall through so alpha-tested pine
-            // branches promote to Foliage (base==5) while solid tree trunks stay Lit (base==1)!
-        } else {
-            // Fallback when SceneLights is inactive: Skyrim binds its 80-bone actor skinning palette (>= 3840 bytes) on VS CB10.
+        if (g_sceneLightsActive && SceneLights_DrawWorld() != nullptr) return DrawClassHint::SkinnedActor;
+        // Wave 89: Always check Skyrim's 80-bone actor/creature skinning palette (>= 3840 bytes on VS CB10)
+        // for solid opaque skinned meshes (horses, dogs, wolves, bears, NPCs -> NEVER SpeedTree alpha-cutout leaf cards!).
+        if (!isAlphaCutout) {
             ID3D11Buffer* bb[1] = {};
             real->VSGetConstantBuffers(10, 1, bb);
             bool hasBones = false;
@@ -114,11 +114,13 @@ ID3D11PixelShader* VariantFor(State& s, ID3D11PixelShader* game, bool firstPerso
     // Always inspect/compile the base slot first so e.kind and e.materialClass are known cleanly.
     compileSlot(baseSlot, 0);
 
-    // Promote ONLY generic Lighting+Lit (base==1) draws to SkinnedActor (14) or Foliage/SoftLit (5).
-    // Specialized classes (Skin=10, Hair=11, Eye=12, SoftLit=5, EnvMap=2, TruePBR=13, Landscape=4) keep baseSlot!
+    // Promote generic Lighting+Lit (base==1) draws to SkinnedActor (14) or Foliage/SoftLit (5),
+    // AND promote skinned fur/creature SoftLit (base==5) draws (horses/wolves/bears with BLENDINDICES+BLENDWEIGHT+80-bone CB10)
+    // to SkinnedActor (14) so furred animals NEVER fall into foliage shading!
     const bool canPromote = (hint != DrawClassHint::None) &&
                             e.kind == raw::dxbc::ShaderKind::Lighting &&
-                            e.materialClass == raw::dxbc::material::Lit;
+                            (e.materialClass == raw::dxbc::material::Lit ||
+                             (hint == DrawClassHint::SkinnedActor && e.materialClass == raw::dxbc::material::SoftLit));
     const uint8_t overrideClass = canPromote
         ? (hint == DrawClassHint::SkinnedActor ? raw::dxbc::material::SkinnedActor : raw::dxbc::material::SoftLit)
         : raw::dxbc::material::None;

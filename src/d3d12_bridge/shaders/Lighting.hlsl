@@ -168,7 +168,7 @@ float screenShadow(float3 p, float3 dir, float len, float cone, float jitter, ui
 float knee(float x) { return min(x, (1.0f - resScale.z) * x + 1.0f); }
 float3 knee3(float3 x) { return float3(knee(x.r), knee(x.g), knee(x.b)); }
 
-struct Surface { float3 n, v; float shin, mask, f0, alpha; float3 soft; float3 wrap; };
+struct Surface { float3 n, v; float shin, mask, f0, alpha; float3 soft; float3 wrap; float greenFoliage; };
 
 float smooth01(float x) { return x * x * (3.0f - 2.0f * x); }
 
@@ -194,11 +194,13 @@ void addLight(Surface s, float3 l, float3 c, float3 cFull, inout float3 diff, in
         if ((flags.x & FLAG_GGX) == 0u) {
             diff += s.soft * wrapTrans * cFull;
         } else if (!any(s.wrap > 0.0f)) {
-            // Foliage (base==5u): strictly SHADOWED `c` (never unshadowed cFull!), chlorophyll-tinted wrap
-            // & restrained boreal transmission so sunlit pine needles stay lush evergreen instead of chalky grey!
+            // Wave 89 Defect B + Autumn fix: living green (+1) gets emerald SSS, autumn gold (-1) gets amber SSS,
+            // frosted winter twigs (0) get bright neutral frost-rim translucency with zero spring-green cast.
             const float backView = pow(saturate(dot(-s.v, l)), 3.6f);
-            const float3 wrapChloro = float3(0.68f, 0.94f, 0.44f);
-            const float3 chloroTint = float3(0.46f, 0.86f, 0.24f);
+            const float isGreenW = saturate(s.greenFoliage);
+            const float isGoldW  = saturate(-s.greenFoliage);
+            const float3 wrapChloro = lerp(lerp(float3(0.92f, 0.94f, 0.98f), float3(1.06f, 0.88f, 0.44f), isGoldW), float3(0.68f, 0.94f, 0.44f), isGreenW);
+            const float3 chloroTint = lerp(lerp(float3(0.88f, 0.92f, 0.98f), float3(1.12f, 0.86f, 0.34f), isGoldW), float3(0.46f, 0.86f, 0.24f), isGreenW);
             const float3 softClamped = min(s.soft, 0.42f.xxx);
             diff += softClamped * (wrapChloro * (wrapTrans * 0.14f) + chloroTint * (backView * 0.22f * (1.0f - nl * 0.65f))) * c;
         } else {
@@ -464,6 +466,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Softer since the hands and bodies joined the class (rt6-wat-3): at 0.55 / 0.22 / 0.12 the arms read orange
     // against the game's brown.
     s.wrap = skin && !match ? float3(0.36f, 0.16f, 0.08f) : (isHair && !match ? float3(0.16f, 0.12f, 0.08f) : 0.0f.xxx);
+    // Wave 89 Defect B + Autumn fix: distinguish living green (+1), golden autumn (-1), and frosted winter twigs (0)!
+    const bool isLivingGreenFoliage = (albedo.g > albedo.r * 1.04f && albedo.g > albedo.b * 1.08f && albedo.g > 0.024f);
+    const bool isAutumnWarmFoliage  = (!isLivingGreenFoliage && albedo.r > albedo.b * 1.15f && albedo.r >= albedo.g * 0.96f && albedo.r > 0.030f);
+    s.greenFoliage = isLivingGreenFoliage ? 1.0f : (isAutumnWarmFoliage ? -1.0f : 0.0f);
     // Wave 64: Classify living green pine saplings/shrubs rendered under base==1u AND vertical warm-brown tree bark
     // at fs() scope so BOTH bark shadow-floor protection AND pine chalk-bleach protection run consistently across every pass!
     const bool isGreenPineCard = (!match && base == 1u && !isActorCloth && sunColour.w > 0.5f
@@ -505,7 +511,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         //    (Wave 63: removed redundant stacked parallax moss pass #1; moss is unified cleanly in RawWeathering.hlsli!):
         if (sunColour.w > 0.5f && z < 2600.0f) {
             const float3 wpAbs = p + camPosW.xyz;
-            const bool isRockCliff = (!isWoodBark && abs(s.n.z) < 0.76f && abs(albedo.r - albedo.b) < 0.14f);
+            const bool isPaintedBlueWood = (albedo.b > albedo.r * 1.08f && albedo.g > albedo.r * 1.02f);
+            const bool isRockCliff = (!isWoodBark && !isPaintedBlueWood && abs(s.n.z) < 0.76f && abs(albedo.r - albedo.b) < 0.14f);
             if (isRockCliff) {
                 const float cliffFade = 1.0f - smoothstep(220.0f, 2600.0f, z);
                 // Sedimentary horizontal strata ledges + sharp vertical basalt fracture cracks:
@@ -901,15 +908,26 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             s.f0 = 0.016f;
             s.alpha = clamp(lerp(s.alpha, 0.80f, 0.78f * fFade), 0.64f, 0.94f);
             const float speciesId = cNoise(wpF * 0.0045f + float3(17.3f, 9.1f, 3.7f));
-            // Deep saturated boreal spruce & old-growth redwood/fir reflectance (Crimson Desert / NordicCanopy palette):
-            const float3 speciesTint = speciesId < 0.5f
-                ? lerp(float3(0.42f, 0.76f, 0.38f), float3(0.50f, 0.82f, 0.42f), speciesId * 2.0f)
-                : lerp(float3(0.50f, 0.82f, 0.42f), float3(0.56f, 0.80f, 0.38f), (speciesId - 0.5f) * 2.0f);
             const float crownDepthAo = lerp(0.50f, 0.98f, saturate(s.n.z * 0.55f + 0.45f)) * lerp(0.70f, 1.08f, leafVar);
-            albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.86f);
-            // Boost living pine chlorophyll saturation while preventing chalky pale white-green needles:
-            const float fLuma = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
-            albedo = saturate(lerp(fLuma.xxx, albedo, 1.36f));
+            if (isLivingGreenFoliage) {
+                // Deep saturated boreal spruce & old-growth redwood/fir reflectance (living green needles only!):
+                const float3 speciesTint = speciesId < 0.5f
+                    ? lerp(float3(0.42f, 0.76f, 0.38f), float3(0.50f, 0.82f, 0.42f), speciesId * 2.0f)
+                    : lerp(float3(0.50f, 0.82f, 0.42f), float3(0.56f, 0.80f, 0.38f), (speciesId - 0.5f) * 2.0f);
+                albedo *= lerp(1.0f.xxx, speciesTint * crownDepthAo, fFade * 0.86f);
+                // Boost living pine chlorophyll saturation while preventing chalky pale white-green needles:
+                const float fLuma = dot(albedo, float3(0.2126f, 0.7152f, 0.0722f));
+                albedo = saturate(lerp(fLuma.xxx, albedo, 1.36f));
+            } else if (isAutumnWarmFoliage) {
+                // Wave 89 Autumn fix: Golden Rift birch/aspen leaves & warm bronze bushes keep vibrant sunlit amber-gold hue!
+                const float3 goldTint = float3(1.16f, 0.96f, 0.70f) * lerp(0.90f, 1.10f, crownDepthAo);
+                albedo = saturate(albedo * lerp(1.0f.xxx, goldTint, fFade * 0.55f));
+            } else {
+                // Wave 89 Defect B fix: Frosted winter twigs stay bright crystalline hoarfrost silver-white (ZERO spring green, ZERO mud!).
+                const float frostSparkle = smoothstep(0.58f, 0.88f, cNoise(wpF * 0.55f + float3(3.7f, 11.1f, 5.3f)));
+                const float3 frostLift = lerp(albedo, max(albedo, float3(0.46f, 0.48f, 0.52f)), fFade * 0.34f);
+                albedo = saturate(frostLift * lerp(1.0f.xxx, float3(1.04f, 1.06f, 1.10f), fFade * 0.45f) + float3(0.065f, 0.070f, 0.080f) * frostSparkle * fFade);
+            }
             // Wave 39 + Wave 64 Live Seasonal Botanical Phenology (RawSeasonsThermals.hlsli):
             // Strictly gate winter bough snow & frost rim on genuine freezing/snowy conditions so clear-day
             // Riverwood pine boughs NEVER pick up pale grey-white frost bleach!
@@ -1272,7 +1290,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     float iceMask = 0.0f;
     float3 decalEmit = 0.0f.xxx;
     if (!match) {
-        if ((base == 1u || base == 2u || base == 4u) && z < 12000.0f) {
+        // Wave 89 Defect D fix: NEVER apply glacial ice overlay (evalFrostGlacier3D) to exterior base==1u
+        // painted wooden barns (Whiterun stables) or cool-grey barrels (Riften)! Exterior glaciers use base==2u/6u
+        // (EnvMap/Parallax ice); interior ice caverns (Septimus Signus) use !isExterior (sunColour.w < 0.5).
+        if (((sunColour.w < 0.5f && (base == 1u || base == 2u)) || base == 2u || base == 6u) && z < 12000.0f) {
             const float blueIce = saturate((albedo.b - albedo.r * 1.04f) * 4.8f) * smoothstep(0.16f, 0.44f, albedo.b);
             const float caveIce = (sunColour.w < 0.5f && (base == 2u || base == 1u))
                 ? smoothstep(0.24f, 0.52f, albedo.b) * saturate((albedo.b - albedo.r * 0.88f) * 4.0f) : 0.0f;
@@ -2091,7 +2112,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float wetLeafW = (isBotanicalCard && isExterior && !isWoodBark) ? saturate(wet.wet * 0.90f + weather.w * 0.35f) : 0.0f;
     const float botSpecScale = lerp(0.08f, 0.22f, wetLeafW);
     const float specMap = lobe && !(skin && !match) ? saturate(s.mask * resScale.w) : (isBotanicalCard ? botSpecScale : 1.0f);
-    const float3 foliageSpecTint = isBotanicalCard ? lerp(float3(0.14f, 0.24f, 0.10f), float3(0.42f, 0.50f, 0.46f), wetLeafW) : 1.0f.xxx;
+    const float3 foliageSpecTint = isBotanicalCard
+        ? (isLivingGreenFoliage ? lerp(float3(0.14f, 0.24f, 0.10f), float3(0.42f, 0.50f, 0.46f), wetLeafW)
+                                : lerp(float3(0.26f, 0.28f, 0.32f), float3(0.44f, 0.48f, 0.54f), wetLeafW))
+        : 1.0f.xxx;
     if (wetLeafW > 0.02f) { lit = max(lit * (1.0f - wetLeafW * 0.14f), min(lit, 0.022f.xxx)); }
     lit += ((flags.x & FLAG_GGX) != 0u ? spec * specMap : spec * (lobe ? s.mask * resScale.w : 0.0f)) * foliageSpecTint;
     // Ray-traced reflection on glossy surfaces with live dynamic-cubemap IBL fallback on RT misses,
@@ -2387,19 +2411,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float frontSun = saturate(dot(s.n, sunDir.xyz));
             const float backTight = pow(saturate(dot(-s.v, sunDir.xyz)), 5.0f);
             const float backEdgeGate = 1.0f - frontSun * 0.78f;
-            const float3 sssCol = leafBudget.albedoEff * float3(0.84f, 1.18f, 0.24f);
+            const float3 sssCol = leafBudget.albedoEff * (isLivingGreenFoliage ? float3(0.84f, 1.18f, 0.24f)
+                                                        : (isAutumnWarmFoliage ? float3(1.20f, 0.92f, 0.34f)
+                                                                               : float3(0.98f, 1.00f, 1.06f)));
             const float transScale = saturate(leafBudget.directTransWeight / 0.24f);
             // Wave 78: World-space sub-pixel foliage anti-shimmer & coverage preservation (strictly !isWoodBark!):
             const float maxLeafAlb = max(leafBudget.albedoEff.r, max(leafBudget.albedoEff.g, leafBudget.albedoEff.b));
             const RawFoliageAntiShimmerResult folW78 = rawEvalFoliageCoverageAntiShimmer(
                 wpCan, s.n, s.v, z, maxLeafAlb, leafBudget.directTransWeight, skyVis, isWoodBark);
             lit += sssCol * sunColour.rgb * ((back * 0.09f + backTight * 0.18f) * backEdgeGate * foliageThickness * sunShadow * cloudClear * dayGate * lerp(0.65f, 1.15f, transScale) * folW78.translucencyScale);
-            // Balanced 3D vertical crown-to-underside pine self-shadowing (rich green shadow volume, never black or chalk!):
+            // Balanced 3D vertical crown-to-underside self-shadowing (rich green on pines, warm gold on aspens, bright silver on frosted twigs!):
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
             const float canopyOcc = saturate(skyVis * 0.62f + sunShadow * 0.24f + crownUp * 0.22f);
-            lit *= lerp(float3(0.42f, 0.54f, 0.38f) * max(folW78.canopyFloorScale, 0.92f), 1.0f.xxx, canopyOcc) * folW78.coverageScale;
-            // Preserve rich emerald needle saturation under bright midday sunlight (prevents white-grey highlight wash!):
-            if (wet.snow < 0.15f) {
+            const float3 canopyFloorCol = isLivingGreenFoliage ? float3(0.42f, 0.54f, 0.38f)
+                                        : (isAutumnWarmFoliage ? float3(0.80f, 0.70f, 0.44f)
+                                                               : float3(0.86f, 0.88f, 0.92f));
+            lit *= lerp(canopyFloorCol * max(folW78.canopyFloorScale, 0.92f), 1.0f.xxx, canopyOcc) * folW78.coverageScale;
+            // Preserve rich emerald needle saturation under bright midday sunlight (strictly living green foliage only!):
+            if (wet.snow < 0.15f && isLivingGreenFoliage) {
                 const float pLum = dot(lit, float3(0.2126f, 0.7152f, 0.0722f));
                 const float brightSunW = smoothstep(0.28f, 0.75f, pLum);
                 const float3 richNeedles = max(lerp(pLum.xxx, lit, 1.24f), 0.0f.xxx) * float3(0.94f, 1.04f, 0.88f);

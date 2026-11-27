@@ -55,10 +55,13 @@ constexpr uint8_t FirstPersonFlag = 128;   // added for draws of the first-perso
 
 // Resolves final SV_Target5.b class byte. A non-zero classOverride promotes generic Lighting+Lit (base==1)
 // draws (e.g., skinned creatures/NPC clothing -> SkinnedActor=14, alpha-tested pine saplings/shrubs -> SoftLit=5)
-// while strictly preserving specialized classes (Skin=10, Hair=11, Eye=12, SoftLit=5, Landscape=4, EnvMap=2, etc.).
+// AND promotes skinned fur/creature SoftLit (base==5) draws (e.g., Skyrim horses/wolves/bears with 80-bone skinning
+// and soft-lighting fur map t12) to SkinnedActor=14 so furred animals NEVER receive botanical foliage shading!
 constexpr uint8_t ResolveMaterialClass(uint8_t analysedClass, uint8_t classOverride, uint8_t classFlags) noexcept
 {
-    const uint8_t base = (classOverride != None && analysedClass == Lit) ? classOverride : analysedClass;
+    const bool allowOverride = (classOverride != None) &&
+        (analysedClass == Lit || (classOverride == SkinnedActor && analysedClass == SoftLit));
+    const uint8_t base = allowOverride ? classOverride : analysedClass;
     return static_cast<uint8_t>((base & 127u) | (classFlags & FirstPersonFlag));
 }
 
@@ -214,6 +217,11 @@ constexpr AssetClass14 ClassifyLiveDraw14(const DrawClassifyInput& in) noexcept
     }
     if (in.avgAlbedoG > in.avgAlbedoR * 1.06f && in.avgAlbedoG > in.avgAlbedoB * 1.10f) {
         return (in.upNormalZ > 0.35f) ? AssetClass14::MossLichen : AssetClass14::TreeFoliageCanopy;
+    }
+    // Wave 89 Defect D fix: exterior painted Nordic blue/teal wood planks & barrels classify as TimberWood (never GlacierIce!)
+    if (in.isExterior && base == Lit && in.upNormalZ < 0.65f
+        && in.avgAlbedoB > in.avgAlbedoR * 1.08f && in.avgAlbedoG > in.avgAlbedoR * 1.02f) {
+        return AssetClass14::TimberWood;
     }
     if (in.avgAlbedoR > in.avgAlbedoB * 1.18f && in.avgAlbedoR >= in.avgAlbedoG * 0.96f) {
         if (in.isExterior && in.upNormalZ < 0.45f && luma < 0.32f) {

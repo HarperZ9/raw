@@ -442,6 +442,230 @@ def metric_34_tiling_autocorrelation_drop(
     }
 
 
+def metric_35_animal_no_green_bleed(
+    vanilla_rgb: np.ndarray,
+    raw_rgb: np.ndarray,
+    max_green_bleed_frac: float = 0.05,
+    max_green_excess: float = 0.02,
+) -> dict[str, Any]:
+    """Gate #35 (Wave 89 Defect A): Warm-fur animals/actors/horses must NEVER turn moss-green (mean max(0, G-R) <= 0.02)."""
+    van = np.asarray(vanilla_rgb, dtype=np.float32)
+    raw = np.asarray(raw_rgb, dtype=np.float32)
+    mask = _mask_hud_and_sky(van)
+    # Identify genuinely warm-brown fur/coat/timber ROI from vanilla (R > G*1.10 and R > B*1.25 and non-black)
+    warm_roi = mask & (van[..., 0] > van[..., 1] * 1.10) & (van[..., 0] > van[..., 2] * 1.25) & (van[..., 0] > 0.08)
+    count = int(np.sum(warm_roi))
+    if count < 16:
+        warm_roi = mask
+        count = int(np.sum(warm_roi))
+    # Actual green excess over red on warm-brown pixels (0.0 on neutral/cool shadows where G <= R; >0.15 on moss-green horse!)
+    green_excess = float(np.mean(np.maximum(0.0, raw[..., 1][warm_roi] - raw[..., 0][warm_roi]))) if count > 0 else 0.0
+    green_flipped = (raw[..., 1][warm_roi] > raw[..., 0][warm_roi] * 1.10) & (raw[..., 1][warm_roi] > raw[..., 2][warm_roi] * 1.12)
+    bleed_frac = float(np.mean(green_flipped)) if count > 0 else 0.0
+    passed = (bleed_frac <= float(max_green_bleed_frac)) and (green_excess <= float(max_green_excess))
+    return {
+        "id": 35,
+        "name": "animal_actor_no_green_bleed",
+        "passed": passed,
+        "code": "PASS" if passed else "FAIL: ANIMAL_ACTOR_GREEN_BLEED",
+        "metrics": {
+            "warm_roi_pixels": count,
+            "green_bleed_frac": round(bleed_frac, 4),
+            "green_excess_over_red": round(green_excess, 4),
+            "max_bleed_frac": float(max_green_bleed_frac),
+            "max_green_excess": float(max_green_excess),
+        },
+    }
+
+
+def metric_36_snow_foliage_no_spring_green(
+    vanilla_rgb: np.ndarray,
+    raw_rgb: np.ndarray,
+    max_green_dominance_delta: float = 0.02,
+    max_spring_flip_frac: float = 0.05,
+) -> dict[str, Any]:
+    """Gate #36 (Wave 89 Defect B): Frosted winter twigs/brambles in snow biomes must NEVER shift spring-green (delta <= 0.02)."""
+    van = np.asarray(vanilla_rgb, dtype=np.float32)
+    raw = np.asarray(raw_rgb, dtype=np.float32)
+    h, w = van.shape[:2]
+    mask = _mask_hud_and_sky(van)
+    # Focus on foreground winter brambles & snow-covered bushes (lower 55% excluding bottom HUD)
+    fg = np.zeros((h, w), dtype=bool)
+    fg[int(h * 0.40) : int(h * 0.92), :] = True
+    luma_v = _luma(van)
+    frosted_roi = (
+        mask & fg
+        & (luma_v > 0.08)
+        & (np.abs(van[..., 0] - van[..., 1]) < 0.08)
+        & (van[..., 1] <= np.maximum(van[..., 0], van[..., 2]) + 0.015)
+    )
+    count = int(np.sum(frosted_roi))
+    if count < 16:
+        frosted_roi = mask & fg
+        count = int(np.sum(frosted_roi))
+    van_gdom = np.maximum(0.0, van[..., 1][frosted_roi] - np.maximum(van[..., 0][frosted_roi], van[..., 2][frosted_roi]))
+    raw_gdom = np.maximum(0.0, raw[..., 1][frosted_roi] - np.maximum(raw[..., 0][frosted_roi], raw[..., 2][frosted_roi]))
+    delta_gdom = float(np.mean(raw_gdom) - np.mean(van_gdom)) if count > 0 else 0.0
+    spring_flip_frac = float(np.mean(raw_gdom > 0.04)) if count > 0 else 0.0
+    passed = (delta_gdom <= float(max_green_dominance_delta)) and (spring_flip_frac <= float(max_spring_flip_frac))
+    return {
+        "id": 36,
+        "name": "snow_biome_foliage_no_spring_green",
+        "passed": passed,
+        "code": "PASS" if passed else "FAIL: SNOW_FOLIAGE_SPRING_GREEN",
+        "metrics": {
+            "frosted_roi_pixels": count,
+            "green_dominance_delta": round(delta_gdom, 4),
+            "spring_green_flip_frac": round(spring_flip_frac, 4),
+            "max_green_dominance_delta": float(max_green_dominance_delta),
+            "max_spring_flip_frac": float(max_spring_flip_frac),
+        },
+    }
+
+
+def _surface_anisotropy_and_blotch(rgb: np.ndarray) -> tuple[float, float]:
+    """Measures local structure-tensor directional anisotropy ratio and isotropic mid-scale blotch ratio."""
+    luma = _luma(rgb)
+    h, w = luma.shape
+    # Crop HUD/sky margins cleanly
+    y0, y1 = int(h * 0.14), int(h * 0.88)
+    x0, x1 = int(w * 0.06), int(w * 0.94)
+    crop = luma[y0:y1, x0:x1]
+    if crop.shape[0] < 32 or crop.shape[1] < 32:
+        crop = luma
+    # Subsample to ~256px max dim for fast deterministic patch structure tensor
+    sy = max(1, crop.shape[0] // 256)
+    sx = max(1, crop.shape[1] // 256)
+    sub = crop[::sy, ::sx]
+    gx = sub[:, 2:] - sub[:, :-2]
+    gy = sub[2:, :] - sub[:-2, :]
+    gx = gx[1:-1, :]
+    gy = gy[:, 1:-1]
+    ph, pw = gx.shape
+    tile = max(8, min(24, min(ph, pw) // 4))
+    ratios: list[float] = []
+    coherences: list[float] = []
+    for ty in range(0, ph - tile + 1, tile):
+        for tx in range(0, pw - tile + 1, tile):
+            px = gx[ty : ty + tile, tx : tx + tile]
+            py = gy[ty : ty + tile, tx : tx + tile]
+            jxx = float(np.mean(px * px))
+            jyy = float(np.mean(py * py))
+            jxy = float(np.mean(px * py))
+            tr = jxx + jyy
+            if tr < 1e-6:
+                continue
+            disc = float(np.sqrt(max((jxx - jyy) ** 2 + 4.0 * jxy * jxy, 0.0)))
+            l1 = 0.5 * (tr + disc)
+            l2 = max(0.5 * (tr - disc), 1e-7)
+            ratios.append(float(np.sqrt(l1 / l2)))
+            coherences.append(disc / max(tr, 1e-7))
+    if not ratios:
+        return 1.0, 1.0
+    aniso_ratio = float(np.median(ratios))
+    mean_coh = float(np.median(coherences))
+    # Mid-scale isotropic blotchiness: high when mid-frequency energy is strong AND structure coherence is isotropic (~0)
+    k = max(3, min(9, min(sub.shape) // 8))
+    if k % 2 == 0:
+        k += 1
+    # Fast separable box mean for mid-scale energy
+    pad = k // 2
+    cs_y = np.cumsum(np.pad(sub, ((pad + 1, pad), (0, 0)), mode="edge"), axis=0)
+    blur_y = (cs_y[k:, :] - cs_y[:-k, :]) / float(k)
+    cs_x = np.cumsum(np.pad(blur_y, ((0, 0), (pad + 1, pad)), mode="edge"), axis=1)
+    blur = (cs_x[:, k:] - cs_x[:, :-k]) / float(k)
+    fine_std = float(np.std(sub - blur))
+    mid_std = float(np.std(blur - float(np.mean(blur))))
+    # Isotropic blotch ratio penalizes isotropic mid-scale spot fields while rewarding coherent directional grain/striations
+    iso_factor = max(0.0, 1.0 - mean_coh * 1.45)
+    blotch_ratio = float((mid_std * iso_factor) / max(mid_std * iso_factor + fine_std * (1.0 + mean_coh * 2.0), 1e-6))
+    return aniso_ratio, blotch_ratio
+
+
+def metric_37_ice_wood_anisotropic_no_blotch(
+    ice_raw_rgb: np.ndarray,
+    wood_raw_rgb: np.ndarray,
+    min_anisotropy: float = 1.18,
+    max_blotch_ratio: float = 0.45,
+) -> dict[str, Any]:
+    """Gate #37 (Wave 89 Defects C + D): Glacier ice & painted wood must show directional anisotropy (>=1.18) with low isotropic blotch (<=0.45)."""
+    ice_aniso, ice_blotch = _surface_anisotropy_and_blotch(np.asarray(ice_raw_rgb, dtype=np.float32))
+    wood_aniso, wood_blotch = _surface_anisotropy_and_blotch(np.asarray(wood_raw_rgb, dtype=np.float32))
+    min_a = min(ice_aniso, wood_aniso)
+    max_b = max(ice_blotch, wood_blotch)
+    passed = (min_a >= float(min_anisotropy)) and (max_b <= float(max_blotch_ratio))
+    return {
+        "id": 37,
+        "name": "ice_wood_anisotropic_no_blotch",
+        "passed": passed,
+        "code": "PASS" if passed else "FAIL: ICE_WOOD_ISOTROPIC_BLOTCH",
+        "metrics": {
+            "ice_anisotropy": round(ice_aniso, 4),
+            "ice_blotch_ratio": round(ice_blotch, 4),
+            "wood_anisotropy": round(wood_aniso, 4),
+            "wood_blotch_ratio": round(wood_blotch, 4),
+            "threshold_min_anisotropy": float(min_anisotropy),
+            "threshold_max_blotch_ratio": float(max_blotch_ratio),
+        },
+    }
+
+
+def collect_total_rebirth_37_metrics(
+    frames_rgb: Sequence[np.ndarray],
+    runtime_telemetry: dict[str, Any],
+    ownership_dump: dict[str, Any],
+    vanilla_ref_rgb: np.ndarray,
+    raw_ref_rgb: np.ndarray,
+    tiling_vanilla_rgb: np.ndarray | None = None,
+    tiling_raw_rgb: np.ndarray | None = None,
+    animal_vanilla_rgb: np.ndarray | None = None,
+    animal_raw_rgb: np.ndarray | None = None,
+    snow_vanilla_rgb: np.ndarray | None = None,
+    snow_raw_rgb: np.ndarray | None = None,
+    ice_raw_rgb: np.ndarray | None = None,
+    wood_raw_rgb: np.ndarray | None = None,
+    base_heuristics_passed: int = 20,
+    debug_view_corrupt: bool = False,
+) -> dict[str, Any]:
+    """Wave 89 Total Rebirth Part 2: Combines all 34 Wave 82-88 heuristics with Eye-Audit Regression Gates #35..#37."""
+    base34 = collect_total_rebirth_34_metrics(
+        frames_rgb, runtime_telemetry, ownership_dump,
+        vanilla_ref_rgb=vanilla_ref_rgb,
+        raw_ref_rgb=raw_ref_rgb,
+        base_heuristics_passed=base_heuristics_passed,
+        debug_view_corrupt=debug_view_corrupt,
+    )
+    ext_list = list(base34["extended_results"])
+    if tiling_vanilla_rgb is not None and tiling_raw_rgb is not None:
+        m34_tiling = metric_34_tiling_autocorrelation_drop(tiling_vanilla_rgb, tiling_raw_rgb)
+        ext_list = [m34_tiling if m.get("id") == 34 else m for m in ext_list]
+    a_van = vanilla_ref_rgb if animal_vanilla_rgb is None else animal_vanilla_rgb
+    a_raw = raw_ref_rgb if animal_raw_rgb is None else animal_raw_rgb
+    s_van = vanilla_ref_rgb if snow_vanilla_rgb is None else snow_vanilla_rgb
+    s_raw = raw_ref_rgb if snow_raw_rgb is None else snow_raw_rgb
+    i_raw = raw_ref_rgb if ice_raw_rgb is None else ice_raw_rgb
+    w_raw = raw_ref_rgb if wood_raw_rgb is None else wood_raw_rgb
+
+    part2_ext = [
+        metric_35_animal_no_green_bleed(a_van, a_raw),
+        metric_36_snow_foliage_no_spring_green(s_van, s_raw),
+        metric_37_ice_wood_anisotropic_no_blotch(i_raw, w_raw),
+    ]
+    all_ext = ext_list + part2_ext
+    failed = [m for m in all_ext if not m["passed"]]
+    return {
+        "schema": "raw.heuristics-v2/37",
+        "base_heuristics_module": vh.__name__,
+        "base_passed": int(base_heuristics_passed),
+        "extended_passed": len(all_ext) - len(failed),
+        "extended_total": len(all_ext),
+        "total_metrics": int(base_heuristics_passed) + len(all_ext),
+        "all_passed": len(failed) == 0,
+        "failure_codes": [m["code"] for m in failed],
+        "extended_results": all_ext,
+    }
+
+
 def collect_total_rebirth_34_metrics(
     frames_rgb: Sequence[np.ndarray],
     runtime_telemetry: dict[str, Any],

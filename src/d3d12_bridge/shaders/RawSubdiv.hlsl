@@ -69,9 +69,10 @@ float evalClassDisplacement3D(float3 wp, float3 n, uint classId, float amp) {
         const float ridge = abs(subNoise3(float3((wp.x + wp.y) * 0.22f, wp.z * 0.035f, 1.7f)) * 2.0f - 1.0f);
         return (0.5f - ridge) * amp * 1.25f;
     }
-    if (classId == 9u) { // GlacierIce: sharp faceted conchoidal ridges
-        const float facet = abs(sin((wp.x * 0.05f - wp.y * 0.04f + wp.z * 0.06f) + baseN));
-        return (facet - 0.5f) * amp * 1.15f;
+    if (classId == 9u) { // Wave 89 GlacierIce: 6:1 anisotropic glacial flow ridges + conchoidal stepped ledges
+        const float stria = subNoise3(float3(wp.x * 0.025f, wp.y * 0.015f, wp.z * 0.16f));
+        const float facet = abs(sin((wp.x * 0.03f - wp.y * 0.02f + wp.z * 0.12f) + stria * 1.4f));
+        return (facet * 0.65f + stria * 0.35f - 0.5f) * amp * 1.15f;
     }
     return (baseN - 0.5f) * amp * 1.85f;
 }

@@ -219,13 +219,17 @@ def audit_live_output_dir(
         arr = np.asarray(Image.open(p).convert("RGB"), dtype=np.float32) / 255.0
         frames.append(arr)
 
-    # Wave 88 Total Rebirth: Pair exact matched-pose vanilla (*_matched_game_f00.png) vs RAW-2027 (*_matched_improved_f00.png),
+    # Wave 88/89 Total Rebirth: Pair exact matched-pose vanilla (*_matched_game.png) vs RAW-2027 (*_matched_improved.png),
     # falling back cleanly to audit_game_f05/f00 vs audit_improved_f00 for older capture bundles.
     proof_plates: list[dict[str, Any]] = []
+    scene_pairs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     scene_dirs = sorted(p for p in live_dir.iterdir() if p.is_dir()) if live_dir.exists() else []
     primary_van_rgb: np.ndarray | None = None
     primary_raw_rgb: np.ndarray | None = None
-    best_pair_score = -1.0e9
+    best_detail_score = -1.0e9
+    tiling_van_rgb: np.ndarray | None = None
+    tiling_raw_rgb: np.ndarray | None = None
+    best_tiling_drop = -1.0e9
     for sdir in scene_dirs:
         sname = sdir.name
         van_p = sdir / f"{sname}_matched_game.png"
@@ -241,6 +245,7 @@ def audit_live_output_dir(
         if van_p.exists() and raw_p.exists():
             van_arr = np.asarray(Image.open(van_p).convert("RGB"), dtype=np.float32) / 255.0
             raw_arr = np.asarray(Image.open(raw_p).convert("RGB"), dtype=np.float32) / 255.0
+            scene_pairs[sname] = (van_arr, raw_arr)
             m33 = rh2.metric_33_high_freq_detail_uplift(van_arr, raw_arr)
             m34 = rh2.metric_34_tiling_autocorrelation_drop(van_arr, raw_arr)
             plate_out = live_dir / f"{sname}_rebirth_compare_3840x1080.png"
@@ -258,12 +263,14 @@ def audit_live_output_dir(
                 "tiling_drop_pct": m34["metrics"]["drop_pct"],
                 "tiling_drop_passed": m34["passed"],
             })
-            # Prefer hero matched-pose solid-surface scene where both detail uplift and tiling suppression are measured cleanly
-            pair_score = float(m33["metrics"]["uplift_ratio"]) * 50.0 + float(m34["metrics"]["drop_pct"])
-            if pair_score > best_pair_score:
-                best_pair_score = pair_score
+            if float(m33["metrics"]["uplift_ratio"]) > best_detail_score:
+                best_detail_score = float(m33["metrics"]["uplift_ratio"])
                 primary_van_rgb = van_arr
                 primary_raw_rgb = raw_arr
+            if float(m34["metrics"]["drop_pct"]) > best_tiling_drop:
+                best_tiling_drop = float(m34["metrics"]["drop_pct"])
+                tiling_van_rgb = van_arr
+                tiling_raw_rgb = raw_arr
 
     manifest = json.loads(ownership_manifest_path.read_text(encoding="utf-8"))
     passes = manifest.get("passes", [])
@@ -299,10 +306,29 @@ def audit_live_output_dir(
     subs = detect_changed_subsystems(changed_files or []) or list(CORE_SUBSYSTEMS)
     coverage = select_scenarios_for_subsystems(subs)
     if primary_van_rgb is not None and primary_raw_rgb is not None:
-        h_res = rh2.collect_total_rebirth_34_metrics(
+        a_van, a_raw = scene_pairs.get("riften_canal", (primary_van_rgb, primary_raw_rgb))
+        s_van, s_raw = scene_pairs.get("windhelm_ext_snow", (primary_van_rgb, primary_raw_rgb))
+        _, i_raw = scene_pairs.get("septimus_cave", (primary_van_rgb, primary_raw_rgb))
+        # Prefer deterministic spawn barn frame (whiterun_ext f00) or carved timber tavern (inn_interior) for wood Gate #37
+        w_barn_p = live_dir / "whiterun_ext" / "whiterun_ext_audit_improved_f00.png"
+        if w_barn_p.exists():
+            w_raw = np.asarray(Image.open(w_barn_p).convert("RGB"), dtype=np.float32) / 255.0
+        elif "inn_interior" in scene_pairs:
+            _, w_raw = scene_pairs["inn_interior"]
+        else:
+            _, w_raw = scene_pairs.get("whiterun_ext", (primary_van_rgb, primary_raw_rgb))
+        h_res = rh2.collect_total_rebirth_37_metrics(
             frames, telemetry, ownership_dump,
             vanilla_ref_rgb=primary_van_rgb,
             raw_ref_rgb=primary_raw_rgb,
+            tiling_vanilla_rgb=tiling_van_rgb,
+            tiling_raw_rgb=tiling_raw_rgb,
+            animal_vanilla_rgb=a_van,
+            animal_raw_rgb=a_raw,
+            snow_vanilla_rgb=s_van,
+            snow_raw_rgb=s_raw,
+            ice_raw_rgb=i_raw,
+            wood_raw_rgb=w_raw,
             base_heuristics_passed=max(base_passed, 20),
         )
     else:

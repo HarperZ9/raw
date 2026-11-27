@@ -208,9 +208,18 @@ def metric_29_photometric_integrity(
     non_finite = int(np.sum(~np.isfinite(arr)))
     safe = np.nan_to_num(arr, nan=0.0, posinf=10.0, neginf=-1.0)
     luma = 0.2126 * safe[..., 0] + 0.7152 * safe[..., 1] + 0.0722 * safe[..., 2]
-    black_crush_pct = float(np.mean(luma <= 0.015) * 100.0)
-    highlight_clip_pct = float(np.mean(np.max(safe, axis=-1) >= 0.995) * 100.0)
-    out_of_gamut_pct = float(np.mean((np.min(safe, axis=-1) < -0.005) | (np.max(safe, axis=-1) > 1.05)) * 100.0)
+    # Mask out Skyrim's pitch-black top compass HUD (matches visual_heuristics.py _hud_valid_mask):
+    if safe.shape[0] >= 128 and safe.shape[1] >= 128:
+        hud_ok = vh._hud_valid_mask(safe.shape[0], safe.shape[1])
+        luma_eval = luma[hud_ok]
+        safe_eval = safe[hud_ok]
+    else:
+        luma_eval = luma
+        safe_eval = safe
+    # Match visual_heuristics.py::detect_exposure_and_tonemap_clipping crushed-black floor (lum < 0.008):
+    black_crush_pct = float(np.mean(luma_eval < 0.008) * 100.0)
+    highlight_clip_pct = float(np.mean(np.max(safe_eval, axis=-1) >= 0.995) * 100.0)
+    out_of_gamut_pct = float(np.mean((np.min(safe_eval, axis=-1) < -0.005) | (np.max(safe_eval, axis=-1) > 1.05)) * 100.0)
     skin_ok = 0.06 <= float(actor_skin_luma) <= 0.72
     passed = (
         (non_finite == 0)

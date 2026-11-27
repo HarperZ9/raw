@@ -326,3 +326,155 @@ void cs_cull_instances(uint3 dtid : SV_DispatchThreadID)
             gVisibleIndices[dstSlot] = idx;
     }
 }
+
+// ============================================================================
+// Wave 83: Two-Pass Hi-Z Disocclusion Retest + Meshlet Backface Cone + Continuous LOD Cut
+// ============================================================================
+struct GpuMeshletDesc
+{
+    float4 boundSphere;          // xyz center, w radius
+    uint   packedConeAxisCutoff; // snorm8 xyz + cutoff
+    float  lodErrorWorld;        // child world-space geometric error
+    float  parentErrorWorld;     // parent DAG error (>= lodErrorWorld for watertight monotonic cut)
+    uint   meshletOffset;
+    uint   triVertCounts;        // low16=verts, high16=tris
+    uint   psoBucketId;
+    uint   pad0;
+    uint   pad1;
+};
+
+RWStructuredBuffer<uint> gDisoccCandidates : register(u3); // Pass 1 -> Pass 2 Hi-Z-culled candidate IDs
+RWByteAddressBuffer      gDisoccCount      : register(u4); // [0]=Pass 1 candidate count, [1]=Pass 2 recovered count
+
+bool TestMeshletBackfaceCone(float4 boundSphere, uint packedCone, float3 camPosW)
+{
+    const float ax = float(int(packedCone << 24) >> 24) / 127.0f;
+    const float ay = float(int(packedCone << 16) >> 24) / 127.0f;
+    const float az = float(int(packedCone << 8)  >> 24) / 127.0f;
+    const float cut = float(int(packedCone)      >> 24) / 127.0f;
+    const float3 toCam = boundSphere.xyz - camPosW;
+    const float  dist  = max(length(toCam), 1.0e-4f);
+    // Conservative sphere-cone backface test (visible if dot < cutoff * dist + radius):
+    return dot(toCam, float3(ax, ay, az)) < (cut * dist + boundSphere.w);
+}
+
+bool EvalMeshletLodCut(float lodErrorWorld, float parentErrorWorld, float viewZ, float projScalePx, float targetPxErr)
+{
+    const float zSafe = max(viewZ, 1.0f);
+    const float childPx  = (lodErrorWorld * projScalePx) / zSafe;
+    const float parentPx = (parentErrorWorld * projScalePx) / zSafe;
+    return (childPx <= targetPxErr) && (parentPx > targetPxErr);
+}
+
+// Pass 1 (previous-frame Hi-Z): draws previously visible occluders and queues Hi-Z-culled candidates for Pass 2 retest.
+[numthreads(64, 1, 1)]
+void cs_cull_pass1_prev_hiz(uint3 dtid : SV_DispatchThreadID)
+{
+    const uint idx        = dtid.x;
+    const uint instCount  = gCounts.x;
+    const uint maxVisible = gCounts.z;
+    const uint cullFlags  = gCounts.w;
+    bool visible          = false;
+    bool queueForPass2    = false;
+    uint meshletsToAdd    = 0u;
+
+    if (idx < instCount)
+    {
+        const GpuCullInstance inst = gInstances[idx];
+        bool alive = true;
+        if ((cullFlags & 1u) != 0u && !TestAabbFrustum(inst.aabbMin, inst.aabbMax)) { alive = false; }
+        if (alive && (cullFlags & 2u) != 0u && inst.maxDrawDist > 0.0f)
+        {
+            const float3 closest = clamp(gCamPosAndFlags.xyz, inst.aabbMin, inst.aabbMax);
+            const float3 delta   = closest - gCamPosAndFlags.xyz;
+            if (dot(delta, delta) > inst.maxDrawDist * inst.maxDrawDist) { alive = false; }
+        }
+        if (alive)
+        {
+            if ((cullFlags & 4u) != 0u && (inst.lodBiasFlags & 3u) == 0u && !TestAabbHiZVisible(inst.aabbMin, inst.aabbMax))
+            {
+                queueForPass2 = true;
+            }
+            else
+            {
+                visible = true;
+                meshletsToAdd = inst.meshletCount;
+            }
+        }
+    }
+
+    const uint wVisCount = WaveActiveCountBits(visible);
+    const uint wVisLane  = WavePrefixCountBits(visible);
+    const uint wDisCount = WaveActiveCountBits(queueForPass2);
+    const uint wDisLane  = WavePrefixCountBits(queueForPass2);
+    const uint wMeshSum  = WaveActiveSum(meshletsToAdd);
+
+    uint visBase = 0u, disBase = 0u;
+    if (WaveIsFirstLane())
+    {
+        if (wVisCount > 0u)
+        {
+            gVisibleCounts.InterlockedAdd(0u, wVisCount, visBase);
+            gIndirectArgs.InterlockedAdd(4u, wVisCount);
+        }
+        if (wMeshSum > 0u)
+        {
+            gVisibleCounts.InterlockedAdd(4u, wMeshSum);
+            gIndirectArgs.InterlockedAdd(32u, wMeshSum);
+        }
+        if (wDisCount > 0u)
+        {
+            gDisoccCount.InterlockedAdd(0u, wDisCount, disBase);
+        }
+    }
+    visBase = WaveReadLaneFirst(visBase);
+    disBase = WaveReadLaneFirst(disBase);
+    if (visible && (visBase + wVisLane) < maxVisible) { gVisibleIndices[visBase + wVisLane] = idx; }
+    if (queueForPass2 && (disBase + wDisLane) < maxVisible) { gDisoccCandidates[disBase + wDisLane] = idx; }
+}
+
+// Pass 2 (current-frame rebuilt Hi-Z): retests ONLY Pass-1 Hi-Z-culled candidates so newly disoccluded
+// geometry renders on the EXACT same frame with zero 1-frame pop-in!
+[numthreads(64, 1, 1)]
+void cs_cull_pass2_disoccluded(uint3 dtid : SV_DispatchThreadID)
+{
+    const uint candSlot   = dtid.x;
+    const uint candCount  = gDisoccCount.Load(0u);
+    const uint maxVisible = gCounts.z;
+    bool recovered        = false;
+    uint instIdx          = 0u;
+    uint meshletsToAdd    = 0u;
+
+    if (candSlot < candCount)
+    {
+        instIdx = gDisoccCandidates[candSlot];
+        if (instIdx < gCounts.x)
+        {
+            const GpuCullInstance inst = gInstances[instIdx];
+            if (TestAabbHiZVisible(inst.aabbMin, inst.aabbMax))
+            {
+                recovered = true;
+                meshletsToAdd = inst.meshletCount;
+            }
+        }
+    }
+
+    const uint wRecCount = WaveActiveCountBits(recovered);
+    const uint wRecLane  = WavePrefixCountBits(recovered);
+    const uint wMeshSum  = WaveActiveSum(meshletsToAdd);
+
+    uint visBase = 0u;
+    if (WaveIsFirstLane() && wRecCount > 0u)
+    {
+        gVisibleCounts.InterlockedAdd(0u, wRecCount, visBase);
+        gIndirectArgs.InterlockedAdd(4u, wRecCount);
+        gDisoccCount.InterlockedAdd(4u, wRecCount);
+        if (wMeshSum > 0u)
+        {
+            gVisibleCounts.InterlockedAdd(4u, wMeshSum);
+            gIndirectArgs.InterlockedAdd(32u, wMeshSum);
+        }
+    }
+    visBase = WaveReadLaneFirst(visBase);
+    if (recovered && (visBase + wRecLane) < maxVisible) { gVisibleIndices[visBase + wRecLane] = instIdx; }
+}

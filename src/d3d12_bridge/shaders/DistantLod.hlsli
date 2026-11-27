@@ -7,6 +7,16 @@ bool lodAt(int2 q) {
     return (uint(Spec.Load(int3(q, 0)).z * 255.0f + 0.5f) & 255u) == 7u;
 }
 
+// Wave 83: Continuous screen-space projected pixel-error LOD blend weight coupled to 1%-low budget target.
+// Eliminates hard discrete LOD pop boundaries across [2200..5200]u while staying strictly in [0, 1].
+float rawEvalContinuousLodFade(float zDist, float projScalePx, float targetPxErr) {
+    const float zSafe   = max(isfinite(zDist) ? zDist : 2200.0f, 1.0f);
+    const float pSafe   = clamp(isfinite(projScalePx) ? projScalePx : 1080.0f, 240.0f, 4320.0f);
+    const float tSafe   = clamp(isfinite(targetPxErr) ? targetPxErr : 1.25f, 0.85f, 3.50f);
+    const float errPx   = (4.2f * pSafe) / zSafe;
+    return smoothstep(tSafe * 1.35f, tSafe * 0.65f, errPx);
+}
+
 // Distant LOD in improved mode: the base colour the patch tapped, lit by the sun with the shadows that reach that
 // far (cascades where they cover it, the ray-traced sun visibility, the clouds' shadow), a mild wrap for the canopy
 // cards and the directional ambient times the sky the pixel sees. No lobe: LOD textures carry no specular mask.

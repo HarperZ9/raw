@@ -131,6 +131,104 @@ JobHandle RawJobSystem::SubmitAfter(const JobHandle& dependency, JobPriority pri
     return JobHandle{std::move(outCounter), this};
 }
 
+JobHandle RawJobSystem::SubmitAfterAll(const std::vector<JobHandle>& dependencies, JobPriority priority,
+                                       std::function<void()> fn) {
+    auto outCounter = std::make_shared<JobCounter>(1);
+    std::vector<std::shared_ptr<JobCounter>> pendingDeps;
+    pendingDeps.reserve(dependencies.size());
+    for (const auto& d : dependencies) {
+        if (d.Valid() && !d.IsComplete()) {
+            pendingDeps.push_back(d.counter);
+        }
+    }
+    if (pendingDeps.empty()) {
+        EnqueueInternal(priority, JobItem{std::move(fn), outCounter});
+        return JobHandle{std::move(outCounter), this};
+    }
+
+    struct FanInState {
+        std::atomic<int32_t>        remaining{0};
+        RawJobSystem*               self = nullptr;
+        JobPriority                 priority = JobPriority::Normal;
+        std::function<void()>       fn;
+        std::shared_ptr<JobCounter> outCounter;
+    };
+    auto state = std::make_shared<FanInState>();
+    state->remaining.store(static_cast<int32_t>(pendingDeps.size()), std::memory_order_relaxed);
+    state->self       = this;
+    state->priority   = priority;
+    state->fn         = std::move(fn);
+    state->outCounter = outCounter;
+    for (auto& depCounter : pendingDeps) {
+        depCounter->AddContinuation([state]() {
+            // Strict acq_rel fan-in barrier: consumer fires strictly after ALL producers finish.
+            if (state->remaining.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                state->self->EnqueueInternal(state->priority, JobItem{std::move(state->fn), std::move(state->outCounter)});
+            }
+        });
+    }
+    return JobHandle{std::move(outCounter), this};
+}
+
+bool RawJobSystem::SubmitInline(JobPriority /*priority*/, InlineJobFn fn, const void* ctxBytes, size_t ctxSize,
+                                JobCounter* counter) {
+    if (!fn || ctxSize > sizeof(RawJobSlot::payload)) {
+        return false;
+    }
+    RawJobSlot slot{};
+    slot.fn      = fn;
+    slot.counter = counter;
+    if (ctxBytes && ctxSize > 0u) {
+        std::memcpy(slot.payload, ctxBytes, ctxSize);
+    }
+    if (!m_running.load(std::memory_order_acquire) || m_lanes.empty()) {
+        slot.fn(slot.payload, 0u);
+        if (slot.counter) { slot.counter->SignalDone(); }
+        return true;
+    }
+    const uint32_t n = static_cast<uint32_t>(m_lanes.size());
+    const uint32_t start = m_rrDispatch.fetch_add(1u, std::memory_order_relaxed) % n;
+    for (uint32_t off = 0u; off < n; ++off) {
+        const uint32_t idx = (start + off) % n;
+        if (m_lanes[idx]->inlineRing.TryPush(slot)) {
+            m_pending.fetch_add(1ull, std::memory_order_release);
+            m_submitted.fetch_add(1ull, std::memory_order_relaxed);
+            m_wakeCv.notify_one();
+            return true;
+        }
+    }
+    // Ring full fallback: execute inline cleanly so zero tasks are ever dropped.
+    slot.fn(slot.payload, 0u);
+    m_completed.fetch_add(1ull, std::memory_order_relaxed);
+    if (slot.counter) { slot.counter->SignalDone(); }
+    return true;
+}
+
+bool RawJobSystem::PopLocalInline(uint32_t workerIdx, RawJobSlot* outSlot) {
+    if (workerIdx >= m_lanes.size() || !outSlot) return false;
+    if (m_lanes[workerIdx]->inlineRing.TryPop(*outSlot)) {
+        m_pending.fetch_sub(1ull, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
+bool RawJobSystem::StealInlineFromOthers(uint32_t thiefIdx, RawJobSlot* outSlot) {
+    const uint32_t n = static_cast<uint32_t>(m_lanes.size());
+    if (n == 0u || !outSlot) return false;
+    for (uint32_t off = 1u; off <= n; ++off) {
+        const uint32_t victimIdx = (thiefIdx + off) % n;
+        if (m_lanes[victimIdx]->inlineRing.TryPop(*outSlot)) {
+            m_pending.fetch_sub(1ull, std::memory_order_relaxed);
+            if (victimIdx != thiefIdx) {
+                m_stolen.fetch_add(1ull, std::memory_order_relaxed);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 void RawJobSystem::ParallelFor(size_t count, size_t grainSize, JobPriority priority,
                                const std::function<void(size_t begin, size_t end)>& fn) {
     if (count == 0u || !fn) return;
@@ -198,6 +296,13 @@ bool RawJobSystem::TryRunOnePendingJob() {
     if (!m_running.load(std::memory_order_acquire) || m_pending.load(std::memory_order_acquire) == 0ull) {
         return false;
     }
+    RawJobSlot inlineSlot{};
+    if (StealInlineFromOthers(0u, &inlineSlot)) {
+        if (inlineSlot.fn) inlineSlot.fn(inlineSlot.payload, 0u);
+        m_completed.fetch_add(1ull, std::memory_order_relaxed);
+        if (inlineSlot.counter) inlineSlot.counter->SignalDone();
+        return true;
+    }
     JobItem item{};
     if (!StealFromOthers(0u, &item)) return false;
     if (item.fn) item.fn();
@@ -208,6 +313,13 @@ bool RawJobSystem::TryRunOnePendingJob() {
 
 void RawJobSystem::WorkerLoop(uint32_t workerIdx) {
     while (!m_stopping.load(std::memory_order_acquire)) {
+        RawJobSlot inlineSlot{};
+        if (PopLocalInline(workerIdx, &inlineSlot) || StealInlineFromOthers(workerIdx, &inlineSlot)) {
+            if (inlineSlot.fn) inlineSlot.fn(inlineSlot.payload, workerIdx);
+            m_completed.fetch_add(1ull, std::memory_order_relaxed);
+            if (inlineSlot.counter) inlineSlot.counter->SignalDone();
+            continue;
+        }
         JobItem item{};
         if (PopLocal(workerIdx, &item) || StealFromOthers(workerIdx, &item)) {
             if (item.fn) item.fn();
@@ -216,7 +328,7 @@ void RawJobSystem::WorkerLoop(uint32_t workerIdx) {
             continue;
         }
         std::unique_lock<std::mutex> lk(m_wakeMtx);
-        m_wakeCv.wait_for(lk, std::chrono::milliseconds(2), [this]() {
+        m_wakeCv.wait_for(lk, std::chrono::milliseconds(1), [this]() {
             return m_stopping.load(std::memory_order_acquire) ||
                    m_pending.load(std::memory_order_acquire) > 0ull;
         });

@@ -527,7 +527,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                                                 (strataH - 0.5f) * 0.55f);
                 s.n = normalize(s.n + cliffGrad * (0.42f * cliffFade));
                 albedo *= lerp(1.0f, (0.86f + 0.22f * strataH) * (1.0f - fissure * 0.16f) * (1.0f - streak * 0.10f), cliffFade * 0.62f);
-                s.alpha = lerp(s.alpha, max(s.alpha * 0.82f, 0.30f), streak * cliffFade * 0.40f);
+                // Wave 91 Fix #3: Keep dry cliff granite matte (no false glossy streaks when dry; wetness applied below!)
+                s.alpha = lerp(s.alpha, max(s.alpha, 0.76f), cliffFade * 0.45f);
                 // Pale silver-green alpine lichen crust decals on exposed high-altitude rock above 1200u:
                 if (wpAbs.z > 1200.0f) {
                     const float lichen = smoothstep(0.68f, 0.88f, cNoise(wpAbs * 0.09f + 29.3f)) * smoothstep(1200.0f, 2600.0f, wpAbs.z);
@@ -995,9 +996,10 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float lapContrast = (pebbleH - 0.5f) * (slope > 0.80f ? 0.34f : 0.24f);
             const float3 loamTint = lerp(float3(0.94f, 0.92f, 0.88f), float3(1.06f, 1.04f, 0.99f), smoothstep(0.28f, 0.72f, pebbleH));
             albedo = saturate(albedo * lerp(1.0f.xxx, loamTint * (1.0f + lapContrast), tFade * 0.85f));
-            // Height-driven micro-roughness: raised pebbles/stones catch crisp specular sheen while dirt crevices stay matte!
-            const float heightGloss = smoothstep(0.54f, 0.82f, pebbleH) * tFade;
-            s.alpha = clamp(lerp(s.alpha, max(s.alpha * 0.68f, 0.28f), heightGloss * 0.55f), 0.06f, 0.96f);
+            // Wave 91 Fix #3: Keep dry granite/pebbles naturally matte (roughness >= 0.74 when dry; wet sheen only when wet!)
+            const float heightGloss = smoothstep(0.58f, 0.86f, pebbleH) * tFade;
+            const float pebbleFloor = lerp(0.74f, 0.28f, saturate(wet.wet * 1.15f + wet.puddle * 1.35f));
+            s.alpha = clamp(lerp(s.alpha, max(s.alpha * 0.86f, pebbleFloor), heightGloss * 0.40f), pebbleFloor, 0.96f);
         }
         // 2) Steep-cliff & hillside tri-planar geological strata synthesis on terrain (base == 4u, slope < 0.74):
         //    Wave 63: Prevents flat dark-brown hillsides by injecting cool-granite mineral ledges + 3D ridge normal relief!
@@ -1023,8 +1025,12 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float mgX = cNoise(wp * 0.14f + float3(0.45f, 0.0f, 0.0f)) - mg0;
             const float mgY = cNoise(wp * 0.14f + float3(0.0f, 0.45f, 0.0f)) - mg0;
             const float mgZ = cNoise(wp * 0.14f + float3(0.0f, 0.0f, 0.45f)) - mg0;
-            s.n = normalize(s.n + float3(mgX, mgY, mgZ) * (0.42f * mgFade));
-            s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.84f, 1.14f, microN), 0.55f * mgFade), 0.04f, 0.96f);
+            // Wave 91 Fix #3: Dampen dry granite micro-normal sparkle & enforce matte dry-granite roughness floor (eliminates white micro-specular flecking!)
+            const float wetRock01 = saturate(wet.wet * 1.15f + wet.puddle * 1.40f + wet.snow * 0.45f);
+            const float dryGraniteFloor = lerp(0.78f, 0.24f, wetRock01);
+            const float mgNormGain = lerp(0.24f, 0.38f, wetRock01);
+            s.n = normalize(s.n + float3(mgX, mgY, mgZ) * (mgNormGain * mgFade));
+            s.alpha = clamp(s.alpha * lerp(1.0f, lerp(0.92f, 1.12f, microN), 0.45f * mgFade), dryGraniteFloor, 0.96f);
         }
         // Triplanar geological crag & fracture normal relief on steep blocky vanilla cliffs (base == 1 or 4, slope < 0.72).
         if (slope < 0.72f && z < 8000.0f) {
@@ -1042,10 +1048,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float pxN = cNoise(wp * 0.16f + float3(0.35f, 0.0f, 0.0f)) - p0;
             const float pyN = cNoise(wp * 0.16f + float3(0.0f, 0.35f, 0.0f)) - p0;
             const float fineP = cNoise(wp * 0.44f + 5.7f);
-            s.n = normalize(s.n + float3(pxN, pyN, 0.0f) * (0.28f * poreFade));
-            s.alpha = clamp(s.alpha + (fineP - 0.5f) * 0.16f * poreFade, 0.06f, 0.96f);
+            const float wetPore01 = saturate(wet.wet * 1.15f + wet.puddle * 1.40f);
+            const float dryRockMinAlpha = lerp(0.76f, 0.22f, wetPore01);
+            s.n = normalize(s.n + float3(pxN, pyN, 0.0f) * (lerp(0.18f, 0.26f, wetPore01) * poreFade));
+            s.alpha = clamp(s.alpha + (fineP - 0.5f) * 0.12f * poreFade, dryRockMinAlpha, 0.96f);
         }
-        s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.14f * tileFade, 0.08f, 0.96f);
+        const float dryTileMinAlpha = lerp(0.76f, 0.20f, saturate(wet.wet * 1.15f + wet.puddle * 1.40f));
+        s.alpha = clamp(s.alpha + (macroN - 0.5f) * 0.12f * tileFade, dryTileMinAlpha, 0.96f);
     }
     // True Robust Screen-Space Complex Parallax Occlusion Mapping (Tatarchuk GDC 2006):
     // 16-step view-ray heightfield raymarch + 4-step binary search refinement along the INTO-surface view tangent

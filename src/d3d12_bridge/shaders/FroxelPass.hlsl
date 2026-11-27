@@ -190,9 +190,11 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
             fogWakeClear *= (1.0f - exp(-min(d2 / 5600.0f, 32.0f)) * ft.w * 0.62f);
         }
     }
-    const float groundBank = isInt ? 0.0f : exp(-min(basinH * 0.0018f, 32.0f)) * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * simTime * 0.00008f, 0.0f))) * (0.52f + 0.90f * dawnDuskFog + weather.w * 0.85f) * fogWakeClear;
-    // World-locked forest & valley humidity layer anchored to liveWaterZ (zero vertical swimming as player climbs/jumps!):
-    const float forestCanopyBelt = isInt ? 0.0f : exp(-min(max(wp.z - (liveWaterZ + 180.0f), 0.0f) * 0.0014f, 32.0f)) * smoothstep(550.0f, 3400.0f, rayDist) * (0.45f + 0.55f * cNoise(wp * 0.00062f - float3(cloudWind.xy * simTime * 0.00009f, 0.0f))) * (0.38f + 0.62f * dawnDuskFog + weather.w * 0.55f + saturate(clouds.x - 0.25f) * 0.35f) * fogWakeClear;
+    // Wave 91 Visual Eye-Audit Fix #2: Clear near-mid (<60m / <4200u) aerial mist so Riverwood pines & Riften autumn birches stay crisp and sunlit!
+    const float nearMidClear60m = isInt ? 1.0f : smoothstep(1400.0f, 4400.0f, rayDist);
+    const float groundBank = isInt ? 0.0f : exp(-min(basinH * 0.0018f, 32.0f)) * nearMidClear60m * (0.42f + 0.58f * cNoise(wp * 0.0011f + float3(cloudWind.xy * simTime * 0.00008f, 0.0f))) * (0.42f + 0.78f * dawnDuskFog + weather.w * 0.75f) * fogWakeClear;
+    // World-locked forest & valley humidity layer anchored to liveWaterZ (starts past ~40m so mid-ground pines stay vivid!):
+    const float forestCanopyBelt = isInt ? 0.0f : exp(-min(max(wp.z - (liveWaterZ + 180.0f), 0.0f) * 0.0014f, 32.0f)) * smoothstep(2600.0f, 6400.0f, rayDist) * (0.45f + 0.55f * cNoise(wp * 0.00062f - float3(cloudWind.xy * simTime * 0.00009f, 0.0f))) * (0.34f + 0.56f * dawnDuskFog + weather.w * 0.48f + saturate(clouds.x - 0.25f) * 0.30f) * fogWakeClear;
     // True 3D alpine ridge collar clouds hugging mountain flanks (3,800u..7,800u world altitude):
     const float peakDz = (wp.z - 5000.0f) / 2600.0f;
     const float peakCollar = isInt ? 0.0f : exp(-min(peakDz * peakDz, 32.0f)) * smoothstep(3600.0f, 11000.0f, zMid) * (0.55f + 0.65f * cNoise(wp * 0.00022f - float3(cloudWind.xy * simTime * 0.00007f, 0.0f)));
@@ -210,23 +212,24 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float3 curlV = float3(cg0.z - cg0.w, cg0.w - cg0.y, cg0.y - cg0.z);
         const float4 cg1 = rawNoise3Grad(curlP * 2.15f + curlV * 0.42f + float3(7.3f, -5.1f, 3.7f));
         const float curlWisp = lerp(0.55f, 1.48f, saturate(cg0.x * 0.60f + cg1.x * 0.40f));
-        valleyStratMist = altExp * curlWisp * (0.48f + 0.72f * dawnDuskFog + 0.55f * weather.w + 0.35f * saturate(clouds.x)) * fogWakeClear;
+        valleyStratMist = altExp * curlWisp * nearMidClear60m * (0.38f + 0.62f * dawnDuskFog + 0.48f * weather.w + 0.28f * saturate(clouds.x)) * fogWakeClear;
 
         // Sharp temperature-inversion mist deck pooling cleanly at valley-pass altitude & mountain cloud-base collar:
         const float invCapZ = valleyZ + lerp(920.0f, 2350.0f, saturate(phenology1.z * 0.55f + clouds.x * 0.45f));
         const float invDz = wp.z - invCapZ;
         const float invSigmaZ = (invDz > 0.0f) ? 260.0f : 620.0f; // crisp capped top, softer misty underside
-        const float valleyDeck = exp(-min((invDz * invDz) / (invSigmaZ * invSigmaZ), 24.0f)) * smoothstep(600.0f, 3200.0f, rayDist);
+        const float valleyDeck = exp(-min((invDz * invDz) / (invSigmaZ * invSigmaZ), 24.0f)) * smoothstep(2600.0f, 6200.0f, rayDist);
         const float cloudDeckZ = (clouds.y > 1000.0f) ? (clouds.y - 480.0f) : 5600.0f;
         const float hiDz = (wp.z - cloudDeckZ) / 950.0f;
-        const float mountainDeck = exp(-min(hiDz * hiDz, 24.0f)) * saturate(clouds.x * 1.15f) * smoothstep(2200.0f, 8500.0f, rayDist);
+        const float mountainDeck = exp(-min(hiDz * hiDz, 24.0f)) * saturate(clouds.x * 1.15f) * smoothstep(2800.0f, 9200.0f, rayDist);
         inversionBandMist = saturate(valleyDeck * invDrive * 0.85f + mountainDeck * 0.65f) * curlWisp * fogWakeClear;
     }
     // True world-space altitude falloff anchored to live sea/river level (100% world-locked, zero camera-height drift!):
     const float worldElevF = max(wp.z - liveWaterZ, 0.0f);
     const float valleyFogF = exp(-min(worldElevF * 0.00034f, 24.0f)) * (1.0f + 0.35f * saturate(clouds.x + weather.w));
-    // Smooth near-camera exterior ramp so foreground (<650u) stays crystal crisp while valleys/forests/mountains gain full 3D depth:
-    const float extNearRamp = isInt ? 1.0f : lerp(smoothstep(220.0f, 1500.0f, rayDist), 1.0f, saturate(weather.w * 0.65f + weather.z * 0.75f));
+    // Wave 91: Push near-mid exterior volumetric fog start past ~60m (1800u..5200u clear; 850u..3200u in rain/snow)
+    // so Riverwood mid-ground pines & Riften golden birches stay crisp and sunlit while far valleys/peaks keep full depth!
+    const float extNearRamp = isInt ? 1.0f : lerp(smoothstep(1800.0f, 5200.0f, rayDist), smoothstep(850.0f, 3200.0f, rayDist), saturate(weather.w * 0.55f + weather.z * 0.65f));
     const float heightFalloff = isInt ? 1.0f : (0.22f + 0.52f * valleyFogF + valleyStratMist * 0.68f + inversionBandMist * 0.92f + peakCollar * 1.48f + groundBank * 1.15f + forestCanopyBelt * 0.88f);
     const float baseExt = isInt ? clamp(tune.x * 0.14f, 0.000006f, 0.000016f)
                                 : clamp(tune.x * 0.145f, 0.000011f, 0.000024f);

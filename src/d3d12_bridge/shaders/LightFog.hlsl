@@ -1131,7 +1131,8 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float mapScale = (timeEnv.w > 0.5f && camPosW.z > 42000.0f) ? 0.18f : 1.0f;
     // Smooth astronomical 24h day ramp (prevents sudden foreground haze pops across dawn/dusk transitions!):
     const float dayFg = (sunColour.w > 0.5f) ? smoothstep(-0.04f, 0.14f, astroSunElev()) : 0.0f;
-    const float fgClear = lerp(1.0f, smoothstep(260.0f, 1500.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.65f + weather.z * 0.75f)));
+    // Wave 91: Keep <60m (4200u) near-mid foreground crystal clear in Riverwood/Riften while preserving distant shafts:
+    const float fgClear = lerp(smoothstep(900.0f, 3200.0f, dist), smoothstep(1600.0f, 4800.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.55f + weather.z * 0.65f)));
     const float4 froxRaw = sampleFroxel3D(uv, curZ);
     const float4 frox = all(isfinite(froxRaw)) ? float4(clamp(froxRaw.rgb, 0.0f.xxx, 8.0f.xxx), saturate(froxRaw.a)) : float4(0.0f, 0.0f, 0.0f, 1.0f);
     const float froxT = lerp(1.0f, frox.a, mapScale);

@@ -248,18 +248,17 @@ inline float EvalGlacierConchoidalCrack(Vec2 p) noexcept {
     return 1.0f - Smoothstep(0.015f, 0.085f, edge);
 }
 
-// Wave 90 v3 Part 3: Smooth translucent crystalline sapphire glacier + fine micro-crystal facets (zero wavy stripes).
+// Wave 91 Visual Eye-Audit Fix: Organic carved sapphire glacier crystal planes + delicate hairline fracture seams.
 inline float EvalGlacierAnisotropicHeight(Vec3 worldM, Vec2 pDom) noexcept {
-    const Vec2 pObl{pDom.x * 0.866f - pDom.y * 0.500f, pDom.x * 0.500f + pDom.y * 0.866f};
-    const float warpA = (EvalHexStochasticNoise({pObl.x * 0.44f + worldM.z * 0.20f, pObl.y * 0.44f + 2.3f}) - 0.5f) * 1.45f;
-    const float warpB = (EvalHexStochasticNoise({pObl.x * 0.96f - worldM.z * 0.28f, pObl.y * 0.96f + 7.1f}) - 0.5f) * 0.72f;
-    const float facetA = EvalHexStochasticNoise({(pObl.x + warpA) * 1.15f, (pObl.y + warpB) * 1.95f + worldM.z * 1.10f});
-    const float facetB = EvalHexStochasticNoise({(pObl.x - warpB) * 3.80f + 5.1f, (pObl.y + warpA * 0.4f) * 6.40f - worldM.z * 2.20f});
-    const float microC = ValueNoise2D((pObl.x + warpA * 0.3f) * 14.0f, (pObl.y + warpB * 0.3f) * 26.0f + worldM.z * 11.0f);
-    const float veinZone = Smoothstep(0.68f, 0.88f, EvalHexStochasticNoise({pObl.x * 0.45f + 4.7f, pObl.y * 0.45f - 1.9f}));
-    const float rawEdge = EvalGlacierConchoidalCrack({(pObl.x + warpA * 0.30f) * 0.80f, (pObl.y + warpB * 0.30f) * 1.45f + worldM.z * 0.42f});
-    const float hairline = Smoothstep(0.64f, 0.96f, rawEdge) * veinZone;
-    return Clamp01(0.22f * facetA + 0.26f * facetB + 0.52f * microC - 0.12f * hairline + 0.04f);
+    const Vec2 pObl{pDom.x * 0.899f - pDom.y * 0.438f, pDom.x * 0.438f + pDom.y * 0.899f};
+    const Vec2 pW{
+        pObl.x + 0.14f * std::sin(pObl.y * 2.6f + worldM.z * 0.55f + 0.7f) + 0.06f * std::cos(pObl.x * 4.1f - pObl.y * 1.9f),
+        pObl.y + 0.10f * std::cos(pObl.x * 3.1f - worldM.z * 0.45f - 1.1f) + 0.04f * std::sin(pObl.y * 4.7f + pObl.x * 2.2f)
+    };
+    const float edge1 = EvalGlacierConchoidalCrack({pW.x * 1.45f, pW.y * 4.80f + worldM.z * 0.75f});
+    const float edge2 = EvalGlacierConchoidalCrack({(pW.x + 0.37f) * 3.20f, (pW.y - 0.21f) * 11.50f - worldM.z * 1.15f});
+    const float plane = EvalHexStochasticNoise({pW.x * 1.45f, pW.y * 4.80f + worldM.z * 0.75f});
+    return Clamp01(0.36f + 0.46f * plane - 0.22f * edge1 - 0.10f * edge2);
 }
 
 // Wave 90 Part 3: Henyey-Greenstein (OPT-032) backlit subsurface foliage translucency analytical mirror.

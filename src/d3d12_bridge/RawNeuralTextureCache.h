@@ -301,4 +301,131 @@ inline NtcVramBudgetReport Estimate4kVramBudget(uint32_t downsampleFactor = 2u, 
     return r;
 }
 
+// -----------------------------------------------------------------------------
+// Wave 91 OPT-052 (BuildLang-NTC610) SM 6.9 / SM 6.10 Cooperative Vector ABI Mirror
+// Exact 4K PBR archetype footprint: 10.6675 MiB (5.9995x / -83.33% vs 64 MiB BC7)
+// 16 Skyrim/Playground world archetypes: 170.6801 MiB total (saves 853.32 MiB vs 1024 MiB BC7).
+// -----------------------------------------------------------------------------
+constexpr uint32_t kNtc610StatusOk           = 0u;
+constexpr uint32_t kNtc610StatusCorruptScale = 1u;
+constexpr uint32_t kNtc610StatusOobMipOrUv   = 2u;
+constexpr uint32_t kNtc610StatusUnnormNormal = 3u;
+constexpr uint32_t kNtc610G0ResDefault       = 1024u;
+constexpr uint32_t kNtc610G1ResDefault       = 512u;
+constexpr uint32_t kNtc610MaxMipDefault      = 11u;
+constexpr float    kNtc610MaxValidQScale     = 0.05f;
+constexpr uint32_t kNtc610MlpBytesPerClass   = 880u; // FP16 W1[16x16]+b1[16]+W2[8x16]+b2[8]
+
+struct alignas(16) RawNtc610MaterialCB {
+    uint32_t archetypeId     = 0u;
+    uint32_t g0Res           = kNtc610G0ResDefault;
+    uint32_t g1Res           = kNtc610G1ResDefault;
+    uint32_t maxMip          = kNtc610MaxMipDefault;
+
+    float    qScaleG0        = 1.0f / 127.0f;
+    float    qScaleG1        = 1.0f / 127.0f;
+    float    demodEpsilon    = 1.0e-4f;
+    uint32_t mlpWeightOffset = 0u;
+
+    float    pad[56]{}; // 14 x float4 -> exact 256-byte CBV alignment
+};
+static_assert(sizeof(RawNtc610MaterialCB) == 256u, "RawNtc610MaterialCB must match HLSL 256-byte CBV ABI");
+static_assert(alignof(RawNtc610MaterialCB) == 16u, "RawNtc610MaterialCB must be 16-byte aligned");
+
+struct RawNtc610PbrSample {
+    std::array<float, 3> albedo{0.0f, 0.0f, 0.0f};
+    std::array<float, 3> normalTS{0.0f, 0.0f, 1.0f};
+    float    roughness = 0.85f;
+    float    metalness = 0.0f;
+    float    height    = 0.5f;
+    uint32_t status    = kNtc610StatusOk;
+};
+
+struct Ntc610VramBudgetReport {
+    double bc74kPerClassMiB    = 64.0;
+    double ntc610PerClassMiB   = 0.0;
+    double all16ClassesMiB     = 0.0;
+    double compressionVsBc7    = 0.0;
+    double vramReductionVsBc7Pct = 0.0;
+};
+
+inline Ntc610VramBudgetReport EstimateNtc6104kBudget(uint32_t numArchetypes = 16u) noexcept {
+    // G0: 1024x1024 x 8 INT8 = 8,388,608 B (8.0000 MiB)
+    // G1: 512x512 x 8 INT8 x (4/3 mip chain) = 2,796,202.67 B (2.6667 MiB)
+    // MLP: 880 B FP16 weights
+    constexpr double kG0Bytes  = 1024.0 * 1024.0 * 8.0;
+    constexpr double kG1Bytes  = 512.0 * 512.0 * 8.0 * (4.0 / 3.0);
+    constexpr double kMlpBytes = double(kNtc610MlpBytesPerClass);
+    const double perClassMiB   = (kG0Bytes + kG1Bytes + kMlpBytes) / (1024.0 * 1024.0);
+    Ntc610VramBudgetReport r{};
+    r.bc74kPerClassMiB      = 64.0; // 3x 4K BC7 (Albedo + Normal + ORM/Height)
+    r.ntc610PerClassMiB     = perClassMiB;
+    r.all16ClassesMiB       = perClassMiB * double(numArchetypes);
+    r.compressionVsBc7      = r.bc74kPerClassMiB / perClassMiB;
+    r.vramReductionVsBc7Pct = (1.0 - perClassMiB / r.bc74kPerClassMiB) * 100.0;
+    return r;
+}
+
+// Mirrors rawNtc610DecodeInlineMlp in RawNeuralTexDecode.hlsli bit-for-bit with fail-closed OPT-052 guards.
+inline RawNtc610PbrSample DecodeNtc610InlineMlp(
+    const RawNtc610MaterialCB& cb,
+    float u, float v, uint32_t mipLevel,
+    const std::array<float, 8>& g0Latent8,
+    const std::array<float, 8>& g1Latent8,
+    const std::array<float, 16>& w1Diag16,
+    const std::array<float, 16>& b1,
+    const std::array<float, 8>& w2Skip8,
+    const std::array<float, 8>& b2) noexcept
+{
+    RawNtc610PbrSample o{};
+    if (!std::isfinite(cb.qScaleG0) || !std::isfinite(cb.qScaleG1) ||
+        cb.qScaleG0 <= 0.0f || cb.qScaleG0 > kNtc610MaxValidQScale ||
+        cb.qScaleG1 <= 0.0f || cb.qScaleG1 > kNtc610MaxValidQScale)
+    {
+        o.status = kNtc610StatusCorruptScale;
+        return o;
+    }
+    if (mipLevel > cb.maxMip || !std::isfinite(u) || !std::isfinite(v) ||
+        u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f)
+    {
+        o.status = kNtc610StatusOobMipOrUv;
+        return o;
+    }
+    std::array<float, 16> z{};
+    for (uint32_t i = 0u; i < 8u; ++i) {
+        z[i]      = g0Latent8[i];
+        z[i + 8u] = g1Latent8[i];
+    }
+    std::array<float, 16> hid16{};
+    for (uint32_t h = 0u; h < 16u; ++h) {
+        const float pairCross = z[(h + 8u) & 15u] * 0.125f;
+        const float acc = z[h] * w1Diag16[h] + b1[h] + pairCross;
+        hid16[h] = NtcSilu(std::clamp(acc, -16.0f, 16.0f));
+    }
+    std::array<float, 8> out8{};
+    for (uint32_t c = 0u; c < 8u; ++c) {
+        out8[c] = (hid16[c] + hid16[c + 8u] * 0.5f) * w2Skip8[c] + b2[c];
+    }
+    const float nx = out8[3] * 2.0f - 1.0f;
+    const float ny = out8[4] * 2.0f - 1.0f;
+    const float nzSq = 1.0f - nx * nx - ny * ny;
+    if (!std::isfinite(nzSq) || nzSq <= 0.0f) {
+        o.status = kNtc610StatusUnnormNormal;
+        return o;
+    }
+    const float nz = std::sqrt(nzSq);
+    const float nLen = std::sqrt(nx * nx + ny * ny + nz * nz);
+    if (!std::isfinite(nLen) || std::fabs(nLen - 1.0f) > 1.0e-4f) {
+        o.status = kNtc610StatusUnnormNormal;
+        return o;
+    }
+    o.albedo    = {NtcClamp01(out8[0]), NtcClamp01(out8[1]), NtcClamp01(out8[2])};
+    o.normalTS  = {nx, ny, nz};
+    o.roughness = std::clamp(out8[5], 0.04f, 1.0f);
+    o.metalness = NtcClamp01(out8[6]);
+    o.height    = NtcClamp01(out8[7]);
+    o.status    = kNtc610StatusOk;
+    return o;
+}
+
 } // namespace raw::ntc

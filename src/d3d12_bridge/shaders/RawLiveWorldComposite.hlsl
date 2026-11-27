@@ -640,7 +640,7 @@ void cs_live_world_composite(uint3 dtid : SV_DispatchThreadID)
         if (isLivingGreen) {
             const float shadowLift = saturate((0.09f - lum) * 10.0f) * distFade;
             col += float3(0.018f, 0.032f, 0.013f) * shadowLift * (0.55f + 0.45f * needleN);
-            col += float3(0.048f, 0.090f, 0.025f) * (backLit * 0.38f * needleN * distFade);
+            col += float3(0.048f, 0.090f, 0.025f) * (backLit * 0.24f * needleN * distFade);
             if (waterAndCaustics.w < 0.15f && sat < 0.18f && lum > 0.35f) {
                 const float bleachW = saturate((0.18f - sat) * 5.0f) * saturate((lum - 0.35f) * 3.0f) * distFade;
                 col = lerp(col, col * float3(0.76f, 0.96f, 0.72f), bleachW * 0.45f);

@@ -77,18 +77,20 @@ class AuditSceneSpec:
     description: str
     in_quick: bool = False
     is_interior: bool = False
+    in_extended6: bool = False
 
 
 CANONICAL_SCENES: tuple[AuditSceneSpec, ...] = (
-    AuditSceneSpec("riverwood_day", "Riverwood", "fw 81a; set gamehour to 13", "Riverwood midday clear exterior (trees, pine, actors, river)", in_quick=True, is_interior=False),
+    AuditSceneSpec("riverwood_day", "Riverwood", "fw 81a; set gamehour to 13", "Riverwood midday clear exterior (trees, pine, actors, river)", in_quick=True, is_interior=False, in_extended6=True),
     AuditSceneSpec("riverwood_sunset", "Riverwood", "fw 81a; set gamehour to 19.5", "Riverwood golden-hour twilight & shadows", is_interior=False),
     AuditSceneSpec("riverwood_rain", "Riverwood", "fw c8220; set gamehour to 14", "Riverwood heavy rain, wet puddles & overcast", is_interior=False),
     AuditSceneSpec("riverwood_night", "Riverwood", "fw 81a; set gamehour to 23.5", "Riverwood midnight aurora, torches & dark exposure", is_interior=False),
     AuditSceneSpec("riverwood_river", "Riverwood", "fw 81a; set gamehour to 11; tfc", "Riverwood shallow/deep river water & shoreline", is_interior=False),
-    AuditSceneSpec("inn_interior", "RiverwoodSleepingGiantInn", "set gamehour to 20", "Sleeping Giant Inn interior hearth fire & candlelight", in_quick=True, is_interior=True),
-    AuditSceneSpec("septimus_cave", "SeptimusSignusOutpost", "set gamehour to 12", "Septimus Signus glacial ice cave interior", in_quick=True, is_interior=True),
-    AuditSceneSpec("windhelm_ext_snow", "WindhelmExterior01", "fw c8221; set gamehour to 14", "Windhelm snowy exterior, snow tracks & sky horizon", in_quick=True, is_interior=False),
-    AuditSceneSpec("whiterun_ext", "WhiterunExterior01", "fw 81a; set gamehour to 13", "Whiterun tundra plains, 3D grass & distant mountain LOD", is_interior=False),
+    AuditSceneSpec("inn_interior", "RiverwoodSleepingGiantInn", "set gamehour to 20", "Sleeping Giant Inn interior hearth fire & candlelight", in_quick=True, is_interior=True, in_extended6=True),
+    AuditSceneSpec("septimus_cave", "SeptimusSignusOutpost", "set gamehour to 12", "Septimus Signus glacial ice cave interior", in_quick=True, is_interior=True, in_extended6=True),
+    AuditSceneSpec("windhelm_ext_snow", "WindhelmExterior01", "fw c8221; set gamehour to 14", "Windhelm snowy exterior, snow tracks & sky horizon", in_quick=True, is_interior=False, in_extended6=True),
+    AuditSceneSpec("whiterun_ext", "WhiterunExterior01", "fw 81a; set gamehour to 13", "Whiterun exterior city walls, tundra plains, LOD & culling", is_interior=False, in_extended6=True),
+    AuditSceneSpec("riften_canal", "RiftenCityNorthGateExterior", "fw 81a; set gamehour to 13", "Riften north gate & Lake Honrich exterior, autumn birch foliage & reflections", is_interior=False, in_extended6=True),
     AuditSceneSpec("high_hrothgar", "HighHrothgarExterior01", "fw c8221; set gamehour to 15", "High Hrothgar alpine snowstorm, clouds & froxels", is_interior=False),
 )
 
@@ -762,7 +764,10 @@ def run_offline_audit(
 ) -> dict[str, Any]:
     """Audits an existing multi-scene capture directory without launching Skyrim SE."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    selected = [s for s in CANONICAL_SCENES if (profile == "full" or s.in_quick)]
+    selected = [
+        s for s in CANONICAL_SCENES
+        if (profile == "full" or (profile == "extended6" and s.in_extended6) or (profile == "quick" and s.in_quick))
+    ]
     eout = engine_out_dir or (captures_dir / "raw_engine_out")
     telemetry = None
     if eout.exists():
@@ -851,7 +856,10 @@ def run_live_audit(
 
     burst_n = max(1, min(16, int(burst)))
     stride_n = max(1, min(30, int(stride)))
-    selected = [s for s in CANONICAL_SCENES if (profile == "full" or s.in_quick)]
+    selected = [
+        s for s in CANONICAL_SCENES
+        if (profile == "full" or (profile == "extended6" and s.in_extended6) or (profile == "quick" and s.in_quick))
+    ]
     engine_out = game_dir / "raw_engine_out"
     env = dict(os.environ, SteamAppId="489830", SteamGameId="489830")
     scene_reports: list[dict[str, Any]] = []
@@ -1014,7 +1022,7 @@ def run_live_audit(
 
 def _main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="RAW 10-Scene Headless Full-Pipeline Visual, Debug & Motion Auditor (Wave 65)")
-    ap.add_argument("--profile", choices=("quick", "full"), default="quick", help="quick=4 scenes, full=all 10 scenes")
+    ap.add_argument("--profile", choices=("quick", "extended6", "full"), default="quick", help="quick=4 scenes, extended6=6 scenes (+whiterun_ext, riften_canal), full=all 11 scenes")
     ap.add_argument("--game-dir", default=str(DEFAULT_GAME_DIR), help="Skyrim SE installation directory")
     ap.add_argument("--custom-ini", default=str(DEFAULT_CUSTOM_INI), help="Path to SkyrimCustom.ini")
     ap.add_argument("--out-dir", required=True, help="Output directory for captures & full_pipeline_report.{json,md}")

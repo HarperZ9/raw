@@ -94,6 +94,16 @@ inline std::string RunningExeBaseName() {
     return slash == std::string::npos ? s : s.substr(slash + 1);
 }
 
+inline constexpr uint32_t kCe1TesGridCellsOffset    = 0x78u;
+inline constexpr uint32_t kCe1CellWorldSpaceOffset  = 0x128u;
+inline constexpr uint32_t kCe1UiMenuMapOffset       = 0x128u;
+inline constexpr uint32_t kCe1VmImplOffset16        = 0x200u;
+inline constexpr uint32_t kCe1VmImplOffset17        = 0x210u;
+static_assert((kCe1TesGridCellsOffset & 0x7u) == 0u, "TES::gridCells offset must be 8-byte aligned");
+static_assert((kCe1CellWorldSpaceOffset & 0x7u) == 0u, "TESObjectCELL::worldSpace offset must be 8-byte aligned");
+static_assert((kCe1UiMenuMapOffset & 0x7u) == 0u, "UI::menuMap offset must be 8-byte aligned");
+static_assert(kCe1VmImplOffset17 > kCe1VmImplOffset16, "SkyrimSE 1.7 VM impl offset exceeds 1.6 layout");
+
 inline EngineProfile ResolveEngineProfileByExe(std::string_view exeName, uint32_t major = 0, uint32_t minor = 0) {
     const std::string exe = LowerAscii(exeName);
     EngineProfile p{};
@@ -106,10 +116,10 @@ inline EngineProfile ResolveEngineProfileByExe(std::string_view exeName, uint32_
         p.addrLibPrefix = "versionlib-";
         p.hasHavok60HzBug = true;
         p.hasStdio512Bug = true;
-        p.offTesGridCells = 0x78;
-        p.offCellWorldSpace = 0x128;
-        p.offUiMenuMap = 0x128;
-        p.offVmImpl = 0x200;
+        p.offTesGridCells = kCe1TesGridCellsOffset;
+        p.offCellWorldSpace = kCe1CellWorldSpaceOffset;
+        p.offUiMenuMap = kCe1UiMenuMapOffset;
+        p.offVmImpl = kCe1VmImplOffset16;
         p.renderContract.depthConvention = DepthConvention::StandardZ_0to1;
         p.renderContract.mvSign = MotionVectorSign::PlusUv_PrevEqCurPlusMv;
         p.renderContract.hdrDxgiFormat = 10;     // R16G16B16A16_FLOAT
@@ -128,10 +138,10 @@ inline EngineProfile ResolveEngineProfileByExe(std::string_view exeName, uint32_
         p.addrLibPrefix = "versionlib-";
         p.hasHavok60HzBug = true;
         p.hasStdio512Bug = true;
-        p.offTesGridCells = 0x78;
-        p.offCellWorldSpace = 0x128;
-        p.offUiMenuMap = 0x128;
-        p.offVmImpl = (major > 1 || minor >= 7) ? 0x210u : 0x200u;
+        p.offTesGridCells = kCe1TesGridCellsOffset;
+        p.offCellWorldSpace = kCe1CellWorldSpaceOffset;
+        p.offUiMenuMap = kCe1UiMenuMapOffset;
+        p.offVmImpl = (major > 1 || minor >= 7) ? kCe1VmImplOffset17 : kCe1VmImplOffset16;
         p.renderContract.depthConvention = DepthConvention::StandardZ_0to1;
         p.renderContract.mvSign = MotionVectorSign::PlusUv_PrevEqCurPlusMv;
         p.renderContract.hdrDxgiFormat = 10;     // R16G16B16A16_FLOAT

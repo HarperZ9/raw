@@ -233,12 +233,20 @@ bool ProbeNiCameraSeh(CameraFrustumState* outFrust, float outWorldToCam[16]) {
         const uint64_t wantVt = reinterpret_cast<uintptr_t>(g_base) + g_niCameraVtRva;
         const uint8_t* niCam = nullptr;
 
+        constexpr uint32_t kNiNodeChildrenArrayOff  = 0x128u;
+        constexpr uint32_t kNiTArrayDataPtrOff      = 0x08u;
+        constexpr uint32_t kNiTArrayCapacityOff     = 0x10u;
+        struct NiFrustumLayout { float left; float right; float top; float bottom; float nearZ; float farZ; };
+        static_assert(sizeof(NiFrustumLayout) == 24u, "NiFrustum ABI layout must be 24 bytes");
+        static_assert(offsetof(NiFrustumLayout, nearZ) == 16u && offsetof(NiFrustumLayout, farZ) == 20u,
+                      "NiFrustum nearZ/farZ ABI offset guard");
+
         // Check if root itself is NiCamera, else scan NiNode::children (Skyrim SE 1.6/1.7: +0x128 NiTObjectArray)
         if (ReadAt<uint64_t>(root, 0x00u) == wantVt) {
             niCam = root;
         } else {
-            const uint8_t* const* data = ReadAt<const uint8_t* const*>(root, 0x128u + 0x08u);
-            const uint16_t cap = ReadAt<uint16_t>(root, 0x128u + 0x10u);
+            const uint8_t* const* data = ReadAt<const uint8_t* const*>(root, kNiNodeChildrenArrayOff + kNiTArrayDataPtrOff);
+            const uint16_t cap = ReadAt<uint16_t>(root, kNiNodeChildrenArrayOff + kNiTArrayCapacityOff);
             if (ValidHeapPtr(data) && cap > 0u && cap <= 32u) {
                 for (uint16_t i = 0; i < cap; ++i) {
                     const uint8_t* ch = data[i];
@@ -251,12 +259,12 @@ bool ProbeNiCameraSeh(CameraFrustumState* outFrust, float outWorldToCam[16]) {
         }
         if (!niCam) return false;
 
-        outFrust->left   = ReadAt<float>(niCam, g_offViewFrustum + 0x00u);
-        outFrust->right  = ReadAt<float>(niCam, g_offViewFrustum + 0x04u);
-        outFrust->top    = ReadAt<float>(niCam, g_offViewFrustum + 0x08u);
-        outFrust->bottom = ReadAt<float>(niCam, g_offViewFrustum + 0x0Cu);
-        outFrust->nearZ  = ReadAt<float>(niCam, g_offViewFrustum + 0x10u);
-        outFrust->farZ   = ReadAt<float>(niCam, g_offViewFrustum + 0x14u);
+        outFrust->left   = ReadAt<float>(niCam, g_offViewFrustum + static_cast<uint32_t>(offsetof(NiFrustumLayout, left)));
+        outFrust->right  = ReadAt<float>(niCam, g_offViewFrustum + static_cast<uint32_t>(offsetof(NiFrustumLayout, right)));
+        outFrust->top    = ReadAt<float>(niCam, g_offViewFrustum + static_cast<uint32_t>(offsetof(NiFrustumLayout, top)));
+        outFrust->bottom = ReadAt<float>(niCam, g_offViewFrustum + static_cast<uint32_t>(offsetof(NiFrustumLayout, bottom)));
+        outFrust->nearZ  = ReadAt<float>(niCam, g_offViewFrustum + static_cast<uint32_t>(offsetof(NiFrustumLayout, nearZ)));
+        outFrust->farZ   = ReadAt<float>(niCam, g_offViewFrustum + static_cast<uint32_t>(offsetof(NiFrustumLayout, farZ)));
         outFrust->valid  = std::isfinite(outFrust->nearZ) && std::isfinite(outFrust->farZ) &&
                            outFrust->nearZ > 0.01f && outFrust->farZ > outFrust->nearZ;
         if (outWorldToCam) {

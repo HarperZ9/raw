@@ -48,6 +48,8 @@ struct BsaHeader {
     uint32_t totalFileNameLength = 0;
     uint16_t fileFlags = 0;
 };
+static_assert(sizeof(BsaHeader) == 32u, "BsaHeader binary layout must be 32 bytes");
+static_assert(offsetof(BsaHeader, fileCount) == 16u, "BsaHeader::fileCount offset guard");
 
 struct Ba2Header {
     uint32_t version = 0;       // 1=Fallout 4 / FO76, 7/8=Starfield
@@ -55,6 +57,8 @@ struct Ba2Header {
     uint32_t fileCount = 0;
     uint64_t nameTableOffset = 0;
 };
+static_assert(sizeof(Ba2Header) == 24u, "Ba2Header parsed descriptor layout guard");
+static_assert(sizeof(Subrecord) >= sizeof(char[5]) && sizeof(PluginRecord) >= 24u, "CeFormatReader record types layout guard");
 
 struct ArchiveFileEntry {
     std::string virtualPath;    // normalized lowercase forward-slash path (e.g. "meshes/clutter/bucket.nif")

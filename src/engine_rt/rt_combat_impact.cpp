@@ -160,7 +160,9 @@ void ImpactDecalRing::Clear() {
 bool VerifyGlobalTimeMultiplierCodeSite(const Image& img, uint32_t fnSetGtmRva,
                                         uint32_t expectedMultRva, uint32_t expectedTargetRva) {
     if (!img.base || !fnSetGtmRva || !expectedMultRva || !expectedTargetRva) return false;
-    if (fnSetGtmRva < img.textBegin || fnSetGtmRva + 0x50u > img.textEnd) return false;
+    constexpr uint32_t kSetGtmDecodeWindowBytes = 0x50u;
+    static_assert(kSetGtmDecodeWindowBytes >= 64u, "BSTimer::SetGlobalTimeMultiplier decode window guard");
+    if (fnSetGtmRva < img.textBegin || fnSetGtmRva + kSetGtmDecodeWindowBytes > img.textEnd) return false;
 
     ZydisDecoder dec;
     ZydisDecoderInit(&dec, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);

@@ -313,11 +313,16 @@ struct LiveStealthSurvivalRuntime {
     float                      lastHearthProx = 0.0f;
 } g_ss;
 
+constexpr uintptr_t kTesObjectRefrPosXOffset = 0x54u;
+constexpr uintptr_t kTesObjectRefrPosYOffset = 0x58u;
+static_assert(kTesObjectRefrPosYOffset == kTesObjectRefrPosXOffset + sizeof(float),
+              "TESObjectREFR::data.location X/Y offset layout guard");
+
 static bool SehReadActorPosXY(const uint8_t* actor, float* outX, float* outY) {
     if (!actor || !outX || !outY) return false;
     __try {
-        *outX = *reinterpret_cast<const float*>(actor + 0x54);
-        *outY = *reinterpret_cast<const float*>(actor + 0x58);
+        *outX = *reinterpret_cast<const float*>(actor + kTesObjectRefrPosXOffset);
+        *outY = *reinterpret_cast<const float*>(actor + kTesObjectRefrPosYOffset);
         return std::isfinite(*outX) && std::isfinite(*outY);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;

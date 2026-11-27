@@ -56,11 +56,16 @@ std::vector<MeshSlot> g_meshSet;   // kPasses * kMeshSet
 struct Running { int shader = -1; uint64_t tech = ~0ull, mat = ~0ull; const void* mesh = nullptr; uint64_t key[3] = {}; };
 Running g_run;
 
+constexpr uint64_t kBsRenderPassGeometryOffset  = 0x10ull;
+constexpr uint64_t kBsGeometryRendererDataOffset = 0x138ull;
+static_assert((kBsRenderPassGeometryOffset & 0x7ull) == 0ull && (kBsGeometryRendererDataOffset & 0x7ull) == 0ull,
+              "BSRenderPass/BSGeometry pointer offsets must be 8-byte aligned");
+
 const void* MeshOf(uint64_t renderPass) {
-    // BSRenderPass+0x10 is the BSGeometry; its renderer data (the mesh's buffers) sits at +0x138 on 1.6
+    // BSRenderPass+0x10 is the BSGeometry; its renderer data (the mesh's buffers) sits at +0x138 on 1.6/1.7
     __try {
-        const auto geo = *reinterpret_cast<const uint64_t*>(renderPass + 0x10);
-        return geo ? *reinterpret_cast<void* const*>(geo + 0x138) : nullptr;
+        const auto geo = *reinterpret_cast<const uint64_t*>(renderPass + kBsRenderPassGeometryOffset);
+        return geo ? *reinterpret_cast<void* const*>(geo + kBsGeometryRendererDataOffset) : nullptr;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return nullptr;
     }

@@ -425,7 +425,10 @@ bool GenerateProceduralPbrTextureSet(ProceduralTextureKind kind, uint32_t resolu
     std::vector<float>   heights(pixelCount, 0.5f);
 
     const float invRes = 1.0f / float(resolution);
-    const uint32_t matSeed = seed ^ (static_cast<uint32_t>(kind) * 0x9E3779B9u + 0x517CC1B7u);
+    constexpr uint32_t kTextureSeedGoldenMul = 0x9E3779B9u;
+    constexpr uint32_t kTextureSeedMixAdd    = 0x517CC1B7u;
+    static_assert(kTextureSeedGoldenMul != 0u && kTextureSeedMixAdd != 0u, "Procedural PBR hash seed constants");
+    const uint32_t matSeed = seed ^ (static_cast<uint32_t>(kind) * kTextureSeedGoldenMul + kTextureSeedMixAdd);
 
     for (uint32_t y = 0u; y < resolution; ++y) {
         const float v = float(y) * invRes;

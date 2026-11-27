@@ -1340,7 +1340,10 @@ bool GenerateFloraAsset(const FloraGrowthParams& params, FloraAsset* outAsset) {
     if (!std::isfinite(params.daVinciExponent) || params.daVinciExponent < 1.2f || params.daVinciExponent > 5.0f) return false;
 
     const SpeciesProfile& prof = kSpeciesProfiles[spIdx];
-    FloraRng rng(params.seed ^ (spIdx * 0x85EBCA6Bu + 0x27D4EB2Du));
+    constexpr uint32_t kFloraSeedMul = 0x85EBCA6Bu;
+    constexpr uint32_t kFloraSeedAdd = 0x27D4EB2Du;
+    static_assert(kFloraSeedMul != 0u && kFloraSeedAdd != 0u, "Flora RNG hash constants");
+    FloraRng rng(params.seed ^ (spIdx * kFloraSeedMul + kFloraSeedAdd));
 
     // Resolve biological dimensions (honoring explicit overrides or species defaults with subtle organic variance)
     const float heightM = (params.heightMeters > 0.0f)

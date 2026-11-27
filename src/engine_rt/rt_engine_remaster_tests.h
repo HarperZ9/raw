@@ -42,8 +42,11 @@ inline void RunEngineRemasterTests(CheckFn&& Check) {
             0x48, 0x8B, 0x89, 0x28, 0x01, 0x00, 0x00, // mov rcx, qword ptr [rcx + 0x128]
             0xC3
         };
-        std::memcpy(fakeImg.data() + 0x1000, fn1, sizeof fn1);
-        std::memcpy(fakeImg.data() + 0x1040, fn2, sizeof fn2);
+        constexpr size_t kSyntheticFn1Offset = 0x1000u;
+        constexpr size_t kSyntheticFn2Offset = 0x1040u;
+        static_assert(kSyntheticFn2Offset > kSyntheticFn1Offset, "Synthetic Zydis test function layout guard");
+        std::memcpy(fakeImg.data() + kSyntheticFn1Offset, fn1, sizeof fn1);
+        std::memcpy(fakeImg.data() + kSyntheticFn2Offset, fn2, sizeof fn2);
 
         Image img{};
         img.base = fakeImg.data();

@@ -419,8 +419,10 @@ uint16_t FloatToHalfBits(float f) {
         const uint32_t sub = (mant | 0x00800000u) >> static_cast<uint32_t>(-14 - exp + 13);
         return static_cast<uint16_t>(sign | (sub & 0x03FFu));
     }
+    constexpr uint32_t kFp16RoundHalfUpBias = 0x00001000u;
+    static_assert(kFp16RoundHalfUpBias == (1u << 12), "IEEE-754 FP16 mantissa round-to-nearest bias");
     const uint16_t hExp  = static_cast<uint16_t>((exp + 15) << 10);
-    const uint16_t hMant = static_cast<uint16_t>((mant + 0x00001000u) >> 13);
+    const uint16_t hMant = static_cast<uint16_t>((mant + kFp16RoundHalfUpBias) >> 13);
     return static_cast<uint16_t>(sign | hExp | hMant);
 }
 

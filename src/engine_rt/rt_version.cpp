@@ -200,11 +200,15 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
             size_t p = 0;
             int32_t fmt = 0;
             if (rd(p, fmt)) {
-                if (fmt == 5 && buf.size() >= 0x60) {
+                constexpr size_t kAddrLibFmt5CountOffset = 0x5Cu;
+                constexpr size_t kAddrLibFmt5TableOffset = 0x60u;
+                static_assert(kAddrLibFmt5TableOffset == kAddrLibFmt5CountOffset + sizeof(uint32_t),
+                              "Address Library v5 binary header count/table offset guard");
+                if (fmt == 5 && buf.size() >= kAddrLibFmt5TableOffset) {
                     uint32_t count = 0;
-                    std::memcpy(&count, buf.data() + 0x5C, sizeof(count));
-                    if (0x60ull + uint64_t(count) * 4ull <= buf.size()) {
-                        const uint32_t* offs = reinterpret_cast<const uint32_t*>(buf.data() + 0x60);
+                    std::memcpy(&count, buf.data() + kAddrLibFmt5CountOffset, sizeof(count));
+                    if (kAddrLibFmt5TableOffset + uint64_t(count) * 4ull <= buf.size()) {
+                        const uint32_t* offs = reinterpret_cast<const uint32_t*>(buf.data() + kAddrLibFmt5TableOffset);
                         for (const auto& [id, meta] : idMap) {
                             if (id < count && offs[id] != 0) {
                                 t.entries[meta.first] = {meta.second, "runtime-addrlib", offs[id]};

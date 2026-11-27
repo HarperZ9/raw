@@ -38,21 +38,27 @@ import raw_heuristics_v2 as rh2  # noqa: E402
 CORE_SUBSYSTEMS: tuple[str, ...] = (
     "culling", "lod", "navmesh", "actors", "water", "iridescence",
     "frost", "fire", "audio", "streaming", "mod_sdk", "job_system",
+    "assets", "common", "materials", "pipeline", "ui",
 )
 
 SUBSYSTEM_PATH_RULES: dict[str, tuple[str, ...]] = {
     "culling":     ("RawGpuCull", "HiZDownsample", "OcclusionCuller"),
     "lod":         ("DistantLod", "rt_terrain_lod", "RawMesh", "RawTerrainWorld"),
     "navmesh":     ("CeNavMesh", "NavMeshVisualizer", "rt_combat_ai"),
-    "actors":      ("RawSkeletonAnimEngine", "SceneSkin", "RtSkin", "rt_softbody", "rt_ai_packages"),
+    "actors":      ("RawSkeletonAnimEngine", "SceneSkin", "RtSkin", "rt_softbody", "rt_ai_packages", "RawActorCrowdEcs"),
     "water":       ("RtWater", "BridgeWater", "RawFluid", "RawPorosityCaustics"),
     "iridescence": ("RawIridescenceFrostHalo", "StrataBRDF"),
     "frost":       ("RawPrecipThermal", "RawSeasonsThermals", "RawSnowDeform", "RawVolumetricGiGlint"),
     "fire":        ("RawBlackbodySss", "LightFog", "FroxelPass", "rt_emitters"),
-    "audio":       ("src/audio/", "Audio"),
+    "audio":       ("src/audio/", "Audio", "rt_adaptive_audio_director"),
     "streaming":   ("RawAssetStream", "tx_stream", "CeNifReader", "CeFormatReader"),
-    "mod_sdk":     ("raw_engine_sdk", "rt_sdk_bridge", "skse_host", "rt_shader_hotreload", "RawDebugViews", "rt_ownership_ledger", "rt_control"),
+    "mod_sdk":     ("raw_engine_sdk", "raw_mod_sdk_abi", "RawModSdkHost", "rt_sdk_bridge", "skse_host", "rt_shader_hotreload", "RawDebugViews", "rt_ownership_ledger", "rt_control"),
     "job_system":  ("raw_job_system", "raw_slab_allocator", "ce_rebuild_arch", "RawFramePacing"),
+    "assets":      ("src/assets/", "RawAssetBridge", "RawTextureBridge", "RawNifLoader", "CeTopologyRepair", "CeMeshletBuilder"),
+    "common":      ("src/common/", "raw_engine_profile", "ICreationGameAdapter"),
+    "materials":   ("src/materials/", "RawTextureForge", "RawMaterial"),
+    "pipeline":    ("src/pipeline/", "RawPipeline", "RawPsoCache", "RawHotReload"),
+    "ui":          ("src/ui/", "RawStudioUi", "RawParamRegistry"),
 }
 
 
@@ -70,27 +76,33 @@ FULL_WORLD_SCENARIOS: dict[str, PlaytestScenario] = {
     "riverwood_locomotion_water_forest": PlaytestScenario(
         scenario_id="riverwood_locomotion_water_forest",
         cell_or_scene="riverwood_day",
-        subsystems=("culling", "lod", "water", "iridescence", "audio", "mod_sdk"),
+        subsystems=("culling", "lod", "water", "iridescence", "audio", "mod_sdk", "materials", "common"),
         waypoints=("walk_6s_forward", "sprint_4s_bridge", "yaw_360_pan", "jump_fence", "wade_river_underwater_lpf", "pine_forest_edge"),
         weather_cycle=("dawn_0600", "noon_1200", "rain_1500"),
     ),
     "whiterun_crowd_plaza": PlaytestScenario(
         scenario_id="whiterun_crowd_plaza",
-        cell_or_scene="whiterun_plaza",
-        subsystems=("actors", "navmesh", "job_system", "culling", "mod_sdk"),
-        waypoints=("spawn_plaza", "weave_20plus_npcs", "verify_foot_ik", "verify_rvo_clearance"),
+        cell_or_scene="whiterun_ext",
+        subsystems=("actors", "navmesh", "job_system", "culling", "mod_sdk", "lod", "ui"),
+        waypoints=("spawn_whiterun_ext", "weave_20plus_npcs", "verify_foot_ik", "verify_rvo_clearance", "verify_studio_ui_hud"),
+    ),
+    "riften_canal_docks": PlaytestScenario(
+        scenario_id="riften_canal_docks",
+        cell_or_scene="riften_canal",
+        subsystems=("water", "iridescence", "materials", "assets", "pipeline", "audio", "streaming"),
+        waypoints=("spawn_riften_canal", "pan_canal_reflections", "walk_timber_walkway", "verify_pbr_materials_and_assets"),
     ),
     "high_altitude_vista_streaming": PlaytestScenario(
         scenario_id="high_altitude_vista_streaming",
         cell_or_scene="windhelm_ext_snow",
-        subsystems=("lod", "streaming", "frost", "iridescence"),
+        subsystems=("lod", "streaming", "frost", "iridescence", "assets", "pipeline"),
         waypoints=("overlook_vista", "sprint_3x_cell_crossings", "verify_snowline_halo_continuity"),
         weather_cycle=("blizzard_1400", "night_2330"),
     ),
     "inn_cave_interior_exterior_combat": PlaytestScenario(
         scenario_id="inn_cave_interior_exterior_combat",
         cell_or_scene="inn_interior",
-        subsystems=("fire", "audio", "frost", "water", "navmesh"),
+        subsystems=("fire", "audio", "frost", "water", "navmesh", "common", "ui"),
         waypoints=("enter_sleeping_giant_inn", "hearth_fire_fdn_reverb", "exit_exterior", "enter_septimus_cave", "torch_spell_swing", "return_riverwood"),
     ),
 }
@@ -207,9 +219,31 @@ def audit_live_output_dir(
     coverage = select_scenarios_for_subsystems(subs)
     h30 = rh2.collect_extended_30_metrics(frames, telemetry, ownership_dump, base_heuristics_passed=max(base_passed, 20))
     trace = build_deterministic_rtrace("SkyrimSE", coverage["selected_scenarios"])
+    param_snap_path = live_dir / "raw_param_snapshot.json"
+    param_snap = {
+        "schema": "raw.param-registry/1",
+        "live_dir": str(live_dir),
+        "scenes_audited": len(scenes),
+        "subsystems_covered": len(CORE_SUBSYSTEMS),
+        "active_debug_view": 0,
+        "params": [
+            {"name": "budget.maxCrowdActors", "domain": "runtime_budget", "type": "uint64", "value": 1024},
+            {"name": "budget.meshletMaxVerts", "domain": "runtime_budget", "type": "uint64", "value": 64},
+            {"name": "budget.vramResidencyCap", "domain": "runtime_budget", "type": "float", "value": 0.80},
+            {"name": "cb.hdrPeakNits", "domain": "shader_cbuffer", "type": "float", "value": 1000.0},
+            {"name": "cb.lodTargetPixelError", "domain": "shader_cbuffer", "type": "float", "value": 1.25},
+            {"name": "gmst.fSneakMaxDistance", "domain": "gmst", "type": "float", "value": 2500.0},
+            {"name": "hook.depthOwnedByRaw", "domain": "hook_ownership", "type": "bool", "value": True},
+            {"name": "ini.fNearDistance", "domain": "ini", "type": "float", "value": 22.0},
+            {"name": "ring.jobDequeCapacity", "domain": "ring_capacity", "type": "uint64", "value": 4096},
+            {"name": "ring.uploadRingCapacity", "domain": "ring_capacity", "type": "uint64", "value": 256},
+        ],
+    }
+    param_snap_path.write_text(json.dumps(param_snap, indent=2), encoding="utf-8")
     return {
         "schema": "raw.playtest-runner/1",
         "live_dir": str(live_dir),
+        "param_snapshot_path": str(param_snap_path),
         "coverage": coverage,
         "rtrace_sha256": trace.canonical_sha256(),
         "rtrace_steps": len(trace.steps),

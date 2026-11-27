@@ -229,8 +229,10 @@ bool VerifyPlayerCameraFovCodeSite(const Image& img, uint32_t fnCtorRva,
     bool sawWorldFovStore  = false;
     bool sawFirstFovStore  = false;
 
+    constexpr uint32_t kCtorDecodeWindowBytes = 0x160u;
+    static_assert(kCtorDecodeWindowBytes >= 256u, "PlayerCamera ctor Zydis decode window guard");
     uint32_t cur = fnCtorRva;
-    const uint32_t maxEnd = std::min(img.textEnd, fnCtorRva + 0x160u);
+    const uint32_t maxEnd = std::min(img.textEnd, fnCtorRva + kCtorDecodeWindowBytes);
     for (uint32_t insnCount = 0; insnCount < 96u && cur < maxEnd; ++insnCount) {
         ZydisDecodedInstruction insn;
         ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT];
@@ -276,11 +278,18 @@ namespace {
 using GetActorValueFn  = float (*)(void* avOwner, int32_t av);
 using RestoreAvThunkFn = void (*)(void* avOwner, int32_t mod, int32_t av, float val);
 
+constexpr uint32_t  kPlayerCameraWorldFovOffset = 0x13Cu;
+constexpr uintptr_t kActorValueOwnerOffset      = 0xB8u;
+constexpr uintptr_t kActorState1Offset          = 0xC8u;
+constexpr uintptr_t kActorState2Offset          = 0xCCu;
+static_assert(kActorState2Offset == kActorState1Offset + 4u && kActorState1Offset > kActorValueOwnerOffset,
+              "SkyrimSE 1.7.104.0 ActorValueOwner/ActorState layout guard");
+
 struct LiveMovementRuntime {
     const uint8_t*       base = nullptr;
     uint32_t             rvaPlayerCamera = 0;
     uint32_t             rvaPlayer = 0;
-    uint32_t             offWorldFov = 0x13Cu;
+    uint32_t             offWorldFov = kPlayerCameraWorldFovOffset;
     GetActorValueFn      fnGetAv = nullptr;
     RestoreAvThunkFn     fnRestoreAv = nullptr;
 
@@ -326,14 +335,14 @@ static bool SehReadPlayerMovementState(float* outStamina, bool* outSprinting, bo
         if (!player || reinterpret_cast<uintptr_t>(player) < 0x10000ull) return false;
 
         if (outStamina && g_mc.fnGetAv) {
-            const float st = g_mc.fnGetAv(player + 0xB8, 26 /*kStamina*/);
+            const float st = g_mc.fnGetAv(player + kActorValueOwnerOffset, 26 /*kStamina*/);
             *outStamina = std::isfinite(st) ? st : 0.0f;
         }
         // Binary-verified SkyrimSE 1.7.104.0 (0x6B5520 -> 0x6E1530):
         // ActorState::actorState1 at player+0xC8: bit 8 (0x100) == Sprinting
         // ActorState::actorState2 at player+0xCC: bits 5..7 == weaponState (1..5 = weapon drawn/combat-ready)
-        const uint32_t state1 = *reinterpret_cast<const uint32_t*>(player + 0xC8);
-        const uint32_t state2 = *reinterpret_cast<const uint32_t*>(player + 0xCC);
+        const uint32_t state1 = *reinterpret_cast<const uint32_t*>(player + kActorState1Offset);
+        const uint32_t state2 = *reinterpret_cast<const uint32_t*>(player + kActorState2Offset);
         if (outSprinting)   *outSprinting   = ((state1 & 0x0100u) != 0u);
         if (outWeaponDrawn) *outWeaponDrawn = (((state2 >> 5) & 7u) != 0u);
         return true;
@@ -348,7 +357,7 @@ static void SehDeductPlayerStamina(float amount) {
         uint8_t* player = *reinterpret_cast<uint8_t* const*>(g_mc.base + g_mc.rvaPlayer);
         if (!player || reinterpret_cast<uintptr_t>(player) < 0x10000ull) return;
         // ActorValueOwner::RestoreActorValueThunk (0x6C51F0): (avOwner=player+0xB8, mod=2 kDamage, av=26 kStamina, val=-amount)
-        g_mc.fnRestoreAv(player + 0xB8, 2, 26, -amount);
+        g_mc.fnRestoreAv(player + kActorValueOwnerOffset, 2, 26, -amount);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }

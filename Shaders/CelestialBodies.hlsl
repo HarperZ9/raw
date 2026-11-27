@@ -13,8 +13,10 @@
 
 cbuffer CelestialCB : register(b0)
 {
-    float SunZenithCos, SunAzimuth;
-    float MoonZenithCos, MoonAzimuth;
+    float SunZenithCos;
+    float SunAzimuth;
+    float MoonZenithCos;
+    float MoonAzimuth;
     float MoonPhase;
     float StarIntensity;
     float SunDiskIntensity;

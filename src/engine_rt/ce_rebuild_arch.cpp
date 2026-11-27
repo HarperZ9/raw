@@ -285,9 +285,11 @@ VtableVerifyResult VerifyClassVtable(uintptr_t moduleBase, const ClassContract& 
         res.detail = "seh_fault_reading_col_struct";
         return res;
     }
+    constexpr uintptr_t kMsvcTypeDescriptorNameOffset = 0x10u;
+    static_assert(kMsvcTypeDescriptorNameOffset == 2u * sizeof(void*), "MSVC x64 TypeDescriptor::name offset must be 16 bytes");
     char tdPrefix[2] = {0, 0};
     const bool tdReadable = (col.pTypeDescriptor != 0u) &&
-        SehReadBytes2(moduleBase + static_cast<uintptr_t>(col.pTypeDescriptor) + 0x10u, tdPrefix);
+        SehReadBytes2(moduleBase + static_cast<uintptr_t>(col.pTypeDescriptor) + kMsvcTypeDescriptorNameOffset, tdPrefix);
     res.rttiSelfConsistent = (col.signature == 1u) && (col.pSelf == c.colRva) &&
                              tdReadable && (tdPrefix[0] == '.') && (tdPrefix[1] == '?');
     if (!res.rttiSelfConsistent) {

@@ -168,13 +168,20 @@ std::atomic<uint32_t> g_blockedWrites{0};
 std::atomic<uint32_t> g_passedChecks{0};
 uint32_t g_presentTick = 0;
 
+constexpr uint32_t kCeTesGridCellsOffset = 0x78u;
+constexpr uint32_t kCeCellFlagsOffset    = 0x40u;
+constexpr uint32_t kCeCellStateOffset    = 0x44u;
+constexpr uint32_t kCeCellSpinLockOffset = 0x120u;
+static_assert(kCeCellStateOffset == kCeCellFlagsOffset + 4u && kCeCellSpinLockOffset > kCeCellStateOffset,
+              "TESObjectCELL SkyrimSE 1.7.104.0 field layout guard");
+
 uint32_t kMemMgrRva = 0;
 uint32_t kPlayerRva = 0;
 uint32_t kTesRva = 0;
-uint32_t kOffTesGrid = 0x78u;
-uint32_t kOffCellFlags = 0x40u;
-uint32_t kOffCellState = 0x44u;
-uint32_t kOffCellLock = 0x120u;
+uint32_t kOffTesGrid = kCeTesGridCellsOffset;
+uint32_t kOffCellFlags = kCeCellFlagsOffset;
+uint32_t kOffCellState = kCeCellStateOffset;
+uint32_t kOffCellLock = kCeCellSpinLockOffset;
 uint32_t kGlobPoolFree = 0;
 uint32_t kGlobPoolActive = 0;
 uint32_t kGlobCachedGrids = 0;

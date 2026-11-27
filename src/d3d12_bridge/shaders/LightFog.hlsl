@@ -18,6 +18,7 @@
 #include "RawSplitTemporalAerial.hlsli"
 #include "RawBlackbodySss.hlsli"
 #include "RawIridescenceFrostHalo.hlsli"
+#include "RawFogShadowCache16km.hlsli"
 
 Texture2D<float4> Lit         : register(t0);
 Texture2D<float>  Depth       : register(t1);
@@ -1135,8 +1136,14 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     const float fgClear = lerp(smoothstep(900.0f, 3200.0f, dist), smoothstep(1600.0f, 4800.0f, dist), dayFg * (1.0f - saturate(weather.w * 0.55f + weather.z * 0.65f)));
     const float4 froxRaw = sampleFroxel3D(uv, curZ);
     const float4 frox = all(isfinite(froxRaw)) ? float4(clamp(froxRaw.rgb, 0.0f.xxx, 8.0f.xxx), saturate(froxRaw.a)) : float4(0.0f, 0.0f, 0.0f, 1.0f);
-    const float froxT = lerp(1.0f, frox.a, mapScale);
-    const float3 froxScat = frox.rgb * mapScale;
+    // Wave 92 Visual Eye-Audit Fix #2: Warm & clear mid-distance clear-day pale-blue fog wash (~25%) so Riften golden
+    // birches through the balcony opening pop cleanly while preserving snowy Windhelm & distant alpine aerial depth.
+    const float midClearWarmW92 = dayFg * (1.0f - saturate(weather.w * 0.70f + weather.z * 0.85f))
+                                * smoothstep(1400.0f, 3200.0f, dist) * (1.0f - smoothstep(11000.0f, 24000.0f, dist));
+    const float froxTBase = lerp(1.0f, frox.a, mapScale);
+    const float froxT = lerp(froxTBase, pow(max(froxTBase, 1.0e-4f), 0.76f), midClearWarmW92);
+    const float3 froxWarmTintW92 = lerp(1.0f.xxx, float3(1.04f, 0.99f, 0.76f), midClearWarmW92 * 0.80f);
+    const float3 froxScat = frox.rgb * (mapScale * lerp(1.0f, 0.75f, midClearWarmW92)) * froxWarmTintW92;
     const float3 shaftScatter = vol2D * (0.14f * mapScale * fgClear);
     const float3 scatter = froxScat + shaftScatter;
     // Wave 42 Physical Underwater Volumetrics: Pope & Fry Beer-Lambert marine absorption + 12-step refracted sun-shafts + glacial silt motes!
@@ -1199,12 +1206,18 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         }
         // Dynamically lit far mountain aerial perspective: cloud-shadowed directional solar in-scattering vs shadowed ridges!
         const float fogCloudVis = (flags.x & FLAG_CLOUDS) != 0u ? cloudShadowN(midPt, 1u) : 1.0f;
+        // Wave 92 CS-040: 16 km far-field aerial visibility weighting + Kiruna twilight dusk photometry on distant horizons
+        const float fsc16FarW = rawFsc16FarFieldWeight(dist);
+        const float sunAzDen = rsqrt(max(dot(w.xy, w.xy) * dot(aSunFg.xy, aSunFg.xy), 1.0e-6f));
+        const float cosSunAzFar = clamp(dot(w.xy, aSunFg.xy) * sunAzDen, -1.0f, 1.0f);
+        const RawFsc16Twilight kirunaFarTw = rawFsc16KirunaTwilight(aElevFg, asin(clamp(w.z, -1.0f, 1.0f)), cosSunAzFar);
         const float fogSunPhase = 0.18f + 0.82f * pow(cosSunF, 3.0f);
         const float3 d65Mie = lerp(float3(1.0f, 0.62f, 0.30f), float3(0.96f, 0.98f, 1.02f), highSunF);
         const float mieHalo = (pow(cosSunF, 5.0f) * 0.10f + pow(cosSunF, 28.0f) * 0.16f) * (1.0f - cloudCov * 0.72f) * (1.0f - nightF) * fogCloudVis;
         const float cloudModFloor = lerp(0.46f, 0.62f, rainOvercastW);
         const float cloudMod = lerp(lerp(cloudModFloor, 0.96f, fogCloudVis * (1.0f - nightF * 0.65f)), 1.0f, horizonMelt);
         atmoCol = atmoCol * cloudMod + lerp(d65Mie, uSunF, 0.60f) * (mieHalo + fogSunPhase * fogCloudVis * (1.0f - nightF) * (1.0f - horizonMelt) * 0.06f);
+        atmoCol *= rawFsc16TwilightFogMul(kirunaFarTw, 0.44f * fsc16FarW * (1.0f - saturate(weather.z * 0.78f)));
         const float3 ambSkyF = max(float3(ambient[0].z + ambient[0].w, ambient[1].z + ambient[1].w, ambient[2].z + ambient[2].w), 0.03f.xxx);
         const float overcastDeckF = saturate(cloudCov * 0.85f + weather.w * 0.45f + weather.z * 0.55f);
         const float3 nightHorF = lerp(float3(0.028f, 0.044f, 0.078f), ambSkyF * float3(0.68f, 0.74f, 0.84f), overcastDeckF * 0.85f);

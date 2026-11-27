@@ -23,6 +23,7 @@ Texture2D<float4> FroxelIn     : register(t0);
 #include "RawWeatherAtmo.hlsli"
 #include "RawPrecipThermal.hlsli"
 #include "RawVolumetricGiGlint.hlsli"
+#include "RawFogShadowCache16km.hlsli"
 Texture2D<float4> TransLut    : register(t1);
 Texture2D<float4> AtmoSkyView : register(t2);
 Texture2D<float4> FroxelPrev  : register(t3);
@@ -233,19 +234,23 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
     const float heightFalloff = isInt ? 1.0f : (0.22f + 0.52f * valleyFogF + valleyStratMist * 0.68f + inversionBandMist * 0.92f + peakCollar * 1.48f + groundBank * 1.15f + forestCanopyBelt * 0.88f);
     const float baseExt = isInt ? clamp(tune.x * 0.14f, 0.000006f, 0.000016f)
                                 : clamp(tune.x * 0.145f, 0.000011f, 0.000024f);
-    float sigma = baseExt * weatherDens * mist3D * heightFalloff * extNearRamp;
+    // Wave 92 Visual Eye-Audit Fix #2: Clear mid-distance clear-day fog wash by ~25% (< 16,000u) so Riften golden
+    // birch trees through the balcony opening stay vivid and warm while Windhelm snowstorms & far peaks keep depth.
+    const float clearDayMidW92 = isInt ? 0.0f
+        : (smoothstep(-0.02f, 0.14f, aElevFog) * (1.0f - saturate(weather.w * 0.70f + weather.z * 0.85f)) * (1.0f - smoothstep(10000.0f, 22000.0f, rayDist)));
+    float sigma = baseExt * weatherDens * mist3D * heightFalloff * extNearRamp * lerp(1.0f, 0.74f, clearDayMidW92);
 
     // Radiative-transfer equilibrium in-scattered radiance (units of linear HDR radiance; multiplied by sigma on output
     // so froxel_integrate computes exact L_scat = integral(T * sigma * inScat * ds) matching physical Beer-Lambert transport!):
     float3 inScat = 0.0f.xxx;
     if (!isInt && sunDir.w > 0.5f && tune2.z > 0.0f) {
         const float4 sc = screenOf(pRel);
-        // Wave 51 Unified Cloud-Shadow Volumetric God-Ray Shafts:
-        // Couples 2-tap convective cloudShadowN(wp, 2u) directly into sun volumetric in-scattering so moving 3D
-        // clouds carve crisp traveling light-and-shadow shafts through mountain valley mist!
+        // Wave 51 Unified Cloud-Shadow Volumetric God-Ray Shafts + Wave 92 CS-040 16 km Far-Field Fog Shadow Cache:
+        // Couples 2-tap convective cloudShadowN(wp, 2u) with near shadow cascades (0..12,000u) crossfaded smoothly
+        // into 4 geometric sun-ray depth probes (9,000..1,120,000u / 16 km) so distant ridges carve valley shadows!
         const float csRaw = (clouds.x > 0.005f) ? cloudShadowN(wp, 2u) : 1.0f;
         const float cs = ((flags.x & FLAG_CLOUDS) != 0u) ? pow(max(saturate(csRaw), 1.0e-5f), 1.35f) : saturate(csRaw);
-        const float sh = ((zMid < 12000.0f && sc.w > 1.0f) ? cascadeShadow(pRel, saturate(sc.z), false) : 1.0f) * cs;
+        const float cascadeVis = (zMid < kRawFsc16CascadeEndU && sc.w > 1.0f) ? cascadeShadow(pRel, saturate(sc.z), false) : 1.0f;
         const float3 aSunF = astroSunDir();
         const float aElevF = astroSunElev();
         const float nightW = smoothstep(0.03f, -0.07f, aElevF);
@@ -253,6 +258,22 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float3 beamRaw = lerp(aSunF, sunDir.xyz, nightW);
         const float beamLen2 = dot(beamRaw, beamRaw);
         const float3 beamDir = (isfinite(beamLen2) && beamLen2 > 1.0e-8f) ? (beamRaw * rsqrt(beamLen2)) : float3(0.0f, 0.0f, 1.0f);
+        float farProbeVis = 1.0f;
+        if (zMid > (kRawFsc16CascadeEndU - kRawFsc16CascadeFadeU)) {
+            // Probe from the UN-jittered froxel center so the far-field shadow is temporally stable (zero boiling).
+            const float rayDistC = zCenter / cosView;
+            float occP = 1.0f;
+            [unroll] for (uint pi = 0u; pi < kRawFsc16ProbeCount; ++pi) {
+                const float strideP = rawFsc16ProbeStride(pi, rayDistC);
+                const float4 sp = screenOf(pRelCenter + beamDir * strideP);
+                if (sp.w > 1.0f && all(sp.xy >= 0.0f) && sp.x < dims.x && sp.y < dims.y) {
+                    const float zHitP = viewZOf(Depth.Load(int3(sp.xy, 0)));
+                    occP *= rawFsc16ProbeOcclusion(zHitP, sp.w, sp.xy * dims.zw);
+                }
+            }
+            farProbeVis = lerp(1.0f, rawFsc16ResolveProbeVis(occP), 0.55f);
+        }
+        const float sh = rawFsc16CombineVisibility(cascadeVis, farProbeVis, zMid) * cs;
         const float cosT = clamp(dot(farDir, beamDir), -1.0f, 1.0f);
         const float sunLum = dot(sunColour.rgb, float3(0.2126f, 0.7152f, 0.0722f));
         // Wave 71: Weather-regime anisotropic Mie-Draine phase + spectral crepuscular cloud-gap coupling:
@@ -286,13 +307,19 @@ float4 froxel_inject(float4 at : SV_Position) : SV_Target0 {
         const float3 nightFogCol = lerp(float3(0.026f, 0.042f, 0.074f), ambSkyFr * float3(0.62f, 0.68f, 0.78f), saturate(clouds.x * 0.85f + weather.z * 0.50f) * 0.80f);
         // Disciplined twilight luminance envelope (prevents bright hazy mountain fogs during sunrise/sunset shifts!):
         const float todAmbGain = lerp(1.0f, 0.62f, twilightW) * lerp(0.46f, 0.94f, cs);
-        const float3 ambInScat = lerp(syncSkyFr * todAmbGain, nightFogCol, nightW);
+        // Wave 92 Fix #2: Warm mid-distance clear-day fog in-scatter so Riften autumn birches stay golden (not pale-blue wash)
+        const float3 midWarmTintW92 = lerp(1.0f.xxx, float3(1.08f, 1.02f, 0.84f), clearDayMidW92 * (1.0f - nightW) * 0.65f);
+        const float3 ambInScat = lerp(syncSkyFr * todAmbGain * midWarmTintW92, nightFogCol, nightW);
         // Wave 71 + Wave 76: Dynamically lit 3D solar in-scattering with energy-conserving two-order cloud-crepuscular shafts:
         const float3 crepSunFr = evalSpectralCrepuscularCoupling(syncSunFr, syncSkyFr, hTrans, cs, aElevF, cosT, overcastFr, nightW);
         const float crepPhaseW76 = rawEvalCrepuscularPhase(cosT, localOd, cs);
         const float phCoupled = lerp(ph, crepPhaseW76, 0.35f * (1.0f - nightW));
         const float sunInGain = tune2.z * lerp(0.38f, 0.18f, twilightW) * (1.0f - nightW * 0.78f) * (1.0f - overcastFr * 0.55f);
         inScat += ambInScat + crepSunFr * (sh * phCoupled * sunInGain * moteBoost);
+        // Wave 92 CS-040: Kiruna-calibrated twilight dusk photometry (luminance-normalized, crisp twilight horizons,
+        // damped in Windhelm snowstorms so snowfields remain neutral crisp white).
+        const RawFsc16Twilight kirunaTwFr = rawFsc16KirunaTwilight(aElevF, asin(clamp(farDir.z, -1.0f, 1.0f)), cosT);
+        inScat *= rawFsc16TwilightFogMul(kirunaTwFr, 0.52f * (1.0f - saturate(weather.z * 0.78f)));
 
         // Wave 62: Moonlight Rayleigh + Mie Night-Halo Scattering (moonlit mist corona + 22-deg lunar ice-mist ring):
         // Strictly active at night (nightW > 0.02); carves silver-indigo lunar shafts through mountain passes & canopies!

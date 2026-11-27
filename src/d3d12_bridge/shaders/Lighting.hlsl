@@ -1857,7 +1857,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
     // Wave 65: Rich sunlight-to-shadow dynamic range with >= 0.64 overcast/rain ambient floor so foreground boulders
     // and foliage keep crisp readable micro-detail during Riverwood rainstorms!
     const float overcastStormW = saturate(max(clouds.x * 0.90f, weather.w * 0.95f));
-    const float ambHdrScale = (!match && isExterior) ? lerp(0.56f, 0.78f, saturate(overcastStormW * 0.85f + 0.25f * smoothstep(0.25f, 0.70f, overcastStormW))) : 1.0f;
+    const float ambHdrScale = (!match && isExterior) ? lerp(0.56f, 0.86f, saturate(overcastStormW * 0.85f + 0.25f * smoothstep(0.25f, 0.70f, overcastStormW))) : 1.0f;
     amb *= match ? combinedOcc.xxx : mbOcc * hemiSky * ambHdrScale;
     // Wave 64 + Wave 65 Forest Ground-Bounce Fill & Deep-Furrow Floor on Vertical Tree Trunks (isWoodBark):
     // Eliminates every remaining crushed-black bark red speckle (luma < 0.015) on shadowed Riverwood pine trunks!
@@ -1903,10 +1903,24 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float ambL = max(dot(amb, float3(0.2126f, 0.7152f, 0.0722f)), 0.02f);
             const float hemiL = max(dot(skyHemi, float3(0.2126f, 0.7152f, 0.0722f)), 0.04f);
             const float inShadow = 1.0f - saturate(sunShadow);
-            // Weight blue sky-ambient tint by skyVis, and cap tightly on skin (0.08x) so shaded human faces
-            // never turn corpse blue-purple (fixes Hilde 23.50.29.60.png)!
-            const float skinSkyCap = skin ? 0.08f : 1.0f;
+            // Wave 92 Visual Eye-Audit Fix #3: Neutralize subtle cool-blue sky-bounce cast on shaded lower weathered
+            // foreground timber planks (both bare weathered wood & Whiterun weathered vertical Nordic planks)
+            // while keeping sky zenith natural and untouched!
+            const bool isPaintedWeatheredWoodW92 = (abs(s.n.z) < 0.72f && albedo.b > albedo.r * 1.06f && albedo.g > albedo.r * 1.01f);
+            const bool isWeatheredTimberW92 = (base == 1u && !isActorCloth && !isGreenPineCard && !skin
+                && iceMask < 0.05f && wet.snow < 0.12f && z < 4200.0f
+                && ((albedo.r > albedo.b * 1.03f && albedo.r >= albedo.g * 0.94f && albedo.r > 0.015f) || isPaintedWeatheredWoodW92));
+            // Weight blue sky-ambient tint by skyVis, cap tightly on skin (0.08x) and shaded weathered timber!
+            const float timberSkyCap = (isWoodBark || isWeatheredTimberW92) ? lerp(0.16f, 0.62f, saturate(sunShadow)) : 1.0f;
+            const float skinSkyCap = skin ? 0.08f : timberSkyCap;
             amb = lerp(amb, skyHemi * (ambL / hemiL), dayAmbW * skyVis * lerp(0.20f, 0.34f, inShadow) * skinSkyCap);
+            if ((isWoodBark || isWeatheredTimberW92) && inShadow > 0.10f) {
+                const float ambLumT = max(dot(amb, float3(0.2126f, 0.7152f, 0.0722f)), 1.0e-4f);
+                const float3 neutralWarmAmb = float3(ambLumT * 1.05f, ambLumT * 1.00f, ambLumT * 0.87f);
+                const float coolExcess = saturate((amb.b - amb.r) / max(ambLumT, 0.04f));
+                const float nearTimberW = smoothstep(4200.0f, 700.0f, z);
+                amb = lerp(amb, neutralWarmAmb, saturate(inShadow * (0.55f + 0.40f * coolExcess) * nearTimberW));
+            }
         }
     } else if (!match && !isExterior) {
         // Exterior Time-of-Day Interior Lighting Coupling (driven by live gameHour / sunElev in timeEnv.xy):
@@ -2438,7 +2452,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float hgDen = max(1.0f + gHG * gHG - 2.0f * gHG * cosBackHG, 0.08f);
             const float hgLobe = saturate(((1.0f - gHG * gHG) / (hgDen * sqrt(hgDen))) * 0.22f);
             const float3 sssCol = leafBudget.albedoEff * (isLivingGreenFoliage ? float3(0.84f, 1.24f, 0.24f)
-                                                        : (isAutumnWarmFoliage ? float3(1.26f, 0.92f, 0.30f)
+                                                        : (isAutumnWarmFoliage ? float3(1.32f, 0.88f, 0.26f)
                                                                                : float3(1.02f, 1.06f, 1.14f)));
             const float transScale = saturate(leafBudget.directTransWeight / 0.24f);
             // Wave 78: World-space sub-pixel foliage anti-shimmer & coverage preservation (strictly !isWoodBark!):
@@ -2455,7 +2469,7 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             const float crownUp = saturate(s.n.z * 0.55f + 0.50f);
             const float canopyOcc = saturate(skyVis * 0.62f + sunShadow * 0.24f + crownUp * 0.22f);
             const float3 canopyFloorCol = isLivingGreenFoliage ? float3(0.42f, 0.54f, 0.38f)
-                                        : (isAutumnWarmFoliage ? float3(0.80f, 0.70f, 0.44f)
+                                        : (isAutumnWarmFoliage ? float3(0.86f, 0.68f, 0.40f)
                                                                : float3(0.86f, 0.88f, 0.92f));
             lit *= lerp(canopyFloorCol * max(folW78.canopyFloorScale, 0.92f), 1.0f.xxx, canopyOcc) * folW78.coverageScale;
             // Preserve rich emerald needle saturation under bright midday sunlight (strictly living green foliage only!):
@@ -2475,7 +2489,13 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float horizBounceOcc = horizBounce * horizBounce;
         const float fGraze = saturate(s.f0 + (1.0f - s.f0) * pow(1.0f - nvWrap, 5.0f));
         const float skyBounceScale = (skin ? 0.08f : isBotanicalCard ? 0.030f : 0.14f) * (1.0f - metallic * 0.55f);
-        const float3 skyBounceTint = isExterior ? lerp(1.0f.xxx, float3(0.86f, 0.94f, 1.12f), skyVisShaped * (1.0f - (skin ? 0.92f : 0.0f)) * 0.45f) : 1.0f.xxx;
+        // Wave 92 Fix #3: Neutralize cool-blue grazing sky-bounce cast on weathered foreground timber planks
+        const bool isTimberBounceW92 = (isExterior && base == 1u && !isActorCloth && !isGreenPineCard && !skin
+            && iceMask < 0.05f && wet.snow < 0.12f && z < 4200.0f
+            && (isWoodBark || (albedo.r > albedo.b * 1.03f && albedo.r >= albedo.g * 0.94f && albedo.r > 0.015f)
+                || (abs(s.n.z) < 0.72f && albedo.b > albedo.r * 1.06f && albedo.g > albedo.r * 1.01f)));
+        const float coolTintSuppress = max(skin ? 0.92f : 0.0f, isTimberBounceW92 ? 0.92f : 0.0f);
+        const float3 skyBounceTint = isExterior ? lerp(1.0f.xxx, float3(0.86f, 0.94f, 1.12f), skyVisShaped * (1.0f - coolTintSuppress) * 0.45f) : 1.0f.xxx;
         lit += amb * skyBounceTint * (fGraze * skyBounceScale * horizBounceOcc * (0.25f + 0.75f * skyVisShaped) * combinedOcc * (1.0f - iceMask * 0.55f)) + decalEmit;
         // Wave 74: Radiatively consistent overcast diffuse sky-bounce preservation on vertical exterior tree bark
         // (volumetric cloud shadows attenuate direct sun, NOT indirect sky hemisphere fill on shaded pine trunks!).

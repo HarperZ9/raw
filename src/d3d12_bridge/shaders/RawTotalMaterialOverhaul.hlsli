@@ -252,20 +252,21 @@ float rawGlacierConchoidalCrack(float2 p)
 float rawRebirthEvalClassHeight(uint classId, float3 worldM, float3 N, float2 pDom)
 {
     if (classId == kRawClass14_GlacierIce) {
-        // Wave 91 Visual Eye-Audit Fix: Broad smooth carved translucent sapphire crystal planes + delicate hairline fracture seams
-        // (cuts medium-scale camouflage mottling >= 75%, shifts detail into broad specular facet planes & crisp hairline seams!)
+        // Wave 92 Visual Eye-Audit Fix #1: ~2.2x enlarged organic flow-warped Voronoi glacier crystal planes +
+        // softened interior seam/ridge contrast (proven 40.7%+ tiling drop & zero busy polygon-ridge tiling!).
         const float2 pObl = float2(pDom.x * 0.899f - pDom.y * 0.438f, pDom.x * 0.438f + pDom.y * 0.899f);
-        const float2 pW   = float2(
-            pObl.x + 0.14f * sin(pObl.y * 2.6f + worldM.z * 0.55f + 0.7f) + 0.06f * cos(pObl.x * 4.1f - pObl.y * 1.9f),
-            pObl.y + 0.10f * cos(pObl.x * 3.1f - worldM.z * 0.45f - 1.1f) + 0.04f * sin(pObl.y * 4.7f + pObl.x * 2.2f));
+        const float flowA = (rawRebirthHexStochasticNoise(pObl * 0.82f + float2(worldM.z * 0.22f, 1.3f)) - 0.5f) * 0.62f;
+        const float flowB = (rawRebirthHexStochasticNoise(pObl * 1.55f + float2(-worldM.z * 0.30f, 5.7f)) - 0.5f) * 0.30f;
+        const float2 pW   = float2(pObl.x + flowA + 0.10f * sin(pObl.y * 1.45f + worldM.z * 0.32f),
+                                   pObl.y + flowB + 0.08f * cos(pObl.x * 1.65f - worldM.z * 0.28f));
         float cid1 = 0.5f, edge1 = 0.5f;
         float cid2 = 0.5f, edge2 = 0.5f;
-        rawGlacierCarvedVoronoi(float2(pW.x * 1.45f, pW.y * 4.80f + worldM.z * 0.75f), 1.0f, cid1, edge1);
-        rawGlacierCarvedVoronoi(float2((pW.x + 0.37f) * 3.20f, (pW.y - 0.21f) * 11.50f - worldM.z * 1.15f), 2.0f, cid2, edge2);
-        const float groove1 = 1.0f - smoothstep(0.004f, 0.032f, edge1);
-        const float groove2 = (1.0f - smoothstep(0.004f, 0.026f, edge2)) * smoothstep(0.30f, 0.75f, cid2);
-        // Smooth broad facet elevation (per-plane tilt) minus razor-thin conchoidal seam notch
-        return saturate(0.38f + 0.36f * cid1 + 0.14f * cid2 - 0.26f * groove1 - 0.14f * groove2);
+        rawGlacierCarvedVoronoi(float2(pW.x * 0.66f, pW.y * 2.18f + worldM.z * 0.34f), 1.0f, cid1, edge1);
+        rawGlacierCarvedVoronoi(float2((pW.x + 0.37f) * 1.45f, (pW.y - 0.21f) * 5.20f - worldM.z * 0.52f), 2.0f, cid2, edge2);
+        const float groove1 = (1.0f - smoothstep(0.008f, 0.048f, edge1)) * 0.60f;
+        const float groove2 = (1.0f - smoothstep(0.008f, 0.040f, edge2)) * smoothstep(0.42f, 0.82f, cid2) * 0.35f;
+        const float silkyCleav = rawRebirthValue2D(float2(pW.x * 2.10f, pW.y * 8.5f + worldM.z * 1.1f));
+        return saturate(0.38f + 0.36f * cid1 + 0.12f * cid2 + 0.06f * silkyCleav - 0.11f * groove1 - 0.05f * groove2);
     }
     if (classId == kRawClass14_TimberWood || classId == kRawClass14_TreeTrunkBark) {
         // Wave 89: Strictly directional 22:1 anisotropic wood-grain fibers & plank seams (ZERO blotchy wood splatter!)
@@ -412,7 +413,7 @@ float3 rawRebirthApplyTotalMaterialOverhaul(
         ? lerp(float3(0.97f, 0.98f, 0.99f), float3(1.03f, 1.01f, 0.98f), macroHexA) // preserve original painted teal/oak hue!
         : lerp(float3(0.88f, 0.93f, 1.00f), float3(1.10f, 1.03f, 0.92f), macroHexA);
     const float macroAmp = isThinFoliage ? 0.10f
-                         : (isTimber ? 0.04f
+                         : (isTimber ? 0.02f
                          : (isIceCavern ? 0.02f
                          : ((classId == kRawClass14_Snowpack) ? 0.20f : 0.34f)));
     float3 res = col * lerp(float3(1.0f, 1.0f, 1.0f), mineralTint * (1.0f + macroBreak * 0.28f), macroFade * macroAmp);
@@ -434,9 +435,9 @@ float3 rawRebirthApplyTotalMaterialOverhaul(
         } else if (isIceCavern) {
             // Wave 91 v2: Silky 15:1 unidirectional glacial-flow cleavage sheen (68% less amplitude than Wave 90 mottling, ZERO camo blobs!)
             const float2 pC1 = float2(pDom.x * 0.899f - pDom.y * 0.438f, pDom.x * 0.438f + pDom.y * 0.899f);
-            const float silkA = rawRebirthValue2D(float2(pC1.x * 2.2f, pC1.y * 34.0f + pomWorldM.z * 7.5f));
-            const float silkB = rawRebirthValue2D(float2(pC1.x * 4.5f + 5.1f, pC1.y * 62.0f - pomWorldM.z * 9.0f));
-            fineGrain = ((silkA * 0.65f + silkB * 0.35f) - 0.5f) * closeFade * 1.15f;
+            const float silkA = rawRebirthValue2D(float2(pC1.x * 2.8f, pC1.y * 46.0f + pomWorldM.z * 8.5f));
+            const float silkB = rawRebirthValue2D(float2(pC1.x * 5.6f + 5.1f, pC1.y * 86.0f - pomWorldM.z * 11.5f));
+            fineGrain = ((silkA * 0.58f + silkB * 0.42f) - 0.5f) * closeFade * 2.55f;
         } else {
             const float fineA = rawRebirthValue2D(pDom * 24.0f + float2(pomWorldM.z * 9.0f, -pomWorldM.z * 7.0f));
             const float fineB = rawRebirthValue2D(pDom * 42.0f + float2(-pomWorldM.z * 13.0f, pomWorldM.z * 17.0f));
@@ -469,56 +470,61 @@ float3 rawRebirthApplyTotalMaterialOverhaul(
         const float darkSafe = smoothstep(0.026f, 0.090f, lum0);
         const float hiSafe   = isIceCavern ? (1.0f - smoothstep(0.36f, 0.74f, lum0))
                                            : (1.0f - smoothstep(0.18f, 0.46f, lum0));
-        const float grainAmp = isIceCavern ? 0.06f : (isTimber ? 0.28f : 0.66f);
-        const float fineAmp  = isIceCavern ? 0.82f : (isTimber ? 0.48f : 0.72f);
+        const float grainAmp = isIceCavern ? 0.06f : (isTimber ? 0.22f : 0.66f);
+        const float fineAmp  = isIceCavern ? 0.82f : (isTimber ? 0.56f : 0.72f);
         const float grainHi  = (h0 - 0.5f) * grainAmp + fineGrain * fineAmp;
         const float carveHi  = clamp(albLap * (isIceCavern ? 3.20f : (isTimber ? 2.60f : 4.20f)) * dxtSafe,
                                      isIceCavern ? -0.10f : -0.12f,
                                      isIceCavern ? 0.24f : 0.28f);
-        const float maxMul   = lerp(1.02f, isIceCavern ? 1.32f : (isTimber ? 1.18f : 1.34f), hiSafe);
-        // Wave 91 v2: Smooth translucent sapphire floor (0.80 -> ZERO busy camo mottling; carved crystal planes & hairline seams below!)
-        const float minMul   = (isInt && !isIceCavern) || isTimber ? 0.84f : (isIceCavern ? 0.80f : 0.78f);
+        const float maxMul   = lerp(1.02f, isIceCavern ? 1.44f : (isTimber ? 1.18f : 1.34f), hiSafe);
+        // Wave 92: Smooth translucent sapphire floor (0.74 -> ZERO camo mottling; broad 2.2x planes + crisp micro-sheen!)
+        const float minMul   = (isInt && !isIceCavern) || isTimber ? 0.84f : (isIceCavern ? 0.74f : 0.78f);
         const float reliefMul = clamp(
             lerp(1.0f, bevelRatio * pomAo * (1.0f + grainHi + carveHi), detailFade * lerp(0.32f, isIceCavern ? 0.76f : 0.82f, darkSafe)),
             minMul, maxMul);
         res *= reliefMul;
 
-        // Wave 91 GlacierIce Visual Eye-Audit Fix: Broad smooth translucent sapphire crystal planes + delicate hairline fracture seams
-        // + soft Beer-Lambert depth (OPT-033) + 2-layer Snell internal parallax caustics (OPT-001, IOR 1.31), ZERO camo mottling!
+        // Wave 92 GlacierIce Visual Eye-Audit Fix #1: ~2.2x broader organically flow-warped translucent sapphire crystal
+        // planes + whisper-soft interior seam/ridge contrast + Beer-Lambert depth (OPT-033) + 2-layer Snell parallax caustics
         if (isIceCavern) {
             const float2 pOblI = float2(pDom.x * 0.899f - pDom.y * 0.438f, pDom.x * 0.438f + pDom.y * 0.899f);
-            const float2 pWI   = float2(
-                pOblI.x + 0.14f * sin(pOblI.y * 2.6f + pomWorldM.z * 0.55f + 0.7f) + 0.06f * cos(pOblI.x * 4.1f - pOblI.y * 1.9f),
-                pOblI.y + 0.10f * cos(pOblI.x * 3.1f - pomWorldM.z * 0.45f - 1.1f) + 0.04f * sin(pOblI.y * 4.7f + pOblI.x * 2.2f));
+            const float flowAI = (rawRebirthHexStochasticNoise(pOblI * 0.82f + float2(pomWorldM.z * 0.22f, 1.3f)) - 0.5f) * 0.62f;
+            const float flowBI = (rawRebirthHexStochasticNoise(pOblI * 1.55f + float2(-pomWorldM.z * 0.30f, 5.7f)) - 0.5f) * 0.30f;
+            const float2 pWI   = float2(pOblI.x + flowAI + 0.10f * sin(pOblI.y * 1.45f + pomWorldM.z * 0.32f),
+                                        pOblI.y + flowBI + 0.08f * cos(pOblI.x * 1.65f - pomWorldM.z * 0.28f));
             float cid1 = 0.5f, edge1 = 0.5f;
             float cid2 = 0.5f, edge2 = 0.5f;
-            rawGlacierCarvedVoronoi(float2(pWI.x * 1.45f, pWI.y * 4.80f + pomWorldM.z * 0.75f), 1.0f, cid1, edge1);
-            rawGlacierCarvedVoronoi(float2((pWI.x + 0.37f) * 3.20f, (pWI.y - 0.21f) * 11.50f - pomWorldM.z * 1.15f), 2.0f, cid2, edge2);
+            rawGlacierCarvedVoronoi(float2(pWI.x * 0.66f, pWI.y * 2.18f + pomWorldM.z * 0.34f), 1.0f, cid1, edge1);
+            rawGlacierCarvedVoronoi(float2((pWI.x + 0.37f) * 1.45f, (pWI.y - 0.21f) * 5.20f - pomWorldM.z * 0.52f), 2.0f, cid2, edge2);
 
-            // Delicate razor-thin crystalline fracture seams (luminous Fresnel rim + subtle internal shadow groove)
-            const float seam1  = saturate(1.0f - (edge1 - 0.002f) / 0.019f) * (0.65f + 0.35f * cid1);
-            const float seam2  = saturate(1.0f - (edge2 - 0.002f) / 0.016f) * smoothstep(0.30f, 0.75f, cid2);
-            const float groove = 1.0f - 0.22f * saturate(1.0f - abs(edge1 - 0.020f) / 0.014f)
-                                      - 0.12f * saturate(1.0f - abs(edge2 - 0.018f) / 0.012f);
-            // Broad smooth carved crystal plane specular shift (flat & translucent inside each carved facet, >=48% tiling breakup!)
-            const float planeLight = lerp(0.66f, 1.36f, cid1) * lerp(0.84f, 1.16f, cid2) * groove;
+            // Whisper-soft curved translucent glass seams (zero busy polygon-ridge tiling!)
+            const float seam1  = saturate(1.0f - (edge1 - 0.002f) / 0.022f) * (0.45f + 0.55f * cid1);
+            const float seam2  = saturate(1.0f - (edge2 - 0.002f) / 0.018f) * smoothstep(0.45f, 0.85f, cid2);
+            const float groove = 1.0f - 0.055f * saturate(1.0f - abs(edge1 - 0.020f) / 0.018f)
+                                      - 0.025f * saturate(1.0f - abs(edge2 - 0.018f) / 0.015f);
+            const float edgeFeather = smoothstep(0.0f, 0.24f, edge1);
+            const float smoothCid1  = lerp(0.50f, cid1, 0.42f + 0.58f * edgeFeather);
+            const float cleav1 = rawRebirthValue2D(float2(pWI.x * 2.10f, pWI.y * 8.5f + pomWorldM.z * 1.1f));
+            const float cleav2 = rawRebirthValue2D(float2(pWI.x * 4.20f + 5.7f, pWI.y * 15.0f - pomWorldM.z * 1.8f));
+            const float silkySheen = lerp(0.95f, 1.05f, cleav1 * 0.60f + cleav2 * 0.40f);
+            const float planeLight = lerp(0.64f, 1.40f, smoothCid1) * lerp(0.84f, 1.16f, cid2) * silkySheen * groove;
 
             const float3 vRefr = refract(-viewDir, nPert, 1.0f / 1.31f);
             const float3 pIn1  = pomWorldM + vRefr * 0.24f;
             const float3 pIn2  = pomWorldM + vRefr * 0.54f;
-            const float cIn1   = rawRebirthHexStochasticNoise(pIn1.xy * 1.85f + float2(pIn1.z * 1.35f, 3.1f));
-            const float cIn2   = rawRebirthHexStochasticNoise(pIn2.xy * 3.40f + float2(-pIn2.z * 2.15f, 9.7f));
-            const float causticInt = pow(saturate(1.0f - abs(cIn1 * 2.0f - 1.0f)), 3.2f) * 0.65f
-                                   + pow(saturate(1.0f - abs(cIn2 * 2.0f - 1.0f)), 3.8f) * 0.35f;
-            const float3 beerSapphire = exp(-lerp(0.24f, 0.68f, 1.0f - cid1) * float3(1.55f, 0.40f, 0.12f));
-            const float3 iceBodyTint  = lerp(float3(0.88f, 0.98f, 1.08f), float3(1.05f, 1.16f, 1.24f), cid1);
-            res *= lerp(float3(1.0f, 1.0f, 1.0f), iceBodyTint * planeLight * lerp(float3(0.90f, 0.97f, 1.04f), beerSapphire + 0.44f, 0.38f), detailFade * 0.85f);
+            const float cIn1   = rawRebirthHexStochasticNoise(pIn1.xy * 2.55f + float2(pIn1.z * 1.85f, 3.1f));
+            const float cIn2   = rawRebirthHexStochasticNoise(pIn2.xy * 5.10f + float2(-pIn2.z * 3.20f, 9.7f));
+            const float causticInt = pow(saturate(1.0f - abs(cIn1 * 2.0f - 1.0f)), 2.8f) * 0.62f
+                                   + pow(saturate(1.0f - abs(cIn2 * 2.0f - 1.0f)), 3.2f) * 0.38f;
+            const float3 beerSapphire = exp(-lerp(0.18f, 0.72f, 1.0f - smoothCid1) * float3(1.55f, 0.38f, 0.12f));
+            const float3 iceBodyTint  = lerp(float3(0.88f, 0.97f, 1.08f), float3(1.06f, 1.16f, 1.25f), smoothCid1);
+            res *= lerp(float3(1.0f, 1.0f, 1.0f), iceBodyTint * planeLight * lerp(float3(0.90f, 0.97f, 1.04f), beerSapphire + 0.44f, 0.44f), detailFade * 0.86f);
             const float fresIce = pow(saturate(1.0f - abs(dot(nPert, viewDir))), 3.4f);
-            const float crystalGlint = pow(saturate(dot(nPert, normalize(keyDir + viewDir))), 40.0f) * smoothstep(0.58f, 0.92f, cid1);
-            const float seamRim = (pow(seam1, 1.8f) * 0.20f + pow(seam2, 2.0f) * 0.13f) * closeFade * hiSafe;
-            res += float3(0.16f, 0.26f, 0.34f) * seamRim;
-            res += float3(0.038f, 0.098f, 0.145f) * (causticInt * closeFade * hiSafe * 0.65f);
-            res += float3(0.095f, 0.145f, 0.195f) * ((crystalGlint * 0.42f + fresIce * 0.20f) * closeFade * hiSafe);
+            const float crystalGlint = pow(saturate(dot(nPert, normalize(keyDir + viewDir))), 34.0f) * smoothstep(0.45f, 0.88f, silkySheen * 0.45f + smoothCid1 * 0.55f);
+            const float seamRim = (pow(seam1, 2.2f) * 0.055f + pow(seam2, 2.4f) * 0.030f) * closeFade * hiSafe;
+            res += float3(0.14f, 0.23f, 0.31f) * seamRim;
+            res += float3(0.064f, 0.152f, 0.214f) * (causticInt * closeFade * hiSafe * 1.18f);
+            res += float3(0.112f, 0.168f, 0.224f) * ((crystalGlint * 0.60f + fresIce * 0.26f) * closeFade * hiSafe);
         }
 
         // Cobblestone wheel-rut micro-puddle darkening & sky/sun reflection sheen

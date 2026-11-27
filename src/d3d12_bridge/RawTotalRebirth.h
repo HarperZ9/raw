@@ -248,17 +248,17 @@ inline float EvalGlacierConchoidalCrack(Vec2 p) noexcept {
     return 1.0f - Smoothstep(0.015f, 0.085f, edge);
 }
 
-// Wave 91 Visual Eye-Audit Fix: Organic carved sapphire glacier crystal planes + delicate hairline fracture seams.
+// Wave 92 Visual Eye-Audit Fix #1: ~2.2x enlarged Voronoi glacier crystal planes + softened interior seam contrast.
 inline float EvalGlacierAnisotropicHeight(Vec3 worldM, Vec2 pDom) noexcept {
     const Vec2 pObl{pDom.x * 0.899f - pDom.y * 0.438f, pDom.x * 0.438f + pDom.y * 0.899f};
     const Vec2 pW{
-        pObl.x + 0.14f * std::sin(pObl.y * 2.6f + worldM.z * 0.55f + 0.7f) + 0.06f * std::cos(pObl.x * 4.1f - pObl.y * 1.9f),
-        pObl.y + 0.10f * std::cos(pObl.x * 3.1f - worldM.z * 0.45f - 1.1f) + 0.04f * std::sin(pObl.y * 4.7f + pObl.x * 2.2f)
+        pObl.x + 0.16f * std::sin(pObl.y * 1.45f + worldM.z * 0.32f + 0.7f) + 0.06f * std::cos(pObl.x * 2.15f - pObl.y * 1.15f),
+        pObl.y + 0.12f * std::cos(pObl.x * 1.65f - worldM.z * 0.28f - 1.1f) + 0.04f * std::sin(pObl.y * 2.45f + pObl.x * 1.25f)
     };
-    const float edge1 = EvalGlacierConchoidalCrack({pW.x * 1.45f, pW.y * 4.80f + worldM.z * 0.75f});
-    const float edge2 = EvalGlacierConchoidalCrack({(pW.x + 0.37f) * 3.20f, (pW.y - 0.21f) * 11.50f - worldM.z * 1.15f});
-    const float plane = EvalHexStochasticNoise({pW.x * 1.45f, pW.y * 4.80f + worldM.z * 0.75f});
-    return Clamp01(0.36f + 0.46f * plane - 0.22f * edge1 - 0.10f * edge2);
+    const float edge1 = EvalGlacierConchoidalCrack({pW.x * 0.66f, pW.y * 2.18f + worldM.z * 0.34f});
+    const float edge2 = EvalGlacierConchoidalCrack({(pW.x + 0.37f) * 1.45f, (pW.y - 0.21f) * 5.20f - worldM.z * 0.52f});
+    const float plane = EvalHexStochasticNoise({pW.x * 0.66f, pW.y * 2.18f + worldM.z * 0.34f});
+    return Clamp01(0.40f + 0.46f * plane - 0.14f * edge1 - 0.06f * edge2);
 }
 
 // Wave 90 Part 3: Henyey-Greenstein (OPT-032) backlit subsurface foliage translucency analytical mirror.

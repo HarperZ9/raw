@@ -586,4 +586,129 @@ NavPathResult RawNavGraph::FindPath(NavVec3 start, NavVec3 goal) const {
     return res;
 }
 
+// ============================================================================
+// Wave 84: Hierarchical HPA* Multi-Cell Portal Graph + Dynamic Obstacle Carving
+// ============================================================================
+void HpaClusterNavGraph::BuildGrid(uint32_t gridX, uint32_t gridY) {
+    m_gridX = gridX;
+    m_gridY = gridY;
+    m_portals.clear();
+    m_carves.clear();
+    for (uint32_t y = 0u; y < gridY; ++y) {
+        for (uint32_t x = 0u; x < gridX; ++x) {
+            const uint32_t id = y * gridX + x;
+            if (x + 1u < gridX) {
+                const uint32_t nb = y * gridX + (x + 1u);
+                const NavVec3 p{(static_cast<float>(x + 1u)) * kClusterSizeM, (static_cast<float>(y) + 0.5f) * kClusterSizeM, 0.0f};
+                m_portals.push_back({id, nb, p, kClusterSizeM, true});
+                m_portals.push_back({nb, id, p, kClusterSizeM, true});
+            }
+            if (y + 1u < gridY) {
+                const uint32_t nb = (y + 1u) * gridX + x;
+                const NavVec3 p{(static_cast<float>(x) + 0.5f) * kClusterSizeM, (static_cast<float>(y + 1u)) * kClusterSizeM, 0.0f};
+                m_portals.push_back({id, nb, p, kClusterSizeM, true});
+                m_portals.push_back({nb, id, p, kClusterSizeM, true});
+            }
+        }
+    }
+}
+
+void HpaClusterNavGraph::SetPortalEnabled(uint32_t fromCluster, uint32_t toCluster, bool enabled) {
+    for (auto& e : m_portals) {
+        if ((e.fromCluster == fromCluster && e.toCluster == toCluster) ||
+            (e.fromCluster == toCluster && e.toCluster == fromCluster)) {
+            e.enabled = enabled;
+        }
+    }
+}
+
+void HpaClusterNavGraph::ClearCarvedObstacles() {
+    m_carves.clear();
+}
+
+void HpaClusterNavGraph::CarveDynamicObstacle(const HpaDynamicCarve& obs) {
+    m_carves.push_back(obs);
+}
+
+int32_t HpaClusterNavGraph::FindClusterAt(float worldXM, float worldYM) const noexcept {
+    if (m_gridX == 0u || m_gridY == 0u) return -1;
+    const int32_t cx = static_cast<int32_t>(std::floor(worldXM / kClusterSizeM));
+    const int32_t cy = static_cast<int32_t>(std::floor(worldYM / kClusterSizeM));
+    if (cx < 0 || cy < 0 || static_cast<uint32_t>(cx) >= m_gridX || static_cast<uint32_t>(cy) >= m_gridY) {
+        return -1;
+    }
+    return static_cast<int32_t>(static_cast<uint32_t>(cy) * m_gridX + static_cast<uint32_t>(cx));
+}
+
+bool HpaClusterNavGraph::IsPortalBlockedByCarve(const HpaPortalEdge& edge) const noexcept {
+    for (const auto& c : m_carves) {
+        const float dx = edge.portalPos.x - c.center.x;
+        const float dy = edge.portalPos.y - c.center.y;
+        if ((dx * dx + dy * dy) <= (c.radiusM * c.radiusM)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+HpaPathResult HpaClusterNavGraph::FindMultiCellPath(NavVec3 startM, NavVec3 goalM) const {
+    HpaPathResult out{};
+    const uint32_t total = m_gridX * m_gridY;
+    const int32_t startId = FindClusterAt(startM.x, startM.y);
+    const int32_t goalId  = FindClusterAt(goalM.x, goalM.y);
+    if (startId < 0 || goalId < 0 || total == 0u) { return out; }
+
+    auto clusterCenter = [&](uint32_t cid) -> NavVec3 {
+        const uint32_t cx = cid % m_gridX;
+        const uint32_t cy = cid / m_gridX;
+        return {(static_cast<float>(cx) + 0.5f) * kClusterSizeM, (static_cast<float>(cy) + 0.5f) * kClusterSizeM, 0.0f};
+    };
+
+    std::vector<float> gScore(total, 1.0e30f);
+    std::vector<int32_t> parent(total, -1);
+    std::vector<uint8_t> closed(total, 0u);
+    using Node = std::pair<float, uint32_t>;
+    std::priority_queue<Node, std::vector<Node>, std::greater<Node>> open;
+
+    gScore[static_cast<size_t>(startId)] = 0.0f;
+    const NavVec3 gCtr = clusterCenter(static_cast<uint32_t>(goalId));
+    open.push({Dist3(clusterCenter(static_cast<uint32_t>(startId)), gCtr), static_cast<uint32_t>(startId)});
+
+    while (!open.empty()) {
+        const uint32_t cur = open.top().second;
+        open.pop();
+        if (closed[cur]) continue;
+        closed[cur] = 1u;
+        ++out.clustersVisited;
+        if (cur == static_cast<uint32_t>(goalId)) {
+            out.found = true;
+            out.totalCost = gScore[cur];
+            std::vector<uint32_t> rev;
+            for (int32_t at = static_cast<int32_t>(cur); at >= 0; at = parent[static_cast<size_t>(at)]) {
+                rev.push_back(static_cast<uint32_t>(at));
+            }
+            std::reverse(rev.begin(), rev.end());
+            out.clusterPath = std::move(rev);
+            out.waypoints.push_back(startM);
+            for (size_t i = 1; i + 1 < out.clusterPath.size(); ++i) {
+                out.waypoints.push_back(clusterCenter(out.clusterPath[i]));
+            }
+            out.waypoints.push_back(goalM);
+            return out;
+        }
+        for (const auto& e : m_portals) {
+            if (e.fromCluster != cur || !e.enabled || closed[e.toCluster] || IsPortalBlockedByCarve(e)) {
+                continue;
+            }
+            const float cand = gScore[cur] + e.cost;
+            if (cand < gScore[e.toCluster]) {
+                gScore[e.toCluster] = cand;
+                parent[e.toCluster] = static_cast<int32_t>(cur);
+                open.push({cand + Dist3(clusterCenter(e.toCluster), gCtr), e.toCluster});
+            }
+        }
+    }
+    return out;
+}
+
 }  // namespace raw::ce

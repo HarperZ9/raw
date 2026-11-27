@@ -356,6 +356,88 @@ void AudioDirectorShutdown() {
     g_dir.director.Reset(AudioMood::ExploreDay);
 }
 
+// ============================================================================
+// Wave 84: Geometry-Coupled Estuary-Space 8x8 Orthonormal Hadamard FDN Spatial Audio
+// ============================================================================
+EstuarySpaceFdn::EstuarySpaceFdn() noexcept {
+    Reset();
+}
+
+void EstuarySpaceFdn::Reset() noexcept {
+    m_state.fill(0.0f);
+    m_lpfZ1 = 0.0f;
+}
+
+EstuaryFdnParams EstuarySpaceFdn::DeriveFromGeometry(const AcousticProbeGeometry& geom) noexcept {
+    EstuaryFdnParams p{};
+    const float wallDist = ClampF(geom.meanWallDistM, 2.0f, 120.0f);
+    const float skyOpen  = ClampF(geom.skyOpenness01, 0.0f, 1.0f);
+    const float snowAbs  = ClampF(geom.snowAbsorption01, 0.0f, 1.0f);
+    const float wallOcc  = ClampF(geom.wallOcclusion01, 0.0f, 1.0f);
+
+    // Enclosed large stone caverns (skyOpen ~ 0, large wallDist) sustain longer RT60 than inns or open snowy plains:
+    const float enclosure = 1.0f - skyOpen;
+    const float baseRt60  = 0.28f + enclosure * (0.65f + (std::min)(wallDist / 20.0f, 2.4f));
+    p.rt60Sec             = ClampF(baseRt60 * (1.0f - snowAbs * 0.35f), 0.18f, 3.60f);
+    // Strict passive energy bound: feedbackGain strictly < 0.985!
+    const float gRaw      = std::pow(10.0f, -3.0f * (0.030f / p.rt60Sec));
+    p.feedbackGain        = ClampF(gRaw, 0.10f, 0.96f);
+    p.earlyGain           = ClampF((1.0f - wallOcc * 0.72f) * (geom.underwater ? 0.55f : 1.0f), 0.12f, 1.0f);
+    p.lpfCutoffHz         = geom.underwater
+        ? 580.0f
+        : ClampF(18000.0f - snowAbs * 5500.0f - wallOcc * 8500.0f, 1800.0f, 18000.0f);
+    return p;
+}
+
+void EstuarySpaceFdn::ApplyOrthonormalHadamard8(const std::array<float, 8>& in, std::array<float, 8>& out) noexcept {
+    // Fast 3-stage Walsh-Hadamard butterfly scaled by 1/sqrt(8) -> exact O(N log N) orthonormal mixing!
+    float a[8];
+    for (size_t i = 0u; i < 8u; ++i) {
+        a[i] = std::isfinite(in[i]) ? in[i] : 0.0f;
+    }
+    for (size_t step = 1u; step < 8u; step <<= 1u) {
+        for (size_t i = 0u; i < 8u; i += (step << 1u)) {
+            for (size_t j = 0u; j < step; ++j) {
+                const float u = a[i + j];
+                const float v = a[i + j + step];
+                a[i + j]        = u + v;
+                a[i + j + step] = u - v;
+            }
+        }
+    }
+    constexpr float kInvSqrt8 = 0.35355339059327376f;
+    for (size_t i = 0u; i < 8u; ++i) {
+        out[i] = a[i] * kInvSqrt8;
+    }
+}
+
+bool EstuarySpaceFdn::ValidateStability(const EstuaryFdnParams& p) noexcept {
+    return std::isfinite(p.rt60Sec) && p.rt60Sec > 0.0f
+        && std::isfinite(p.feedbackGain) && p.feedbackGain >= 0.0f && p.feedbackGain < 0.995f
+        && std::isfinite(p.earlyGain) && p.earlyGain >= 0.0f && p.earlyGain <= 1.0f
+        && std::isfinite(p.lpfCutoffHz) && p.lpfCutoffHz >= 80.0f && p.lpfCutoffHz <= 22000.0f;
+}
+
+float EstuarySpaceFdn::ProcessSample(float dryIn, const EstuaryFdnParams& p, float sampleRateHz) noexcept {
+    const float x = std::isfinite(dryIn) ? ClampF(dryIn, -8.0f, 8.0f) : 0.0f;
+    if (!ValidateStability(p)) { return 0.0f; }
+
+    std::array<float, 8> mixed{};
+    ApplyOrthonormalHadamard8(m_state, mixed);
+    const float inj = x * 0.25f;
+    float wetSum = 0.0f;
+    for (size_t i = 0u; i < kChannels; ++i) {
+        m_state[i] = mixed[i] * p.feedbackGain + inj * ((i & 1u) == 0u ? 1.0f : -1.0f);
+        wetSum += m_state[i];
+    }
+    const float rawOut = x * p.earlyGain + (wetSum * 0.125f);
+    // 1-pole low-pass filter coupled to underwater / occlusion cutoff:
+    const float sr = (std::max)(sampleRateHz, 8000.0f);
+    const float alpha = ClampF(1.0f - std::exp(-6.2831853f * p.lpfCutoffHz / sr), 0.005f, 1.0f);
+    m_lpfZ1 += alpha * (rawOut - m_lpfZ1);
+    return std::isfinite(m_lpfZ1) ? m_lpfZ1 : 0.0f;
+}
+
 }  // namespace raw::rt
 
 extern "C" __declspec(dllexport) int RAW_GetAudioDirectorState(raw::rt::RawAudioDirectorState* out) {

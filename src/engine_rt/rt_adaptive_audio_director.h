@@ -111,6 +111,48 @@ void        AudioDirectorTriggerStinger(AudioStinger stinger, float holdSeconds 
 void        AudioDirectorOnPresent(float dtSec);
 void        AudioDirectorShutdown();
 
+// ============================================================================
+// Wave 84: Geometry-Coupled Estuary-Space 8x8 Orthonormal Hadamard FDN Spatial Audio
+// ============================================================================
+struct AcousticProbeGeometry {
+    float meanWallDistM    = 18.0f; // Mean ray-probe distance to surrounding stone/wood walls (m)
+    float skyOpenness01    = 0.85f; // Fraction of hemisphere rays hitting open sky (0 = sealed cavern)
+    float snowAbsorption01 = 0.0f;  // Snow-covered ground high-frequency damping [0..1]
+    float wallOcclusion01  = 0.0f;  // Direct-path geometry occlusion [0..1]
+    bool  underwater       = false; // True when camera/ears submerged
+};
+
+struct EstuaryFdnParams {
+    float rt60Sec          = 0.65f; // Coupled physical RT60 decay time (cavern > inn > open sky)
+    float feedbackGain     = 0.65f; // Strictly < 0.985 for passive stability
+    float earlyGain        = 0.85f; // Occlusion-attenuated early reflection gain
+    float lpfCutoffHz      = 16000.0f; // Underwater/snow low-pass cutoff
+};
+
+class EstuarySpaceFdn {
+public:
+    static constexpr size_t kChannels = 8u;
+
+    EstuarySpaceFdn() noexcept;
+    void Reset() noexcept;
+
+    // Couples room/cavern/inn/snow/underwater ray-probe geometry into physically bounded FDN parameters.
+    [[nodiscard]] static EstuaryFdnParams DeriveFromGeometry(const AcousticProbeGeometry& geom) noexcept;
+
+    // Exact 8x8 orthonormal Sylvester Hadamard mixing matrix (1/sqrt(8) * H_8, ||H*x||_2 == ||x||_2).
+    static void ApplyOrthonormalHadamard8(const std::array<float, 8>& in, std::array<float, 8>& out) noexcept;
+
+    // Validates passive FDN stability fail-closed (rejects NaN or feedbackGain >= 1.0!).
+    [[nodiscard]] static bool ValidateStability(const EstuaryFdnParams& p) noexcept;
+
+    // Processes one mono impulse/audio sample through the 8-channel orthonormal FDN + 1-pole LPF.
+    float ProcessSample(float dryIn, const EstuaryFdnParams& p, float sampleRateHz = 48000.0f) noexcept;
+
+private:
+    std::array<float, kChannels> m_state{};
+    float                        m_lpfZ1 = 0.0f;
+};
+
 }  // namespace raw::rt
 
 extern "C" __declspec(dllexport) int RAW_GetAudioDirectorState(raw::rt::RawAudioDirectorState* out);

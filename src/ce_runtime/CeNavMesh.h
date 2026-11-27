@@ -94,4 +94,60 @@ private:
     float                           m_snowDepthU = 0.0f;
 };
 
+// ============================================================================
+// Wave 84: Hierarchical HPA* Multi-Cell Portal Graph + O(1) Spatial Hash + Dynamic Tile Carving
+// ============================================================================
+struct HpaPortalEdge {
+    uint32_t fromCluster = 0u;
+    uint32_t toCluster   = 0u;
+    NavVec3  portalPos{};
+    float    cost        = 64.0f;
+    bool     enabled     = true;
+};
+
+struct HpaDynamicCarve {
+    uint32_t id      = 0u;
+    NavVec3  center{};
+    float    radiusM = 4.0f;
+};
+
+struct HpaPathResult {
+    bool                  found         = false;
+    float                 totalCost     = 0.0f;
+    uint32_t              clustersVisited = 0u;
+    std::vector<uint32_t> clusterPath;
+    std::vector<NavVec3>  waypoints;
+};
+
+class HpaClusterNavGraph {
+public:
+    static constexpr float kClusterSizeM = 64.0f;
+
+    // Builds an nx x ny grid of 64 m world clusters with stitched border portals.
+    void BuildGrid(uint32_t gridX, uint32_t gridY);
+
+    // Removes/disables a cross-cell portal (used for broken-bridge gameplay or Planted Control 84-B).
+    void SetPortalEnabled(uint32_t fromCluster, uint32_t toCluster, bool enabled);
+
+    // Runtime dynamic obstacle carving (falling tree, barricade, brazier, spell wall).
+    void ClearCarvedObstacles();
+    void CarveDynamicObstacle(const HpaDynamicCarve& obs);
+
+    // O(1) spatial hash cluster lookup.
+    [[nodiscard]] int32_t FindClusterAt(float worldXM, float worldYM) const noexcept;
+
+    // Hierarchical multi-cell HPA* path search avoiding dynamically carved blocked clusters/portals.
+    [[nodiscard]] HpaPathResult FindMultiCellPath(NavVec3 startM, NavVec3 goalM) const;
+
+    [[nodiscard]] uint32_t ClusterCount() const noexcept { return m_gridX * m_gridY; }
+
+private:
+    bool IsPortalBlockedByCarve(const HpaPortalEdge& edge) const noexcept;
+
+    uint32_t                     m_gridX = 0u;
+    uint32_t                     m_gridY = 0u;
+    std::vector<HpaPortalEdge>   m_portals;
+    std::vector<HpaDynamicCarve> m_carves;
+};
+
 }  // namespace raw::ce

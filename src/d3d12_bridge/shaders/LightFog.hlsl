@@ -17,6 +17,7 @@
 #include "RawSpells3D.hlsli"
 #include "RawSplitTemporalAerial.hlsli"
 #include "RawBlackbodySss.hlsli"
+#include "RawIridescenceFrostHalo.hlsli"
 
 Texture2D<float4> Lit         : register(t0);
 Texture2D<float>  Depth       : register(t1);
@@ -976,6 +977,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                         baseSky += (float3(1.12f, 0.92f, 0.70f) * parhelia * 0.55f + dogDisp * 0.45f) * (coldAir * cirCrystal * dayW * (1.0f - cover * 0.55f) * 0.105f);
                     }
                 }
+            }
+            // Wave 81: Physical world-space angular 42-deg rain-mist bow & 22-deg ice-crystal halo scattering (0 screen-UV drift):
+            if ((1.0f - isExotic) > 0.2f && dayW > 0.12f && sDir.z > 0.02f && (weather.w > 0.05f || weather.z > 0.08f)) {
+                const float altMetersW81 = max(camPosW.z * (1.0f / 70.0f), 0.0f);
+                const float tempAtmoW81  = lerp(9.0f, -6.0f, saturate(weather.z * 1.15f));
+                const float ctW81        = saturate(1.0f - cover * 0.72f);
+                const RawAtmoHaloResult atmoW81 = rawEvalAtmoSpectralHalo(
+                    sDir, aSun, weather.w, weather.z, ctW81, altMetersW81, tempAtmoW81);
+                baseSky += atmoW81.haloRGB * ((1.0f - isExotic) * dayW * 0.45f);
             }
             if ((flags.x & FLAG_CLOUDS) != 0u) {
                 const float2 skyUv = (px + 0.5f) * dims.zw;

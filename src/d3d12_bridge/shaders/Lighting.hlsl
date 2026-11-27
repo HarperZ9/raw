@@ -21,6 +21,7 @@
 #include "RawSplitTemporalAerial.hlsli"
 #include "RawBlackbodySss.hlsli"
 #include "RawPorosityCaustics.hlsli"
+#include "RawIridescenceFrostHalo.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -691,6 +692,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
                 s.n     = normalize(lerp(s.n, porW80.normalFilm, porFadeW80 * 0.45f));
                 s.alpha = lerp(s.alpha, porW80.roughnessFilm, porFadeW80 * 0.50f);
                 lobe    = lobe || (max(wet.wet, wet.puddle) > 0.14f);
+            }
+            // Wave 81: Physical Airy Thin-Film Water/Frost Iridescence & Anisotropic Glaze-Ice/Hoarfrost Phase Transition (-4 C..+2 C):
+            if (!isGreenPine && !isActorFeat && !isActorCloth && z < 2800.0f && (max(wet.wet, wet.puddle) > 0.08f || wet.snow > 0.06f || weather.z > 0.08f)) {
+                const float3 wpW81     = p + camPosW.xyz;
+                const float  nvW81     = saturate(dot(s.n, s.v));
+                const float  tempW81   = lerp(5.0f, -6.0f, saturate(weather.z + wet.snow * 0.65f));
+                const float  windSpW81 = saturate(length(cloudWind.xy) / 340.0f + weather.z * 0.25f);
+                const RawFrostGlazeResult fgW81 = rawEvalFrostGlazeCoupling(
+                    wpW81, s.n, albedo, s.alpha, max(wet.wet, wet.puddle), wet.snow,
+                    tempW81, cloudWind.xy, windSpW81, fireHeat01, nvW81, isGreenPine);
+                const float fgFadeW81 = smoothstep(2800.0f, 220.0f, z) * max(fgW81.glazeMask, fgW81.frostMask);
+                if (fgFadeW81 > 0.01f) {
+                    albedo  = lerp(albedo, fgW81.albedoOut, fgFadeW81 * 0.48f);
+                    s.n     = normalize(lerp(s.n, fgW81.normalOut, fgFadeW81 * 0.35f));
+                    s.alpha = lerp(s.alpha, fgW81.roughnessOut, fgFadeW81 * 0.45f);
+                    lobe    = lobe || (fgW81.glazeMask > 0.12f);
+                }
+                const float filmMaskW81 = saturate(max(wet.puddle * 0.45f, fgW81.glazeMask * 0.55f)) * smoothstep(2200.0f, 180.0f, z);
+                if (filmMaskW81 > 0.02f) {
+                    const float dNmW81 = lerp(240.0f, 520.0f, saturate(wet.puddle + fgW81.glazeMask * 0.5f));
+                    const RawThinFilmResult tfW81 = rawEvalThinFilmIridescence(
+                        wpW81, nvW81, s.f0.xxx, dNmW81, filmMaskW81 * 0.32f, 1.333f, 1.52f, isGreenPine);
+                    const float tfLuma = dot(tfW81.reflectanceRGB, float3(0.2126f, 0.7152f, 0.0722f));
+                    s.f0 = clamp(lerp(s.f0, tfLuma, tfW81.iridescenceWeight * 0.40f), 0.018f, 0.16f);
+                }
             }
             // Wave 42 Dynamic Raindrop Splash Ripples on Wet Surfaces & Puddles (strictly rain-gated; 100% calm on dry days!):
             const float effWetRain = max(wet.wet, wet.puddle);

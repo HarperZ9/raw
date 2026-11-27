@@ -22,6 +22,7 @@
 #include "RawPrecipThermal.hlsli"
 #include "RawVolumetricGiGlint.hlsli"
 #include "RawPorosityCaustics.hlsli"
+#include "RawIridescenceFrostHalo.hlsli"
 
 #define Layer Normal
 #define BedAlbedo Spec
@@ -891,7 +892,12 @@ void water(uint3 id : SV_DispatchThreadID) {
                         iceSpec = min(sunColour.rgb * (dIce * fIce * saturate(dot(nCrust, sunDir.xyz)) * 0.14f), 2.5f.xxx);
                     }
                     const float3 iceCol = lerp(crustBody, refl, saturate(fIce * lerp(0.88f, 0.35f, rimeCov))) + iceSpec;
-                    col = lerp(col, iceCol, saturate(freezeMask * 0.92f));
+                    // Wave 81: Thin-film Airy frost/ice sheen coupling across frozen shoreline ice crust (strictly <= 1.0):
+                    const RawThinFilmResult iceTfW81 = rawEvalThinFilmIridescence(
+                        wpW, nvIce, fIce.xxx, lerp(280.0f, 460.0f, iceStrata), saturate(freezeMask * (1.0f - rimeCov) * 0.28f),
+                        1.31f, 1.48f, false);
+                    const float3 iceColW81 = iceCol + sanitizeWater3(refl) * (max(iceTfW81.reflectanceRGB - fIce.xxx, 0.0f.xxx) * 0.18f);
+                    col = lerp(col, iceColW81, saturate(freezeMask * 0.92f));
                 }
             }
             // Wave 63 + Wave 66: Smooth Continuous Optical-Depth Shoreline Coverage & Occlusion-Aware Silhouette AA:

@@ -53,6 +53,14 @@ float Sat(float x) { return std::clamp(x, 0.0f, 1.0f); }
 struct SavedFog {
     float f[8];   // TESWeather::FogData (FNAM +0x678): dayNear, dayFar, nightNear, nightFar, dayPow, nightPow, dayMax, nightMax
 };
+// Wave 82 ABI layout guards (SkyrimSE 1.7.104.0 verified TESWeather & Sky offsets):
+static constexpr uint32_t kCe17104OffWeatherFormId = 0x14u;
+static constexpr uint32_t kCe17104OffWeatherData   = 0x664u;
+static constexpr uint32_t kCe17104OffWeatherFog    = 0x678u;
+static constexpr uint32_t kCe17104OffSkyCurWeather = 0x48u;
+static_assert(sizeof(SavedFog) == 32u, "TESWeather::FogData FNAM is 8 floats (32B)");
+static_assert(kCe17104OffWeatherFog == kCe17104OffWeatherData + 0x14u, "TESWeather FNAM follows DATA");
+static_assert(kCe17104OffWeatherFormId == 0x14u && kCe17104OffSkyCurWeather == 0x48u, "TESWeather/Sky ABI lock");
 std::unordered_map<const uint8_t*, SavedFog> g_savedFog;
 
 void NeutralizeVanillaFog(uint8_t* w) {

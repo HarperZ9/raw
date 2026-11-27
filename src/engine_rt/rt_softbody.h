@@ -38,6 +38,12 @@ inline constexpr uint32_t kOffNiLocalScale             = 0x78u;  // Verified @ 0
 inline constexpr uint32_t kOffNiWorldRotate            = 0x7Cu;  // Verified @ 0xEEBF6A (36 bytes)
 inline constexpr uint32_t kOffNiWorldTranslate         = 0xA0u;  // Verified @ 0xEEBF8F (12 bytes)
 inline constexpr uint32_t kOffNiWorldScale             = 0xACu;  // Verified @ 0xEEBFB3 (4 bytes)
+// Wave 82 ABI layout guards (SkyrimSE 1.7.104.0 verified NiAVObject / TESObjectREFR offsets):
+static_assert(kOffNiLocalTranslate == kOffNiLocalRotate + 36u, "NiAVObject local translate follows 3x3 rotate");
+static_assert(kOffNiLocalScale == kOffNiLocalTranslate + 12u, "NiAVObject local scale follows translate");
+static_assert(kOffNiWorldTranslate == kOffNiWorldRotate + 36u, "NiAVObject world translate follows 3x3 rotate");
+static_assert(kOffNiWorldScale == kOffNiWorldTranslate + 12u, "NiAVObject world scale follows translate");
+static_assert(kOffRefrLoadedData == 0x68u && kOffLoadedData3D == 0x68u, "TESObjectREFR loaded3D ABI lock");
 inline constexpr uint32_t kOffNiFlags                  = 0xF4u;  // Verified @ 0xEE0E56
 inline constexpr uint32_t kOffNiNodeChildrenData       = 0x118u; // Verified @ 0xEE23D0 / 0xEE2570
 inline constexpr uint32_t kOffNiNodeChildrenCap        = 0x120u;

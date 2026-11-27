@@ -26,6 +26,7 @@
 #include "rt_cascades.h"
 #include "rt_emitters.h"
 #include "rt_view.h"
+#include "rt_ownership_ledger.h"
 #include "rt_drawstats.h"
 #include "rt_grids.h"
 #include "rt_livestate.h"
@@ -284,6 +285,21 @@ void Step(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
             Result(j);
         } else if (op == "view") {
             Result("{\"cmd\":\"view\"," + ViewJson() + "}");
+        } else if (op == "debug_view") {
+            // Wave 82: Canonical 9-Mode GPU Debug Views (0..8 -> Lighting.hlsl flags.w 0 or 41..48):
+            int mode = 0;
+            try { mode = a.empty() ? 0 : std::stoi(a); } catch (...) { mode = -1; }
+            const bool valid = (mode >= 0 && mode <= 8);
+            const int flagVal = (valid && mode > 0) ? (40 + mode) : 0;
+            char jb[192];
+            std::snprintf(jb, sizeof jb,
+                          "{\"cmd\":\"debug_view\",\"ok\":%s,\"mode\":%d,\"lighting_view_flag\":%d}",
+                          valid ? "true" : "false", mode, flagVal);
+            Result(jb);
+        } else if (op == "ownership_dump") {
+            static RuntimeOwnershipLedger g_w82Ledger;
+            g_w82Ledger.AdvancePresentFrame();
+            Result(g_w82Ledger.DumpOwnershipJson());
         } else if (op == "cam_sweep") {
             float dy = 0.0f, dp = 0.0f, df = 0.0f;
             int frames = 0;

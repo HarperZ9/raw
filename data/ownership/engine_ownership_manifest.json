@@ -1,0 +1,148 @@
+{
+  "schema": "raw.engine-ownership-manifest/1",
+  "wave": 82,
+  "generated_utc": "2026-11-26",
+  "atomic_handoff_policy": {
+    "promotion_consecutive_clean_frames": 3,
+    "allow_double_exec_ao_fog_depth": false,
+    "allow_flicker_frames": false,
+    "present_boundary_only": true
+  },
+  "passes": [
+    {
+      "pass_id": 0,
+      "tag": "depth_prepass_dsv",
+      "subsystem": "d3d11_proxy",
+      "interception_point": "src/d3d11_proxy/DepthOwnership.cpp",
+      "state": "OWNED_BY_RAW",
+      "target_wave": 82,
+      "invariant": "Single clear per Present boundary; DSV substitution locked before first DepthPrepass draw"
+    },
+    {
+      "pass_id": 1,
+      "tag": "gbuffer_albedo_normal_spec",
+      "subsystem": "d3d11_proxy",
+      "interception_point": "src/d3d11_proxy/GBufferComplete.cpp",
+      "state": "OWNED_BY_RAW",
+      "target_wave": 82,
+      "invariant": "Atomic shared-handle handoff on GeometryMain completion fence"
+    },
+    {
+      "pass_id": 2,
+      "tag": "deferred_lighting_ao_fog",
+      "subsystem": "d3d12_bridge",
+      "interception_point": "src/d3d11_proxy/GameComposite.cpp",
+      "state": "OWNED_BY_RAW",
+      "target_wave": 82,
+      "invariant": "Vanilla AO white-stubbed and vanilla fog clamped atomically inside single draw hook"
+    },
+    {
+      "pass_id": 3,
+      "tag": "rt_shadows_gi_reflections",
+      "subsystem": "d3d12_bridge",
+      "interception_point": "src/d3d12_bridge/shaders/RtShadow.hlsl",
+      "state": "OWNED_BY_RAW",
+      "target_wave": 82,
+      "invariant": "Fence-waited DX12 completion prior to HDR scene composite"
+    },
+    {
+      "pass_id": 4,
+      "tag": "volumetric_clouds_fog_sky",
+      "subsystem": "d3d12_bridge",
+      "interception_point": "src/d3d12_bridge/shaders/LightFog.hlsl",
+      "state": "OWNED_BY_RAW",
+      "target_wave": 82,
+      "invariant": "Sky suppression gated on finite DX12 aerial transmittance output"
+    },
+    {
+      "pass_id": 5,
+      "tag": "water_caustics_fluid_sim",
+      "subsystem": "d3d12_bridge",
+      "interception_point": "src/d3d12_bridge/shaders/RtWater.hlsl",
+      "state": "OWNED_BY_RAW",
+      "target_wave": 82,
+      "invariant": "Water draw replacement gated on DX12 fluid/caustics pass readiness"
+    },
+    {
+      "pass_id": 6,
+      "tag": "shadow_cascades_atlas",
+      "subsystem": "engine_rt",
+      "interception_point": "src/engine_rt/rt_control.cpp",
+      "state": "HYBRID_INTERCEPTED",
+      "target_wave": 83,
+      "invariant": "Shadow cascade ownership switches only on cell-load idle frame with matching frustum hash"
+    },
+    {
+      "pass_id": 7,
+      "tag": "frustum_hiz_indirect_cull",
+      "subsystem": "d3d12_bridge",
+      "interception_point": "src/d3d12_bridge/RawGpuCullHost.cpp",
+      "state": "HYBRID_INTERCEPTED",
+      "target_wave": 83,
+      "invariant": "Two-pass Hi-Z indirect buffer promoted only after Pass 1 + Pass 2 count checksum matches"
+    },
+    {
+      "pass_id": 8,
+      "tag": "meshlet_lod_distant_horizon",
+      "subsystem": "d3d12_bridge",
+      "interception_point": "src/d3d12_bridge/RawAssetStream.cpp",
+      "state": "HYBRID_INTERCEPTED",
+      "target_wave": 85,
+      "invariant": "Monotonic screen-space error curve eliminates dual-draw z-fighting"
+    },
+    {
+      "pass_id": 9,
+      "tag": "job_scheduler_frame_memory",
+      "subsystem": "engine_rt",
+      "interception_point": "src/engine_rt/raw_job_system.cpp",
+      "state": "HYBRID_INTERCEPTED",
+      "target_wave": 83,
+      "invariant": "Lock-free Chase-Lev DAG drains before Present with zero main-thread stall"
+    },
+    {
+      "pass_id": 10,
+      "tag": "actor_skinning_ik_crowd",
+      "subsystem": "worldgen",
+      "interception_point": "src/worldgen/RawSkeletonAnimEngine.cpp",
+      "state": "HYBRID_INTERCEPTED",
+      "target_wave": 84,
+      "invariant": "SoA Crowd ECS publishes double-buffered bone palettes with monotonic frame tag"
+    },
+    {
+      "pass_id": 11,
+      "tag": "navmesh_rvo2_combat_ai",
+      "subsystem": "ce_runtime",
+      "interception_point": "src/ce_runtime/CeNavMesh.cpp",
+      "state": "HYBRID_INTERCEPTED",
+      "target_wave": 84,
+      "invariant": "HPA* + RVO2 velocity commands injected cleanly before Havok character step"
+    },
+    {
+      "pass_id": 12,
+      "tag": "asset_decode_nif_esm_bsa",
+      "subsystem": "ce_runtime",
+      "interception_point": "src/ce_runtime/CeNifReader.cpp",
+      "state": "STILL_VANILLA",
+      "target_wave": 85,
+      "invariant": "Clean-room repaired meshlets replace vanilla VB/IB once hash verification passes"
+    },
+    {
+      "pass_id": 13,
+      "tag": "skse_mod_sdk_hotreload",
+      "subsystem": "skse_host",
+      "interception_point": "src/engine_rt/rt_sdk_bridge.cpp",
+      "state": "HYBRID_INTERCEPTED",
+      "target_wave": 86,
+      "invariant": "Atomic PSO swap and SemVer v2.0 registration table rollback on compile error"
+    },
+    {
+      "pass_id": 14,
+      "tag": "hud_tonemap_present",
+      "subsystem": "d3d11_proxy",
+      "interception_point": "src/d3d12_bridge/shaders/Tonemap.hlsl",
+      "state": "OWNED_BY_RAW",
+      "target_wave": 82,
+      "invariant": "Debug view blit executes strictly before HUD/UI phase so menus remain legible"
+    }
+  ]
+}

@@ -25,6 +25,13 @@
 
 namespace raw::rt {
 
+// Wave 82 ABI layout guards (SkyrimSE 1.7.104.0 verified PlayerCamera & TES::gridCells offsets):
+static constexpr uint32_t kCe17104OffCamCurrentState = 0x28u;
+static constexpr uint32_t kCe17104OffCamFreeState    = 0xD0u;
+static constexpr uint32_t kCe17104OffTesGridCells    = 0x78u;
+static_assert(kCe17104OffCamCurrentState < kCe17104OffCamFreeState, "PlayerCamera ABI ordering");
+static_assert(kCe17104OffTesGridCells == 0x78u, "TES::gridCells verified ABI offset");
+
 float ComputeFp32Ulp(float v) {
     if (!std::isfinite(v)) return std::numeric_limits<float>::infinity();
     const float av = std::fabs(v);

@@ -22,6 +22,7 @@
 #include "RawBlackbodySss.hlsli"
 #include "RawPorosityCaustics.hlsli"
 #include "RawIridescenceFrostHalo.hlsli"
+#include "RawDebugViews.hlsli"
 #include "RawProceduralNoise.hlsli"
 #include "RawMaterials3D.hlsli"
 #include "RawDecals3D.hlsli"
@@ -294,6 +295,15 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
             return float4(0.03f, 0.04f, 0.06f, game.a);
         }
         if (flags.w == 33u) { return float4(debugHdrEnergyHeatmap(game.rgb), game.a); }
+        if (flags.w >= 41u && flags.w <= 48u) {
+            RawDebugPixelInput skyDbg;
+            skyDbg.albedo = game.rgb; skyDbg.wetness01 = 0.0f; skyDbg.worldNormal = float3(0.0f, 0.0f, 1.0f);
+            skyDbg.microPerturb01 = 0.0f; skyDbg.linearDepth = 350000.0f; skyDbg.rawDepth = 1.0f;
+            skyDbg.motionPx = 0.0f.xx; skyDbg.disocclusion01 = 0.0f; skyDbg.giIrradiance = game.rgb;
+            skyDbg.sunShadow = 1.0f; skyDbg.cloudTrans = saturate(1.0f - clouds.x * 0.7f);
+            skyDbg.materialClass = 0u; skyDbg.pixelPos = at.xy; skyDbg.screenDims = dims.xy;
+            return float4(rawEvalCanonicalDebugView(flags.w - RAW_DBG_MODE_BASE, skyDbg), game.a);
+        }
         return float4(game.rgb, game.a);
     }
     // View 9, a test control: the pass reaches only the top-left quarter, as a half-size viewport
@@ -306,6 +316,31 @@ float4 fs(float4 at : SV_Position) : SV_Target0 {
         const float3 cc = base == 10u ? float3(1, 0.1, 0.1) : base == 14u ? float3(1.0, 0.35, 0.06) : base == 5u ? float3(0.1, 0.8, 0.1) : base == 4u ? float3(0.5, 0.35, 0.1) :
                           base == 6u ? float3(0.1, 0.3, 1) : base == 7u ? float3(0.1, 0.9, 0.9) : base == 0u ? 0.0f.xxx : 0.5f.xxx;
         return float4(cc * (0.35f + 0.65f * dot(GameLit.Load(ip).rgb, 0.333f)), game.a);
+    }
+    // Wave 82: Canonical 9-Mode Live GPU Debug Views (flags.w == 41..48 -> Modes 1..8, Mode 0 = Final Lit):
+    if (flags.w >= 41u && flags.w <= 48u) {
+        const float  zDbg  = viewZOf(d);
+        const float3 nDbg  = worldNormal(Normal.Load(ip));
+        const float3 aDbg  = Albedo.Load(ip).rgb;
+        const float  shDbg = saturate(RtVis.Load(ip).x);
+        const float3 giDbg = RtBounce.Load(ip).rgb * proj.w;
+        const float  zGrad = (abs(ddx(zDbg)) + abs(ddy(zDbg))) / max(zDbg, 1.0f);
+        RawDebugPixelInput pxDbg;
+        pxDbg.albedo         = aDbg;
+        pxDbg.wetness01      = saturate(weather.w * 0.85f + weather.z * 0.25f);
+        pxDbg.worldNormal    = nDbg;
+        pxDbg.microPerturb01 = saturate(1.0f - abs(nDbg.z));
+        pxDbg.linearDepth    = zDbg;
+        pxDbg.rawDepth       = d;
+        pxDbg.motionPx       = float2(ddx(zDbg), ddy(zDbg)) * 0.08f;
+        pxDbg.disocclusion01 = smoothstep(0.03f, 0.14f, zGrad);
+        pxDbg.giIrradiance   = giDbg;
+        pxDbg.sunShadow      = shDbg;
+        pxDbg.cloudTrans     = saturate(1.0f - clouds.x * 0.72f);
+        pxDbg.materialClass  = base;
+        pxDbg.pixelPos       = at.xy;
+        pxDbg.screenDims     = dims.xy;
+        return float4(rawEvalCanonicalDebugView(flags.w - RAW_DBG_MODE_BASE, pxDbg), game.a);
     }
     // Distant LOD (class 7: lit per vertex by the game, so it read flat beside the trees and ground RAW lights).
     // FOL-04: in improved mode it gets the same sun, shadows, ambient and sky the near surfaces get. Views 14 and 15

@@ -3,25 +3,20 @@
     {
       "file": "raw-facts.svg",
       "kicker": "counts, not adjectives",
-      "title": "What the engine declares, and where each number is read from",
-      "source": "shaders, source and manifest, on this checkout",
+      "title": "What RAW v1.0 declares, and where each count comes from",
+      "source": "shaders, C++23 source, SDK and manifest on this checkout",
       "heads": ["the engine declares", "how many", "where the number comes from"],
-      "alt": "A table of thirteen rows: what the engine declares, how many of each there are, and where the number is read from. The render-phase enum names nine phases, and the proxy classifies each frame across them. The weather system carries nine categories that modulate effect intensity. Six effects are active, and of those six one is verified in-game today while the rest are still being tuned. Three post-processing stages are in the build. The debug tonemapper list holds seven real tone curves alongside a linear passthrough. Seventeen renderers are kept in source but removed from the build. The d3d11 proxy wraps three objects: the device, the context and the swap chain. The shader directory holds eighty-five HLSL files loaded from disk, plus one shared include. Every target builds to the C++23 standard, and the license is MIT. The marked row is the honest null: the engine can capture per-pass frame time to CSV, but no such capture is committed here, so no measured frame time is published.",
-      "footnote": "Every count is read from the shader directory, the source enum, the README table or the build manifest that declares it, and tools/art/check_repo_facts.py reads those same files and rebuilds each number. The marked row is the honest null: no measured per-pass frame time is committed in this repository.",
+      "alt": "A table of eight rows naming what RAW v1.0 declares, how many of each are in the tree, and where each number comes from. The DirectX 12 bridge shader directory holds 60 HLSL shaders and 34 shared HLSLI includes. The d3d11.dll proxy wraps three Direct3D objects: the device, the context and the swap chain. The C++23 source tree holds 352 implementation files and 328 headers. The BuildLang Mod SDK exposes ABI v2.0 through raw_mod_sdk.bld. Every target compiles to C++23 and the repository license is MIT.",
+      "footnote": "Every count is read directly from src/d3d12_bridge/shaders, src/d3d11_proxy, src, sdk, CMakeLists.txt and vcpkg.json by tools/art/check_repo_facts.py.",
       "fields": [
-        { "key": "render phases", "value": "nine of them", "note": "The RenderPhase enum in the d3d11 proxy holds nine values, and the DSV-unbind heuristic classifies each frame across them, matching the README." },
-        { "key": "weather categories", "value": "nine of them", "note": "The WeatherCategory enum lists nine real categories from clear to special, past a Count sentinel, and the weather system modulates effect intensity per category." },
-        { "key": "active effects", "value": "six of them", "note": "The Active Effects table in the README lists six: GTAO, contact shadows, skylighting, SSR, SSGI and the scene compositor." },
-        { "key": "verified in-game", "value": "one of six", "note": "Of those six, one carries a verified-in-game status today. The rest read as functional-but-tuning, and the card keeps that honest rather than rounding up." },
-        { "key": "post stages", "value": "three of them", "note": "The Active Post-Processing table lists three stages: bloom, the AgX color pipeline and the tone-map manager, each marked in-build." },
-        { "key": "tone curves", "value": "seven of them", "note": "The tonemapper list in the debug GUI holds eight entries: seven real tone curves past a linear passthrough, and the color pipeline exposes AgX by default." },
-        { "key": "disabled renderers", "value": "seventeen of them", "note": "Seventeen renderers are kept in source but removed from the build pending polish, named one after another in the README disabled list." },
-        { "key": "proxy objects", "value": "three of them", "note": "The d3d11.dll proxy wraps three objects: the device, the context and the swap chain, each a Wrapped class in the proxy source." },
-        { "key": "shader files", "value": "85 on disk", "note": "The Shaders directory holds 85 HLSL files loaded from disk at run time, with F12 hot-reload and no shader strings embedded in the binary." },
-        { "key": "shared include", "value": "one of them", "note": "One shared HLSL include, SharedRAW.hlsli, carries the common utilities every shader pulls in through the standard include handler." },
-        { "key": "language standard", "value": "C++23", "note": "The CMake project sets the C++ standard to 23 for every target it builds, on the shaders-from-disk proxy and the SKSE plugin alike." },
-        { "key": "license", "value": "MIT", "note": "The vcpkg manifest declares the license as MIT, matching the README badge and the copyright line." },
-        { "key": "measured frame time", "value": "none in the tree", "note": "The engine can capture per-pass timings to CSV with F10, but no such capture is committed here, so no measured frame time is published.", "tone": "drift" }
+        { "key": "dx12 hlsl shaders", "value": "60 on disk", "note": "The src/d3d12_bridge/shaders directory holds 60 HLSL files compiled with DXC Shader Model 6.6 through 6.10." },
+        { "key": "dx12 shared includes", "value": "34 on disk", "note": "34 shared HLSLI headers carry physically based BRDF, froxel volumetrics, optics, neural texture decode and debug views." },
+        { "key": "proxy objects", "value": "three of them", "note": "The d3d11.dll proxy wraps three objects: the device, the context and the swap chain, each a Wrapped class in src/d3d11_proxy." },
+        { "key": "cpp source files", "value": "352 on disk", "note": "352 C++23 implementation files across the DX12 translation layer, Creation Engine runtime and test harnesses." },
+        { "key": "header files", "value": "328 on disk", "note": "328 C++23 header files defining ABI static assertions, lock-free job queues, meshlets and live control registries." },
+        { "key": "mod sdk", "value": "ABI v2.0", "note": "include/raw_mod_sdk_abi.h and sdk/raw_mod_sdk.bld expose sandboxed BuildLang FFI and hot-reload pass registration.", "tone": "verified" },
+        { "key": "language standard", "value": "C++23", "note": "CMakeLists.txt sets CMAKE_CXX_STANDARD to 23 across d3d11_proxy, raw_engine and every verification target." },
+        { "key": "license", "value": "MIT", "note": "vcpkg.json and LICENSE declare MIT licensing across the full source tree." }
       ]
     }
   ]

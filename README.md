@@ -39,6 +39,8 @@ Part of THE PLAYGROUND ([harperz9.github.io/playground/](https://harperz9.github
 
 ## What Uses DX12 and DXR vs Regular Shader Math
 
+![A table of eight rows naming what RAW v1.0 declares, how many of each are in the tree, and where each number comes from. The DirectX 12 bridge shader directory holds 60 HLSL shaders and 34 shared HLSLI includes. The d3d11.dll proxy wraps three Direct3D objects: the device, the context and the swap chain. The C++23 source tree holds 352 implementation files and 328 headers. The BuildLang Mod SDK exposes ABI v2.0 through raw_mod_sdk.bld. Every target compiles to C++23 and the repository license is MIT.](docs/art/raw-facts.svg)
+
 - **DX12 and DXR pipeline work:** D3D11-to-D3D12 translation (`raw::tx`), per-frame BLAS and TLAS builds from intercepted geometry and skinned actors, inline `RayQuery` hardware ray-traced sun shadows, area point-light shadows, RTAO, multi-bounce indirect diffuse, and glossy reflections. On supported GPUs, the bridge also initializes SM 6.6 mesh shader subdivision (`RAW-MESH`), a 65K bindless descriptor heap, async compute, and `ExecuteIndirect` batching.
 - **Deferred lighting and world passes on top of that pipeline:** GGX and 4-slab layered BRDF shading, TruePBR (`_rmaos.dds`) and ENB Complex Material (`_m.dds`) texture reads, 36-step 3D Perlin-Worley volumetric clouds, `160x90x64` froxel fog, depth-free Gerstner wave parallax water with Beer-Lambert absorption, procedural weather, a 5-pass DoF camera suite, LUT support from `raw_luts/`, and RAWLSS 5.5 temporal reconstruction (an open SM 6.6 FP16 pass, separate from NVIDIA DLSS 5).
 

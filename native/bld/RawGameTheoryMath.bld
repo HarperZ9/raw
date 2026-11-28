@@ -1,0 +1,118 @@
+// RawGameTheoryMath.bld: RAW Engine Deterministic Algorithmic Game Theory, Prophet Inequality,
+// Discrete Laplace & KL-Divergence Stability Kernels in BuildLang 1.4.0.
+// Synthesizes Nov 25 mathematical discoveries (MaximinKiteNE, Fictitious Play, Subadditive Prophet
+// Inequalities, Truncated Discrete Laplace & Log-Rank KL-Stability) into RAW's adaptive AI & economy:
+//   1. bimatrix_unilateral_regret    - Exact worst-case unilateral deviation regret on a 2x2 game
+//   2. nash_2x2_mixed_prob           - Exact closed-form 2x2 Nash indifference mixing probability
+//   3. fictitious_play_ema_step      - Regularized empirical frequency update for adaptive AI
+//   4. prophet_reservation_threshold - Subadditive prophet-inequality reservation price threshold
+//   5. truncated_discrete_laplace_w  - Truncated discrete Laplace sampler weight in [0..1]
+//   6. kl_binary_stability_nats      - Kullback-Leibler binary divergence stability metric (nats)
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn abs_f64(x: f64) -> f64 {
+    if x < 0.0 { -x } else { x }
+}
+
+// 1. Exact worst-case unilateral deviation regret epsilon = max(regret_row, regret_col) on a 2x2 bimatrix game.
+//    Returns 0.0 at exact Nash equilibrium and <= 0.20 for 1/5-approximate Nash profiles.
+fn bimatrix_unilateral_regret(p_raw: f64, q_raw: f64,
+                              a00: f64, a01: f64, a10: f64, a11: f64,
+                              b00: f64, b01: f64, b10: f64, b11: f64) -> f64 {
+    let p: f64 = clamp_f64(p_raw, 0.0, 1.0);
+    let q: f64 = clamp_f64(q_raw, 0.0, 1.0);
+    let u_r0: f64 = a00 * q + a01 * (1.0 - q);
+    let u_r1: f64 = a10 * q + a11 * (1.0 - q);
+    let u_row: f64 = p * u_r0 + (1.0 - p) * u_r1;
+    let reg_row: f64 = max_f64(max_f64(u_r0, u_r1) - u_row, 0.0);
+
+    let u_c0: f64 = b00 * p + b10 * (1.0 - p);
+    let u_c1: f64 = b01 * p + b11 * (1.0 - p);
+    let u_col: f64 = q * u_c0 + (1.0 - q) * u_c1;
+    let reg_col: f64 = max_f64(max_f64(u_c0, u_c1) - u_col, 0.0);
+    max_f64(reg_row, reg_col)
+}
+
+// 2. Exact closed-form 2x2 Nash indifference mixing probability q* with clamped boundary support [0..1].
+fn nash_2x2_mixed_prob(a00: f64, a01: f64, a10: f64, a11: f64) -> f64 {
+    let denom: f64 = a00 - a01 - a10 + a11;
+    if abs_f64(denom) < 1.0e-9 {
+        if (a00 + a01) >= (a10 + a11) { 1.0 } else { 0.0 }
+    } else {
+        clamp_f64((a11 - a01) / denom, 0.0, 1.0)
+    }
+}
+
+// 3. Regularized empirical frequency update for adaptive AI Fictitious Play (harmonic + floor EMA).
+fn fictitious_play_ema_step(emp_freq: f64, best_resp: f64, step_n: i32, decay_floor: f64) -> f64 {
+    let cur: f64 = clamp_f64(emp_freq, 0.0, 1.0);
+    let br: f64 = clamp_f64(best_resp, 0.0, 1.0);
+    let n_f: f64 = max_f64(step_n as f64, 1.0);
+    let alpha: f64 = max_f64(1.0 / (n_f + 1.0), clamp_f64(decay_floor, 0.0, 0.5));
+    clamp_f64(cur + alpha * (br - cur), 0.0, 1.0)
+}
+
+// 4. Subadditive prophet-inequality reservation price threshold for online merchant & quest bidding.
+//    Reduces to exact Samuel-Cahn E[OPT]/2 when subadd_alpha == 1.0 and risk_aversion == 0.0.
+fn prophet_reservation_threshold(expected_opt: f64, subadd_alpha: f64, risk_aversion: f64) -> f64 {
+    let opt: f64 = max_f64(expected_opt, 0.0);
+    let alpha: f64 = max_f64(subadd_alpha, 1.0);
+    let risk: f64 = clamp_f64(risk_aversion, -0.5, 1.0);
+    (opt / (2.0 * alpha)) * (1.0 + 0.15 * risk)
+}
+
+// 5. Truncated discrete Laplace sampler weight exp(-|k| / s) inside |k| <= bound_b, 0 outside.
+fn truncated_discrete_laplace_w(k_abs: f64, scale_s: f64, bound_b: f64) -> f64 {
+    let ak: f64 = abs_f64(k_abs);
+    let b: f64 = max_f64(bound_b, 0.0);
+    if ak > b {
+        0.0
+    } else {
+        let s: f64 = max_f64(scale_s, 1.0e-4);
+        exp(-ak / s)
+    }
+}
+
+// 6. Kullback-Leibler binary divergence stability metric D_KL(p || q) in nats (>= 0 by Gibbs' inequality).
+fn kl_binary_stability_nats(p_raw: f64, q_raw: f64) -> f64 {
+    let p: f64 = clamp_f64(p_raw, 1.0e-6, 1.0 - 1.0e-6);
+    let q: f64 = clamp_f64(q_raw, 1.0e-6, 1.0 - 1.0e-6);
+    let kl: f64 = p * log(p / q) + (1.0 - p) * log((1.0 - p) / (1.0 - q));
+    max_f64(kl, 0.0)
+}
+
+fn main() ~ Console {
+    let reg_ne: f64 = bimatrix_unilateral_regret(0.5, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0);
+    let reg_eps: f64 = bimatrix_unilateral_regret(0.7, 0.5, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0);
+    let q_pennies: f64 = nash_2x2_mixed_prob(1.0, 0.0, 0.0, 1.0);
+    let q_feint: f64 = nash_2x2_mixed_prob(0.8, 0.2, 0.3, 0.9);
+    let fp_step1: f64 = fictitious_play_ema_step(0.50, 1.0, 4, 0.05);
+    let fp_step2: f64 = fictitious_play_ema_step(0.50, 1.0, 50, 0.05);
+    let pr_add: f64 = prophet_reservation_threshold(400.0, 1.0, 0.0);
+    let pr_sub: f64 = prophet_reservation_threshold(400.0, 1.25, 0.2);
+    let lap_in: f64 = truncated_discrete_laplace_w(2.0, 2.0, 6.0);
+    let lap_out: f64 = truncated_discrete_laplace_w(7.0, 2.0, 6.0);
+    let kl_eq: f64 = kl_binary_stability_nats(0.5, 0.5);
+    let kl_shift: f64 = kl_binary_stability_nats(0.75, 0.50);
+
+    println!("bimatrix_unilateral_regret(NE 0.5,0.5) = {} | (0.7,0.5 eps) = {}", reg_ne, reg_eps);
+    println!("nash_2x2_mixed_prob(pennies) = {} | (feint) = {}", q_pennies, q_feint);
+    println!("fictitious_play_ema_step(n=4) = {} | (n=50 floor) = {}", fp_step1, fp_step2);
+    println!("prophet_reservation_threshold(add) = {} | (subadd) = {}", pr_add, pr_sub);
+    println!("truncated_discrete_laplace_w(k=2) = {} | (k=7 trunc) = {}", lap_in, lap_out);
+    println!("kl_binary_stability_nats(0.5||0.5) = {} | (0.75||0.50) = {}", kl_eq, kl_shift);
+}

@@ -1,12 +1,2291 @@
 // D3D12Bridge per-frame work: depth capture, the fence round trip, and GPU
 // timestamps on both queues. Original work, MIT.
 #include "BridgeImpl.h"
+#include "RawProceduralLib.h"
+#include "RawGrassWindHost.h"
+#include "RawLiveWorldHost.h"
 #include "StreamlineHost.h"
 #include "LightingPass.h"
 #include "RtScene.h"
+#include "../worldgen/RawHydrologyGen.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 namespace raw::bridge
 {
+namespace
+{
+
+// Exact byte-for-byte mirror of LightingPass.cpp LightUniform (cbuffer P) for zero-coupling telemetry readback.
+struct TelemetryLightUniformView
+{
+    float dims[4], proj[4], clipToWorld[16], worldToClip[16], viewToWorld[12];
+    float resScale[4], sunDir[4], sunColour[4], ambient[12], cascade[24], cascadeInfo[4];
+    uint32_t flags[4];
+    float cluster[4], tune[4], tune2[4], weather[4], camPos[4], clouds[4], cloudWind[4], waterA[4], waterB[4], prevWorldToClip[16];
+    float lightPosR[kMaxSceneLights][4], lightColS[kMaxSceneLights][4];
+    uint32_t clusters[kClusterCount][4];
+    float footTrail[32][4];
+    float dofParams[4];
+    float timeEnv[4];
+    float engineWorld[4];
+    float camOptics[2][4];
+    float physWorld[2][4];
+    float seasonThermal0[4];      // x: snowDepthM, y: snowAlbedo, z: snowCompaction01, w: surfaceTempC
+    float seasonThermal1[4];      // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01
+    float phenology0[4];
+    float phenology1[4];
+    float impactDecalPosR[16][4]; // xyz: world pos, w: radiusU (0 = inactive)
+    float impactDecalMeta[16][4];
+};
+static_assert(sizeof(TelemetryLightUniformView) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176 + 512,
+              "TelemetryLightUniformView must match LightingPass cbuffer P");
+
+constexpr std::array<uint32_t, 13> kDebugViewCycle = {0u, 28u, 29u, 30u, 31u, 32u, 33u, 34u, 35u, 36u, 1u, 2u, 8u};
+
+const char* DebugViewLabel(uint32_t v)
+{
+    switch (v) {
+        case 0u:  return "0 FINAL LIVE WORLD";
+        case 28u: return "28 CLASS+ACTOR14 MAP";
+        case 29u: return "29 DEPTH+SILHOUETTE";
+        case 30u: return "30 SHADOW+LIVE DOMAINS";
+        case 31u: return "31 MOSS/SNOW/ICE MASK";
+        case 32u: return "32 ACTOR SKIN/SSS/14";
+        case 33u: return "33 NAN/INF/HDR HEATMAP";
+        case 34u: return "34 FLORA/BARK/PINE AUDIT";
+        case 35u: return "35 MOTION/OUTLINE RISK";
+        case 36u: return "36 FIRE/MELT/SOLVER MAP";
+        case 1u:  return "1 WORLD NORMALS";
+        case 2u:  return "2 GPU SNOW/GRASS/CAUST";
+        case 8u:  return "8 RAW ALBEDO";
+        default:  return "CUSTOM DEBUG VIEW";
+    }
+}
+
+const char* DebugViewLegend(uint32_t v)
+{
+    switch (v) {
+        case 28u: return "CYAN=ACTOR14 PEACH=SKIN GOLD=HAIR GRN=TREE OCH=TERR BLU=ICE";
+        case 29u: return "BLUE->WHITE=LOG DEPTH | AMBER=SILHOUETTE DISCONTINUITY";
+        case 30u: return "GREY=NDOTL | CYAN=SNOW64M GRN=GRASS64M BLUE=SUBMERGED";
+        case 31u: return "RED=PROTECTED ACTOR | CYAN=SNOW GRN=GRASS BLU=CAUST WHT=ICE";
+        case 32u: return "BRIGHT=ACTORS (10/11/12/14) | DIM=WORLD ENVIRONMENT";
+        case 33u: return "MAGENTA=NAN/INF OR >32 HDR OVERFLOW | BLUE->RED=LUMA";
+        case 34u: return "GRN=PINE LIME=3DGRASS AMBER=BARK | RED=BLACK MAG=BLEACH";
+        case 35u: return "AMBER=ACTOR SILHOUETTE RISK | YELLOW=WORLD EDGE JUMP";
+        case 36u: return "R=FIRE/MELT/CHAR | G=SNOW+GRASS FIELD | B=CAUSTICS/SPEC";
+        case 1u:  return "RGB = 0.5 + 0.5 * WORLD NORMAL (Z-UP)";
+        case 2u:  return "R=SNOW DEPTH | G=GRASS WIND BEND | B=WATER CAUSTICS";
+        case 8u:  return "UNLIT G-BUFFER ALBEDO (BASE COLOR)";
+        default:  return "LIVE SNOW TRACKS + CAUSTICS + 4-SHELL 3D GRASS + GLACIERS";
+    }
+}
+
+struct LiveWorldBridgeRuntime
+{
+    ID3D12Device*                              boundDev = nullptr;
+    std::unique_ptr<RawGrassWindHost>          grassWind;
+    bool                                       grassReady = false;
+    bool                                       grassInitAttempted = false;
+    ComPtr<ID3D12CommandAllocator>             grassAlloc[kRing];
+    ComPtr<ID3D12GraphicsCommandList>          grassList;
+    ComPtr<ID3D12Fence>                        grassFence;
+    HANDLE                                     grassEvent = nullptr;
+    uint64_t                                   grassFenceVal = 0ull;
+    uint64_t                                   grassSlotVal[kRing] = {};
+    uint32_t                                   grassSlot = 0u;
+    uint64_t                                   grassStepFrames = 0ull;
+    uint64_t                                   grassLastMs = 0ull;
+    bool                                       grassPrevInterior = false;
+
+    std::unique_ptr<RawLiveWorldHost>          liveWorld;
+    bool                                       liveWorldReady = false;
+    bool                                       liveWorldInitAttempted = false;
+    uint64_t                                   liveWorldFrames = 0ull;
+
+    bool                                       debugDrawerEnabled = false;
+    uint32_t                                   debugViewIndex = 0u;
+    uint32_t                                   activeDebugView = 0u;
+    bool                                       prevF10Down = false;
+    bool                                       prevF11Down = false;
+    bool                                       telemetryDirty = false;
+
+    ~LiveWorldBridgeRuntime() { Shutdown(); }
+
+    void Shutdown()
+    {
+        if (grassFence && grassEvent && grassFenceVal > 0ull) {
+            if (grassFence->GetCompletedValue() < grassFenceVal) {
+                grassFence->SetEventOnCompletion(grassFenceVal, grassEvent);
+                WaitForSingleObject(grassEvent, 3000);
+            }
+        }
+        grassList.Reset();
+        for (uint32_t i = 0u; i < kRing; ++i) {
+            grassAlloc[i].Reset();
+            grassSlotVal[i] = 0ull;
+        }
+        grassFence.Reset();
+        if (grassEvent) {
+            CloseHandle(grassEvent);
+            grassEvent = nullptr;
+        }
+        if (grassWind) {
+            grassWind->Shutdown();
+            grassWind.reset();
+        }
+        if (liveWorld) {
+            liveWorld->Shutdown();
+            liveWorld.reset();
+        }
+        boundDev = nullptr;
+        grassReady = false;
+        grassInitAttempted = false;
+        liveWorldReady = false;
+        liveWorldInitAttempted = false;
+        grassFenceVal = 0ull;
+        grassSlot = 0u;
+    }
+
+    void EnsureInit(ID3D12Device* dev, ID3D12CommandQueue* q, LogFn logFn)
+    {
+        if (!dev || !q) return;
+        if (boundDev != nullptr && boundDev != dev) {
+            Shutdown();
+        }
+        boundDev = dev;
+
+        UINT64 tsFreq = 0ull;
+        q->GetTimestampFrequency(&tsFreq);
+
+        if (!grassInitAttempted) {
+            grassInitAttempted = true;
+            auto gw = std::make_unique<RawGrassWindHost>();
+            std::string err;
+            GrassWindDesc gd{};
+            gd.gridWidth = 256u;
+            gd.gridHeight = 256u;
+            gd.worldSpanM = 64.0f;
+            bool ok = gw->Init(dev, gd, &err);
+            if (ok) {
+                if (tsFreq > 0ull) gw->SetTimestampFrequency(tsFreq);
+                for (uint32_t i = 0u; i < kRing && ok; ++i) {
+                    ok = SUCCEEDED(dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&grassAlloc[i])));
+                }
+                if (ok) {
+                    ok = SUCCEEDED(dev->CreateCommandList(0u, D3D12_COMMAND_LIST_TYPE_DIRECT, grassAlloc[0].Get(), nullptr, IID_PPV_ARGS(&grassList))) &&
+                         SUCCEEDED(grassList->Close()) &&
+                         SUCCEEDED(dev->CreateFence(0ull, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&grassFence)));
+                }
+                if (ok) {
+                    grassEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+                    ok = (grassEvent != nullptr);
+                }
+            }
+            if (ok) {
+                grassWind = std::move(gw);
+                grassReady = true;
+                if (logFn) logFn("[GrassWind] live 256x256 (65,536-blade) GPU wind/trample solver ready");
+            } else {
+                grassList.Reset();
+                for (uint32_t i = 0u; i < kRing; ++i) grassAlloc[i].Reset();
+                grassFence.Reset();
+                if (grassEvent) { CloseHandle(grassEvent); grassEvent = nullptr; }
+                if (logFn && !err.empty()) logFn("[GrassWind] disabled: %s", err.c_str());
+            }
+        }
+
+        if (!liveWorldInitAttempted) {
+            liveWorldInitAttempted = true;
+            auto lw = std::make_unique<RawLiveWorldHost>();
+            std::string err;
+            if (lw->Init(dev, &err)) {
+                if (tsFreq > 0ull) lw->SetTimestampFrequency(tsFreq);
+                liveWorld = std::move(lw);
+                liveWorldReady = true;
+                if (logFn) logFn("[LiveWorld] world-space snow/caustics/grass/debug compositor ready");
+            } else if (logFn && !err.empty()) {
+                logFn("[LiveWorld] disabled: %s", err.c_str());
+            }
+        }
+    }
+};
+
+std::mutex g_liveWorldMu;
+std::unordered_map<const D3D12Bridge::Impl*, std::unique_ptr<LiveWorldBridgeRuntime>> g_liveWorldMap;
+
+LiveWorldBridgeRuntime& GetLiveWorldRuntime(const D3D12Bridge::Impl* impl)
+{
+    std::lock_guard<std::mutex> lock(g_liveWorldMu);
+    auto& ptr = g_liveWorldMap[impl];
+    if (!ptr) {
+        ptr = std::make_unique<LiveWorldBridgeRuntime>();
+    }
+    return *ptr;
+}
+
+} // namespace
+
+void D3D12Bridge::Impl::EmitLiveTelemetry(bool rtActive)
+{
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(this);
+    const bool forceFlush = lwRt.telemetryDirty;
+    if (!forceFlush && frames != 1ull && (frames % 180ull) != 0ull) return;
+    lwRt.telemetryDirty = false;
+
+    float seasonSnowM = 0.0f;
+    float seasonIceM = 0.0f;
+    float skinTempC = 0.0f;
+    uint32_t activeImpactDecals = 0u;
+
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        seasonSnowM = std::isfinite(u->seasonThermal0[0]) ? u->seasonThermal0[0] : 0.0f;
+        skinTempC   = std::isfinite(u->seasonThermal0[3]) ? u->seasonThermal0[3] : 0.0f;
+        seasonIceM  = std::isfinite(u->seasonThermal1[0]) ? u->seasonThermal1[0] : 0.0f;
+        for (uint32_t i = 0; i < 16u; ++i) {
+            if (u->impactDecalPosR[i][3] > 0.0f) ++activeImpactDecals;
+        }
+    }
+
+    uint32_t gpuMeshlets = 0u;
+    for (const auto& kv : streamedTerrainGpu) {
+        gpuMeshlets += kv.second.meshletCount;
+    }
+    const uint32_t worldGenMeshlets = (gpuMeshlets > 0u) ? gpuMeshlets : lastWorldStats.totalMeshlets;
+    const uint32_t worldGenActiveChunks = lastWorldStats.activeChunkCount;
+    const uint32_t worldGenPendingAsync = worldShowcase.PendingAsyncJobs();
+    const char* biomeName = raw::worldgen::GetBiomeName(lastWorldStats.cameraBiome);
+    if (!biomeName) biomeName = "Unknown";
+
+    const FluidGpuTimings fluidTimings = fluidReady ? fluidSim.GetLastTimings() : FluidGpuTimings{};
+    const RadianceGpuTimings radTimings = radianceReady ? radianceHost.GetLastTimings() : RadianceGpuTimings{};
+    const float fluidFireMs = (fluidTimings.valid && std::isfinite(fluidTimings.fireStepMs)) ? fluidTimings.fireStepMs : 0.0f;
+    const float fluidWaterMs = (fluidTimings.valid && std::isfinite(fluidTimings.waterStepMs)) ? fluidTimings.waterStepMs : 0.0f;
+    const uint32_t fluidPressureIters = fluidTimings.activePressureIters;
+    const float radianceGiMs = (radTimings.valid && std::isfinite(radTimings.giPassMs)) ? radTimings.giPassMs : 0.0f;
+    const float xpbdStepMs = (xpbdSimReady && xpbdSim && xpbdSim->HasValidTiming() && std::isfinite(xpbdSim->GetLastStepMs()))
+        ? xpbdSim->GetLastStepMs() : 0.0f;
+    const uint32_t xpbdParticles = (xpbdSimReady && xpbdSim) ? xpbdSim->ParticleCount() : 0u;
+    const float overlayMs = (overlayHostReady && overlayHost && overlayHost->HasValidTiming() &&
+                             std::isfinite(overlayHost->GetLastOverlayMs()))
+        ? overlayHost->GetLastOverlayMs() : 0.0f;
+    const float gpuCullHiZMs = (gpuCullReady && gpuCull && gpuCull->HasValidHiZTiming() &&
+                                std::isfinite(gpuCull->GetLastHiZMs()))
+        ? gpuCull->GetLastHiZMs() : 0.0f;
+    const float gpuCullMs = (gpuCullReady && gpuCull && gpuCull->HasValidCullTiming() &&
+                             std::isfinite(gpuCull->GetLastCullMs()))
+        ? gpuCull->GetLastCullMs() : 0.0f;
+    const uint32_t gpuCullInstances = gpuCullReady ? lastGpuCullInstances : 0u;
+    const float lightClusterBuildMs = (lightClustersReady && lightClusters && lightClusters->HasValidTiming() &&
+                                       std::isfinite(lightClusters->GetLastBuildMs()))
+        ? lightClusters->GetLastBuildMs() : 0.0f;
+    const float lightClusterAssignMs = (lightClustersReady && lightClusters && lightClusters->HasValidTiming() &&
+                                        std::isfinite(lightClusters->GetLastAssignMs()))
+        ? lightClusters->GetLastAssignMs() : 0.0f;
+    const uint32_t lightClusterLights = lightClustersReady ? lastClusterLightCount : 0u;
+    const float froxelInjectMs = (volFroxelsReady && volFroxels && volFroxels->HasValidTiming() &&
+                                  std::isfinite(volFroxels->GetLastInjectMs()))
+        ? volFroxels->GetLastInjectMs() : 0.0f;
+    const float froxelIntegrateMs = (volFroxelsReady && volFroxels && volFroxels->HasValidTiming() &&
+                                     std::isfinite(volFroxels->GetLastIntegrateMs()))
+        ? volFroxels->GetLastIntegrateMs() : 0.0f;
+    const float shadowPcssMs = (shadowPcssReady && shadowPcss && shadowPcss->HasValidTiming() &&
+                                std::isfinite(shadowPcss->GetLastPcssMs()))
+        ? shadowPcss->GetLastPcssMs() : 0.0f;
+    const float gtaoMainMs = (gtaoHostReady && gtaoHost && gtaoHost->HasValidTiming() &&
+                              std::isfinite(gtaoHost->GetLastMainMs()))
+        ? gtaoHost->GetLastMainMs() : 0.0f;
+    const float gtaoDenoiseMs = (gtaoHostReady && gtaoHost && gtaoHost->HasValidTiming() &&
+                                 std::isfinite(gtaoHost->GetLastDenoiseMs()))
+        ? gtaoHost->GetLastDenoiseMs() : 0.0f;
+    const float ssrTraceMs = (ssrHostReady && ssrHost && ssrHost->HasValidTiming() &&
+                              std::isfinite(ssrHost->GetLastSsrMs()))
+        ? ssrHost->GetLastSsrMs() : 0.0f;
+    const float autoExposureHistMs = (autoExposureReady && autoExposure && autoExposure->HasValidTiming() &&
+                                      std::isfinite(autoExposure->GetLastHistMs()))
+        ? autoExposure->GetLastHistMs() : 0.0f;
+    const float autoExposureAdaptMs = (autoExposureReady && autoExposure && autoExposure->HasValidTiming() &&
+                                       std::isfinite(autoExposure->GetLastAdaptMs()))
+        ? autoExposure->GetLastAdaptMs() : 0.0f;
+    const float cloudRaymarchMs = (cloudRaymarchReady && cloudRaymarch && cloudRaymarch->HasValidTiming() &&
+                                   std::isfinite(cloudRaymarch->GetLastCloudMs()))
+        ? cloudRaymarch->GetLastCloudMs() : 0.0f;
+    const float postCinematicMs = (postCinematicReady && postCinematic && postCinematic->HasValidTiming() &&
+                                   std::isfinite(postCinematic->GetLastTotalMs()))
+        ? postCinematic->GetLastTotalMs() : 0.0f;
+    const float gpuParticlesMs = (gpuParticlesReady && gpuParticles && gpuParticles->HasValidTiming() &&
+                                  std::isfinite(gpuParticles->GetLastTotalMs()))
+        ? gpuParticles->GetLastTotalMs() : 0.0f;
+    const float tsrUpscaleMs = (tsrUpscaleReady && tsrUpscale && tsrUpscale->HasValidTiming() &&
+                                std::isfinite(tsrUpscale->GetLastTotalMs()))
+        ? tsrUpscale->GetLastTotalMs() : 0.0f;
+    const float waterCausticsMs = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming() &&
+                                   std::isfinite(waterCaustics->GetLastTotalMs()))
+        ? waterCaustics->GetLastTotalMs() : 0.0f;
+    const float snowDeformMs = (snowDeformReady && snowDeform && snowDeform->HasValidTiming() &&
+                                std::isfinite(snowDeform->GetLastTotalMs()))
+        ? snowDeform->GetLastTotalMs() : 0.0f;
+    const float grassWindMs = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming() &&
+                               std::isfinite(lwRt.grassWind->GetLastStepMs()))
+        ? lwRt.grassWind->GetLastStepMs() : 0.0f;
+    const float liveWorldCompositeMs = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming() &&
+                                        std::isfinite(lwRt.liveWorld->GetLastCompositeMs()))
+        ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
+
+    char jsonBuf[4096]{};
+    const int n = std::snprintf(
+        jsonBuf, sizeof(jsonBuf),
+        "{\n"
+        "  \"frame\": %llu,\n"
+        "  \"width\": %u,\n"
+        "  \"height\": %u,\n"
+        "  \"attached\": %s,\n"
+        "  \"rtActive\": %s,\n"
+        "  \"worldGenActiveChunks\": %u,\n"
+        "  \"worldGenMeshlets\": %u,\n"
+        "  \"worldGenPendingAsync\": %u,\n"
+        "  \"worldGenBiome\": \"%s\",\n"
+        "  \"fluidFireEmitters\": %u,\n"
+        "  \"fluidWaterWakes\": %u,\n"
+        "  \"fluidFireMs\": %.4f,\n"
+        "  \"fluidWaterMs\": %.4f,\n"
+        "  \"fluidPressureIters\": %u,\n"
+        "  \"radianceGiMs\": %.4f,\n"
+        "  \"xpbdStepMs\": %.4f,\n"
+        "  \"xpbdParticles\": %u,\n"
+        "  \"overlayHudEnabled\": %s,\n"
+        "  \"debugDrawerEnabled\": %s,\n"
+        "  \"activeDebugView\": %u,\n"
+        "  \"overlayMs\": %.4f,\n"
+        "  \"gpuCullHiZMs\": %.4f,\n"
+        "  \"gpuCullMs\": %.4f,\n"
+        "  \"gpuCullInstances\": %u,\n"
+        "  \"lightClusterBuildMs\": %.4f,\n"
+        "  \"lightClusterAssignMs\": %.4f,\n"
+        "  \"lightClusterLights\": %u,\n"
+        "  \"froxelInjectMs\": %.4f,\n"
+        "  \"froxelIntegrateMs\": %.4f,\n"
+        "  \"shadowPcssMs\": %.4f,\n"
+        "  \"gtaoMainMs\": %.4f,\n"
+        "  \"gtaoDenoiseMs\": %.4f,\n"
+        "  \"ssrTraceMs\": %.4f,\n"
+        "  \"autoExposureHistMs\": %.4f,\n"
+        "  \"autoExposureAdaptMs\": %.4f,\n"
+        "  \"cloudRaymarchMs\": %.4f,\n"
+        "  \"postCinematicMs\": %.4f,\n"
+        "  \"gpuParticlesMs\": %.4f,\n"
+        "  \"tsrUpscaleMs\": %.4f,\n"
+        "  \"waterCausticsMs\": %.4f,\n"
+        "  \"snowDeformMs\": %.4f,\n"
+        "  \"grassWindMs\": %.4f,\n"
+        "  \"liveWorldCompositeMs\": %.4f,\n"
+        "  \"seasonSnowM\": %.4f,\n"
+        "  \"seasonIceM\": %.4f,\n"
+        "  \"skinTempC\": %.3f,\n"
+        "  \"activeImpactDecals\": %u,\n"
+        "  \"radianceCascadesActive\": %s,\n"
+        "  \"hydrologyErosionActive\": %s\n"
+        "}\n",
+        static_cast<unsigned long long>(frames),
+        static_cast<unsigned>(cfg.width),
+        static_cast<unsigned>(cfg.height),
+        attached ? "true" : "false",
+        rtActive ? "true" : "false",
+        worldGenActiveChunks,
+        worldGenMeshlets,
+        worldGenPendingAsync,
+        biomeName,
+        lastFluidFireEmitters,
+        lastFluidWaterWakes,
+        fluidFireMs,
+        fluidWaterMs,
+        fluidPressureIters,
+        radianceGiMs,
+        xpbdStepMs,
+        xpbdParticles,
+        overlayHudEnabled ? "true" : "false",
+        lwRt.debugDrawerEnabled ? "true" : "false",
+        static_cast<unsigned>(lwRt.activeDebugView),
+        overlayMs,
+        gpuCullHiZMs,
+        gpuCullMs,
+        gpuCullInstances,
+        lightClusterBuildMs,
+        lightClusterAssignMs,
+        lightClusterLights,
+        froxelInjectMs,
+        froxelIntegrateMs,
+        shadowPcssMs,
+        gtaoMainMs,
+        gtaoDenoiseMs,
+        ssrTraceMs,
+        autoExposureHistMs,
+        autoExposureAdaptMs,
+        cloudRaymarchMs,
+        postCinematicMs,
+        gpuParticlesMs,
+        tsrUpscaleMs,
+        waterCausticsMs,
+        snowDeformMs,
+        grassWindMs,
+        liveWorldCompositeMs,
+        seasonSnowM,
+        seasonIceM,
+        skinTempC,
+        activeImpactDecals,
+        (radianceReady && radianceHost.ScreenGIReady()) ? "true" : "false",
+        raw::worldgen::IsTerrainGenHydrologyErosionEnabled() ? "true" : "false");
+    if (n <= 0) return;
+
+    try {
+        const std::string outDir = telemetryOutDir.empty() ? std::string("raw_engine_out") : telemetryOutDir;
+        CreateDirectoryA(outDir.c_str(), nullptr);
+        const std::string tmpPath = outDir + "\\bridge_live_telemetry.json.tmp";
+        const std::string dstPath = outDir + "\\bridge_live_telemetry.json";
+        std::ofstream ofs(tmpPath, std::ios::binary | std::ios::trunc);
+        if (ofs.is_open()) {
+            ofs.write(jsonBuf, static_cast<std::streamsize>(n));
+            ofs.flush();
+            const bool writeOk = ofs.good();
+            ofs.close();
+            if (writeOk) {
+                MoveFileExA(tmpPath.c_str(), dstPath.c_str(), MOVEFILE_REPLACE_EXISTING);
+            }
+        }
+    } catch (...) {
+        // Non-blocking telemetry: I/O failures must never impact frame rendering.
+    }
+}
+
+bool D3D12Bridge::Impl::StepFluidSimOnQueue(bool isInterior)
+{
+    if (!fluidReady || !fluidSim.Ready() || !queue || !fluidList || !fluidFence || !fluidEvent) return false;
+
+    const uint32_t slot = fluidSlot;
+    if (fluidSlotVal[slot] > 0 && fluidFence->GetCompletedValue() < fluidSlotVal[slot]) {
+        fluidFence->SetEventOnCompletion(fluidSlotVal[slot], fluidEvent);
+        WaitForSingleObject(fluidEvent, 3000);
+    }
+    if (FAILED(fluidAlloc[slot]->Reset()) || FAILED(fluidList->Reset(fluidAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (fluidLastMs != 0) {
+        dtSec = std::clamp(float(double(nowMs - fluidLastMs) * 0.001), 1.0e-4f, 0.05f);
+    }
+    fluidLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 1.0e-4f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    // 1. Build 64^3 3D Eulerian Navier-Stokes Fire/Smoke params from verified warm lights + live wind:
+    FluidFireParams fp{};
+    fp.cellSize = 4.0f; // 64 * 4 = 256u domain cube
+    fp.dt = dtSec;
+    fp.timeSec = fi.simTimeSec;
+    fp.windVelW[0] = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.12f, -36.0f, 36.0f);
+    fp.windVelW[1] = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.12f, -36.0f, 36.0f);
+    fp.windVelW[2] = 0.0f;
+    fp.ambientTempK = std::clamp(fi.ambientTempC + 273.15f, 220.0f, 330.0f);
+    fp.enableCeiling = isInterior;
+    fp.jacobiIterations = 8u;
+
+    // Anchor domain around closest strictly-verified warm fire emitter within 1400u (falls back to camera pos):
+    float anchorW[3] = {lighting.posAdjust[0], lighting.posAdjust[1], lighting.posAdjust[2]};
+    float bestFireD2 = 1400.0f * 1400.0f;
+    float minEmitterZ = lighting.posAdjust[2] - 110.0f;
+    uint32_t emitCount = 0u;
+    for (uint32_t i = 0; i < lighting.lightCount && emitCount < 16u; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        // Strict hearth/forge/torch chromaticity & radius gate:
+        // Rejects wide neutral room-fill lights (> 460u or weak chroma) and grounds emitters onto the fuel bed!
+        if (l.colour[0] > l.colour[1] * 1.32f && l.colour[0] > l.colour[2] * 2.40f &&
+            l.colour[0] > 0.50f && l.radius >= 50.0f && l.radius <= 460.0f) {
+            const float wx = lighting.posAdjust[0] + l.position[0];
+            const float wy = lighting.posAdjust[1] + l.position[1];
+            const float wz = lighting.posAdjust[2] + l.position[2];
+            const float d2 = l.position[0] * l.position[0] + l.position[1] * l.position[1] + l.position[2] * l.position[2];
+            const float emitZ = wz - (isInterior ? 32.0f : 42.0f);
+            if (d2 < bestFireD2) {
+                bestFireD2 = d2;
+                anchorW[0] = wx; anchorW[1] = wy; anchorW[2] = emitZ;
+            }
+            minEmitterZ = (emitCount == 0u) ? emitZ : std::min(minEmitterZ, emitZ);
+            FluidFireEmitter& em = fp.emitters[emitCount++];
+            em.posW[0] = wx;
+            em.posW[1] = wy;
+            em.posW[2] = emitZ;
+            em.radius = std::clamp(l.radius * 0.045f, 4.0f, 14.0f);
+            em.ignitionTempK = std::clamp(1950.0f + l.colour[0] * 850.0f, 1950.0f, 3200.0f);
+            em.fuelRate = isInterior ? 1.65f : 2.15f;
+            em.jetSpeed = isInterior ? 26.0f : 32.0f;
+            em.curlStrength = 16.0f;
+            em.jetDir[0] = 0.0f; em.jetDir[1] = 0.0f; em.jetDir[2] = 1.0f;
+            em.sootSeedRate = isInterior ? 0.04f : 0.22f;
+        }
+    }
+    fp.emitterCount = emitCount;
+    const float domainSpan = float(RawFluidSimHost::kFireGridRes) * fp.cellSize;
+    const float halfDomain = 0.5f * domainSpan;
+    fp.domainOriginW[0] = anchorW[0] - halfDomain;
+    fp.domainOriginW[1] = anchorW[1] - halfDomain;
+    const float floorZ = (emitCount > 0u) ? (minEmitterZ - 14.0f) : (lighting.posAdjust[2] - 124.0f);
+    fp.domainOriginW[2] = floorZ - fp.cellSize * 2.0f;
+    fp.floorZLocal = std::clamp((floorZ - fp.domainOriginW[2]) / fp.cellSize, 1.0f, 10.0f);
+
+    // Inject real physical floor slab + interior ceiling baffle AABBs so 3D NS fire & smoke collide and spread across ceilings:
+    fp.obstacles[0].minW[0] = fp.domainOriginW[0] - 64.0f;
+    fp.obstacles[0].minW[1] = fp.domainOriginW[1] - 64.0f;
+    fp.obstacles[0].minW[2] = floorZ - 24.0f;
+    fp.obstacles[0].maxW[0] = fp.domainOriginW[0] + domainSpan + 64.0f;
+    fp.obstacles[0].maxW[1] = fp.domainOriginW[1] + domainSpan + 64.0f;
+    fp.obstacles[0].maxW[2] = floorZ;
+    fp.obstacles[0].active = true;
+    fp.obstacles[0].roughness = 0.65f;
+    fp.obstacleCount = 1u;
+
+    if (isInterior) {
+        const float ceilZ = floorZ + 240.0f;
+        fp.ceilingZLocal = std::clamp((ceilZ - fp.domainOriginW[2]) / fp.cellSize, 42.0f, 62.0f);
+        fp.obstacles[1].minW[0] = fp.domainOriginW[0] - 64.0f;
+        fp.obstacles[1].minW[1] = fp.domainOriginW[1] - 64.0f;
+        fp.obstacles[1].minW[2] = ceilZ;
+        fp.obstacles[1].maxW[0] = fp.domainOriginW[0] + domainSpan + 64.0f;
+        fp.obstacles[1].maxW[1] = fp.domainOriginW[1] + domainSpan + 64.0f;
+        fp.obstacles[1].maxW[2] = ceilZ + 32.0f;
+        fp.obstacles[1].active = true;
+        fp.obstacles[1].roughness = 0.55f;
+        fp.obstacleCount = 2u;
+    }
+
+    // 2. Build 256^2 Toroidal Shallow-Water Hydrodynamics params from camPos, footTrail[0..31], rain & Beaufort swell:
+    FluidWaterParams wp{};
+    wp.camPosXY[0] = lighting.posAdjust[0];
+    wp.camPosXY[1] = lighting.posAdjust[1];
+    wp.cellSize = 8.0f; // 256 * 8 = 2048u toroidal span
+    wp.dt = dtSec;
+    wp.timeSec = fi.simTimeSec;
+    wp.windDirXY[0] = fi.swellDirXY[0];
+    wp.windDirXY[1] = fi.swellDirXY[1];
+    wp.swellAmp = isInterior ? 0.15f : std::clamp(0.45f + fi.beaufortScale * 0.42f, 0.25f, 4.5f);
+    wp.rainIntensity = isInterior ? 0.0f : std::clamp(fi.rainIntensity, 0.0f, 1.0f);
+    wp.waterPlaneZ = fi.waterPlaneZ;
+    uint32_t wakeCount = 0u;
+    for (uint32_t i = 0; i < 32u; ++i) {
+        if (fi.footTrail[i][3] > 0.01f) {
+            FluidWaterTrail& tr = wp.trails[wakeCount++];
+            tr.posW[0] = fi.footTrail[i][0];
+            tr.posW[1] = fi.footTrail[i][1];
+            tr.posW[2] = fi.footTrail[i][2];
+            tr.strength = fi.footTrail[i][3];
+            tr.velW[0] = 0.0f;
+            tr.velW[1] = 0.0f;
+            tr.radius = 20.0f;
+            tr.splashScale = 1.0f;
+        }
+    }
+    wp.trailCount = wakeCount;
+    lastFluidFireEmitters = emitCount;
+    lastFluidWaterWakes = wakeCount;
+
+    if (emitCount > 0u || fluidStepFrames == 0ull) {
+        fluidSim.StepFire(fluidList.Get(), fp);
+    }
+    fluidSim.StepWater(fluidList.Get(), wp);
+
+    if (FAILED(fluidList->Close())) return false;
+    ID3D12CommandList* lists[1] = {fluidList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(fluidFence.Get(), ++fluidFenceVal);
+    fluidSlotVal[slot] = fluidFenceVal;
+    fluidSlot = (slot + 1u) % kRing;
+
+    if ((fluidStepFrames++ % 180ull) == 0ull) {
+        log("[FluidSim] live GPU step: fireEmitters=%u, waterWakes=%u", emitCount, wakeCount);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteRadianceScreenGiOnQueue()
+{
+    if (!radianceReady || !radianceHost.ScreenGIReady() || !queue || !radList || !radFence || !radEvent ||
+        !colorOut.res12 || !depthIn.res12 || cfg.width == 0u || cfg.height == 0u) {
+        return false;
+    }
+    if ((colorOut.res12->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) == 0) {
+        return false;
+    }
+
+    const uint32_t slot = radSlot;
+    if (radSlotVal[slot] > 0 && radFence->GetCompletedValue() < radSlotVal[slot]) {
+        radFence->SetEventOnCompletion(radSlotVal[slot], radEvent);
+        WaitForSingleObject(radEvent, 3000);
+    }
+    if (FAILED(radAlloc[slot]->Reset()) || FAILED(radList->Reset(radAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    radianceHost.ExecuteScreenGI(radList.Get(), colorOut.res12.Get(), depthIn.res12.Get(),
+                                 cfg.width, cfg.height, 0.16f);
+
+    if (FAILED(radList->Close())) return false;
+    ID3D12CommandList* lists[1] = {radList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(radFence.Get(), ++radFenceVal);
+    radSlotVal[slot] = radFenceVal;
+    radSlot = (slot + 1u) % kRing;
+
+    if ((radStepFrames++ % 180ull) == 0ull) {
+        log("[RadianceCascades] live 4-cascade ScreenGI active (%ux%u, strength=0.16)",
+            static_cast<unsigned>(cfg.width), static_cast<unsigned>(cfg.height));
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::StepXpbdSimOnQueue(bool isInterior)
+{
+    if (!xpbdSimReady || !xpbdSim || !xpbdSim->Ready() || !queue || !xpbdList || !xpbdFence || !xpbdEvent) {
+        return false;
+    }
+
+    const uint32_t slot = xpbdSlot;
+    if (xpbdSlotVal[slot] > 0 && xpbdFence->GetCompletedValue() < xpbdSlotVal[slot]) {
+        xpbdFence->SetEventOnCompletion(xpbdSlotVal[slot], xpbdEvent);
+        WaitForSingleObject(xpbdEvent, 3000);
+    }
+    if (FAILED(xpbdAlloc[slot]->Reset()) || FAILED(xpbdList->Reset(xpbdAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    if (!xpbdChainsUploaded) {
+        std::vector<XpbdParticle> particles;
+        std::vector<XpbdChainMeta> chains;
+        BuildHairAndFoliageDemoChains(particles, chains, 256u);
+        if (!xpbdSim->UploadChains(xpbdList.Get(), particles, chains)) {
+            xpbdList->Close();
+            return false;
+        }
+        xpbdChainsUploaded = true;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (xpbdLastMs != 0) {
+        dtSec = std::clamp(float(double(nowMs - xpbdLastMs) * 0.001), 1.0e-4f, 0.05f);
+    }
+    xpbdLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 1.0e-4f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float seasonSnowM = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->seasonThermal0[0])) {
+            seasonSnowM = std::max(0.0f, u->seasonThermal0[0]);
+        }
+    }
+
+    XpbdStepParams xp{};
+    xp.dt              = dtSec;
+    xp.timeSec         = fi.simTimeSec;
+    xp.substeps        = 4u;
+    xp.gravityZ        = -9.80665f;
+    const float wLen   = std::sqrt(fi.windXY[0] * fi.windXY[0] + fi.windXY[1] * fi.windXY[1]);
+    if (wLen > 1.0e-4f) {
+        xp.windDir[0] = fi.windXY[0] / wLen;
+        xp.windDir[1] = fi.windXY[1] / wLen;
+        xp.windDir[2] = 0.0f;
+    } else {
+        xp.windDir[0] = 0.92f;
+        xp.windDir[1] = 0.39f;
+        xp.windDir[2] = 0.0f;
+    }
+    xp.windSpeedMps    = isInterior ? 0.35f : std::clamp(0.6f + fi.beaufortScale * 2.2f, 0.5f, 24.0f);
+    xp.gustPhase       = fi.simTimeSec * 0.85f;
+    xp.snowLoad01      = isInterior ? 0.0f : std::clamp(seasonSnowM * 1.5f, 0.0f, 1.0f);
+    xp.maxSpeed        = 35.0f;
+    xp.collisionMargin = 0.005f;
+
+    // Head sphere + torso capsule + animated bush push-aside wake sphere:
+    xp.colliders[0].p0[0]  = 0.0f; xp.colliders[0].p0[1] = 0.0f; xp.colliders[0].p0[2] = 1.62f;
+    xp.colliders[0].radius = 0.14f;
+    xp.colliders[0].flags  = 0.0f;
+
+    xp.colliders[1].p0[0]  = 0.0f; xp.colliders[1].p0[1] = 0.0f; xp.colliders[1].p0[2] = 1.48f;
+    xp.colliders[1].p1[0]  = 0.0f; xp.colliders[1].p1[1] = 0.0f; xp.colliders[1].p1[2] = 0.88f;
+    xp.colliders[1].radius = 0.22f;
+    xp.colliders[1].flags  = 1.0f;
+
+    xp.colliders[2].p0[0]  = 3.0f + std::sin(fi.simTimeSec * 0.7f) * 0.35f;
+    xp.colliders[2].p0[1]  = std::cos(fi.simTimeSec * 0.5f) * 0.35f;
+    xp.colliders[2].p0[2]  = 0.65f;
+    xp.colliders[2].radius = 0.32f;
+    xp.colliders[2].flags  = 0.0f;
+    xp.colliderCount       = 3u;
+
+    xpbdSim->Step(xpbdList.Get(), xp);
+
+    if (FAILED(xpbdList->Close())) return false;
+    ID3D12CommandList* lists[1] = {xpbdList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(xpbdFence.Get(), ++xpbdFenceVal);
+    xpbdSlotVal[slot] = xpbdFenceVal;
+    xpbdSlot = (slot + 1u) % kRing;
+
+    if ((xpbdStepFrames++ % 180ull) == 0ull) {
+        log("[XpbdSim] live GPU step: chains=%u, particles=%u, stepMs=%.4f, wind=%.1f m/s, snowLoad=%.2f",
+            xpbdSim->ChainCount(), xpbdSim->ParticleCount(),
+            xpbdSim->HasValidTiming() ? xpbdSim->GetLastStepMs() : 0.0f,
+            xp.windSpeedMps, xp.snowLoad01);
+    }
+    return true;
+}
+
+void D3D12Bridge::Impl::RecordFrameTimingSample()
+{
+    if (qpcFreq == 0) {
+        LARGE_INTEGER f{};
+        QueryPerformanceFrequency(&f);
+        qpcFreq = f.QuadPart;
+    }
+    LARGE_INTEGER now{};
+    QueryPerformanceCounter(&now);
+    if (lastFrameQpc != 0 && qpcFreq > 0) {
+        const double dtMs = static_cast<double>(now.QuadPart - lastFrameQpc) * 1000.0 / static_cast<double>(qpcFreq);
+        const float clampedMs = std::clamp(static_cast<float>(dtMs), 0.1f, 250.0f);
+        lastFrameMs = clampedMs;
+        frameMsHistory[frameMsHistoryHead] = clampedMs;
+        frameMsHistoryHead = (frameMsHistoryHead + 1u) % 64u;
+        if (frameMsHistoryCount < 64u) {
+            ++frameMsHistoryCount;
+        }
+    }
+    lastFrameQpc = now.QuadPart;
+}
+
+void D3D12Bridge::Impl::PollOverlayHotkey()
+{
+    HWND fg = GetForegroundWindow();
+    DWORD fgPid = 0;
+    if (fg) {
+        GetWindowThreadProcessId(fg, &fgPid);
+    }
+    const bool appFocused = (fg != nullptr && fgPid == GetCurrentProcessId());
+    const bool f9Down = appFocused && ((GetAsyncKeyState(VK_F9) & 0x8000) != 0);
+    if (f9Down && !overlayPrevF9Down) {
+        overlayHudEnabled = !overlayHudEnabled;
+        log("[OverlayHud] F9 toggled GPU Telemetry HUD -> %s", overlayHudEnabled ? "ON" : "OFF");
+    }
+    overlayPrevF9Down = f9Down;
+
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(this);
+    const bool f10Down = appFocused && ((GetAsyncKeyState(VK_F10) & 0x8000) != 0);
+    if (f10Down && !lwRt.prevF10Down) {
+        lwRt.debugDrawerEnabled = !lwRt.debugDrawerEnabled;
+        lwRt.telemetryDirty = true;
+        log("[DebugLayers] F10 toggled Debug Drawer -> %s (activeDebugView=%u: %s)",
+            lwRt.debugDrawerEnabled ? "ON" : "OFF",
+            static_cast<unsigned>(lwRt.activeDebugView),
+            DebugViewLabel(lwRt.activeDebugView));
+    }
+    lwRt.prevF10Down = f10Down;
+
+    const bool f11Down = appFocused && ((GetAsyncKeyState(VK_F11) & 0x8000) != 0);
+    if (f11Down && !lwRt.prevF11Down) {
+        lwRt.debugViewIndex = (lwRt.debugViewIndex + 1u) % static_cast<uint32_t>(kDebugViewCycle.size());
+        lwRt.activeDebugView = kDebugViewCycle[lwRt.debugViewIndex];
+        lwRt.telemetryDirty = true;
+        log("[DebugLayers] F11 cycled activeDebugView -> %u (%s)",
+            static_cast<unsigned>(lwRt.activeDebugView),
+            DebugViewLabel(lwRt.activeDebugView));
+    }
+    lwRt.prevF11Down = f11Down;
+}
+
+bool D3D12Bridge::Impl::ExecuteOverlayHudOnQueue(bool isInterior)
+{
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(this);
+    const bool showDebugDrawer = lwRt.debugDrawerEnabled || (lwRt.activeDebugView != 0u);
+    // Strict zero-touch gate: when both F9 HUD and F10/F11 Debug Drawer are off, emit ZERO GPU commands!
+    if ((!overlayHudEnabled && !showDebugDrawer) || !overlayHostReady || !overlayHost || !overlayHost->Ready() ||
+        !queue || !overlayList || !overlayFence || !overlayEvent ||
+        !colorOut.res12 || cfg.width == 0u || cfg.height == 0u) {
+        return false;
+    }
+    const D3D12_RESOURCE_DESC outDesc = colorOut.res12->GetDesc();
+    if ((outDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) == 0) {
+        return false;
+    }
+
+    const uint32_t slot = overlaySlot;
+    if (overlaySlotVal[slot] > 0 && overlayFence->GetCompletedValue() < overlaySlotVal[slot]) {
+        overlayFence->SetEventOnCompletion(overlaySlotVal[slot], overlayEvent);
+        WaitForSingleObject(overlayEvent, 3000);
+    }
+    if (FAILED(overlayAlloc[slot]->Reset()) || FAILED(overlayList->Reset(overlayAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    LightingFluidInputs fi{};
+    if (pass) {
+        LightingPassFluidInputs(pass.get(), &fi);
+    }
+
+    float seasonSnowM = 0.0f;
+    float skinTempC = fi.ambientTempC;
+    float weatherSnow = 0.0f;
+    float cloudCover = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->seasonThermal0[0])) seasonSnowM = std::max(0.0f, u->seasonThermal0[0]);
+        if (std::isfinite(u->seasonThermal0[3])) skinTempC = u->seasonThermal0[3];
+        if (std::isfinite(u->weather[1])) weatherSnow = u->weather[1];
+        if (std::isfinite(u->clouds[0])) cloudCover = u->clouds[0];
+    }
+
+    const FluidGpuTimings fluidTimings = fluidReady ? fluidSim.GetLastTimings() : FluidGpuTimings{};
+    const RadianceGpuTimings radTimings = radianceReady ? radianceHost.GetLastTimings() : RadianceGpuTimings{};
+
+    uint32_t gpuMeshlets = 0u;
+    for (const auto& kv : streamedTerrainGpu) {
+        gpuMeshlets += kv.second.meshletCount;
+    }
+
+    float orderedHist[64]{};
+    const uint32_t histCount = std::min(frameMsHistoryCount, 64u);
+    const uint32_t startIdx = (frameMsHistoryCount < 64u) ? 0u : frameMsHistoryHead;
+    for (uint32_t i = 0u; i < histCount; ++i) {
+        orderedHist[i] = frameMsHistory[(startIdx + i) % 64u];
+    }
+
+    const char* seasonName = "AUTUMN";
+    if (seasonSnowM > 0.05f || skinTempC < 0.0f) seasonName = "WINTER";
+    else if (skinTempC > 18.0f) seasonName = "SUMMER";
+    else if (skinTempC > 11.0f) seasonName = "SPRING";
+
+    const char* weatherName = "CLEAR";
+    if (isInterior) weatherName = "INDOOR";
+    else if (weatherSnow > 0.45f && fi.beaufortScale > 5.0f) weatherName = "BLIZZARD";
+    else if (weatherSnow > 0.15f) weatherName = "SNOW";
+    else if (fi.rainIntensity > 0.55f) weatherName = "STORM";
+    else if (fi.rainIntensity > 0.12f) weatherName = "RAIN";
+    else if (cloudCover > 0.65f) weatherName = "OVERCAST";
+
+    const char* landmark = isInterior ? "INTERIOR" : raw::worldgen::GetBiomeName(lastWorldStats.cameraBiome);
+    if (!landmark) landmark = "TAMRIEL";
+
+    OverlayTelemetrySnapshot snap{};
+    snap.fps            = (lastFrameMs > 0.05f) ? (1000.0f / lastFrameMs) : 0.0f;
+    snap.frameMs        = lastFrameMs;
+    snap.fireMs         = (fluidTimings.valid && std::isfinite(fluidTimings.fireStepMs)) ? fluidTimings.fireStepMs : 0.0f;
+    snap.waterMs        = (fluidTimings.valid && std::isfinite(fluidTimings.waterStepMs)) ? fluidTimings.waterStepMs : 0.0f;
+    snap.giMs           = (radTimings.valid && std::isfinite(radTimings.giPassMs)) ? radTimings.giPassMs : 0.0f;
+    snap.xpbdMs         = (xpbdSimReady && xpbdSim && xpbdSim->HasValidTiming()) ? xpbdSim->GetLastStepMs() : 0.0f;
+    snap.overlayMs      = overlayHost->HasValidTiming() ? overlayHost->GetLastOverlayMs() : 0.0f;
+    snap.seasonName     = seasonName;
+    snap.weatherName    = weatherName;
+    snap.tempC          = skinTempC;
+    snap.windMps        = isInterior ? 0.0f : std::clamp(0.6f + fi.beaufortScale * 2.2f, 0.0f, 35.0f);
+    snap.snowPackM      = isInterior ? 0.0f : seasonSnowM;
+    snap.cellX          = static_cast<int32_t>(std::floor(lighting.posAdjust[0] / 4096.0f));
+    snap.cellY          = static_cast<int32_t>(std::floor(lighting.posAdjust[1] / 4096.0f));
+    snap.landmarkName   = landmark;
+    snap.activeCells    = lastWorldStats.activeChunkCount;
+    snap.activeMeshlets = (gpuMeshlets > 0u) ? gpuMeshlets : lastWorldStats.totalMeshlets;
+    snap.lruHitRatePct  = 0.0f;
+    snap.giEnabled      = radianceReady && radianceHost.ScreenGIReady();
+    snap.fluidEnabled   = fluidReady && fluidSim.Ready();
+    snap.xpbdEnabled    = xpbdSimReady && xpbdSim && xpbdSim->Ready();
+    snap.historyFrameMs = orderedHist;
+    snap.historyCount   = histCount;
+
+    const bool isSrgbTarget = (outDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+                               outDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB);
+    if (showDebugDrawer && overlayHost->UiLibReady()) {
+        // Sleek GPU-native RawUiLib Debug Drawer & Legend HUD (color swatches, solver timings, sparkline):
+        raw::ui::DebugLayerHudSnapshot dbgSnap{};
+        dbgSnap.activeDebugView  = lwRt.activeDebugView;
+        dbgSnap.drawerOpen       = lwRt.debugDrawerEnabled || (lwRt.activeDebugView != 0u);
+        dbgSnap.hudEnabled       = overlayHudEnabled;
+        dbgSnap.isInterior       = isInterior;
+        dbgSnap.fps              = snap.fps;
+        dbgSnap.frameMs          = snap.frameMs;
+        dbgSnap.lightingMs       = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming())
+            ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
+        dbgSnap.waterMs          = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming())
+            ? waterCaustics->GetLastTotalMs() : snap.waterMs;
+        dbgSnap.fireMs           = snap.fireMs;
+        dbgSnap.giMs             = snap.giMs;
+        dbgSnap.cloudsMs         = (cloudRaymarchReady && cloudRaymarch && cloudRaymarch->HasValidTiming())
+            ? cloudRaymarch->GetLastCloudMs() : 0.0f;
+        dbgSnap.postMs           = (postCinematicReady && postCinematic && postCinematic->HasValidTiming())
+            ? postCinematic->GetLastTotalMs() : 0.0f;
+        dbgSnap.uiMs             = overlayHost->HasValidUiLibTiming() ? overlayHost->GetLastUiLibMs() : 0.0f;
+        dbgSnap.rtActive         = (attached && rt && rt->Active());
+        dbgSnap.fluidActive      = (fluidReady && fluidSim.Ready());
+        dbgSnap.snowDeformActive = (snowDeformReady && snowDeform && snowDeform->Ready());
+        dbgSnap.grassWindActive  = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->Ready());
+        dbgSnap.originX          = 16u;
+        dbgSnap.originY          = 16u;
+        dbgSnap.scale            = (cfg.height >= 1800u) ? 2u : 1u;
+        dbgSnap.historyFrameMs   = orderedHist;
+        dbgSnap.historyCount     = histCount;
+
+        overlayHost->RecordDebugLayerHud(overlayList.Get(), colorOut.res12.Get(),
+                                         D3D12_RESOURCE_STATE_COMMON, cfg.width, cfg.height,
+                                         dbgSnap, isSrgbTarget);
+    } else {
+        OverlayHudData hud{};
+        hud.enabled    = true;
+        hud.originX    = 16u;
+        hud.originY    = 16u;
+        hud.glyphScale = (cfg.height >= 1800u) ? 2u : 1u;
+        hud.opacity    = 0.86f;
+        hud.srgbOutput = isSrgbTarget;
+        FormatEngineTelemetryLines(snap, hud);
+        if (showDebugDrawer) {
+            const float snwMs = (snowDeformReady && snowDeform && snowDeform->HasValidTiming()) ? snowDeform->GetLastTotalMs() : 0.0f;
+            const float cauMs = (waterCausticsReady && waterCaustics && waterCaustics->HasValidTiming()) ? waterCaustics->GetLastTotalMs() : 0.0f;
+            const float grsMs = (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming()) ? lwRt.grassWind->GetLastStepMs() : 0.0f;
+            const float cmpMs = (lwRt.liveWorldReady && lwRt.liveWorld && lwRt.liveWorld->HasValidTiming()) ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f;
+            std::snprintf(hud.lines[0], OverlayHudData::kMaxCols + 1u,
+                          "RAW DEBUG DRAWER [F10 DRAWER | F11 CYCLE | F9 HUD]");
+            hud.lineColorTag[0] = kOverlayColorCyan;
+            std::snprintf(hud.lines[1], OverlayHudData::kMaxCols + 1u,
+                          "LAYER: %s", DebugViewLabel(lwRt.activeDebugView));
+            hud.lineColorTag[1] = (lwRt.activeDebugView == 0u) ? kOverlayColorGreen : kOverlayColorAmber;
+            std::snprintf(hud.lines[2], OverlayHudData::kMaxCols + 1u,
+                          "%s", DebugViewLegend(lwRt.activeDebugView));
+            hud.lineColorTag[2] = kOverlayColorDefault;
+            std::snprintf(hud.lines[3], OverlayHudData::kMaxCols + 1u,
+                          "LIVE WORLD: SNW %.2f | CAU %.2f | GRS %.2f | CMP %.2f MS",
+                          snwMs, cauMs, grsMs, cmpMs);
+            hud.lineColorTag[3] = kOverlayColorGreen;
+            if (hud.lineCount < 4u) hud.lineCount = 4u;
+        }
+
+        overlayHost->RecordOverlay(overlayList.Get(), colorOut.res12.Get(),
+                                   D3D12_RESOURCE_STATE_COMMON, cfg.width, cfg.height, hud);
+    }
+
+    if (FAILED(overlayList->Close())) return false;
+    ID3D12CommandList* lists[1] = {overlayList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(overlayFence.Get(), ++overlayFenceVal);
+    overlaySlotVal[slot] = overlayFenceVal;
+    overlaySlot = (slot + 1u) % kRing;
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteLightClustersOnQueue()
+{
+    if (!lightClustersReady || !lightClusters || !lightClusters->Ready() ||
+        !queue || !lightClusterList || !lightClusterFence || !lightClusterEvent) {
+        return false;
+    }
+
+    const uint32_t slot = lightClusterSlot;
+    if (lightClusterSlotVal[slot] > 0 && lightClusterFence->GetCompletedValue() < lightClusterSlotVal[slot]) {
+        lightClusterFence->SetEventOnCompletion(lightClusterSlotVal[slot], lightClusterEvent);
+        WaitForSingleObject(lightClusterEvent, 3000);
+    }
+    if (FAILED(lightClusterAlloc[slot]->Reset()) ||
+        FAILED(lightClusterList->Reset(lightClusterAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    // Build LH view-space projection parameters from live camera constants
+    const float aspect = (camera.valid && camera.aspect > 0.1f && std::isfinite(camera.aspect))
+        ? camera.aspect
+        : (static_cast<float>(std::max(cfg.width, 1u)) / static_cast<float>(std::max(cfg.height, 1u)));
+    const float fovY = (camera.valid && camera.tanHalfFovY > 0.05f && std::isfinite(camera.tanHalfFovY))
+        ? (2.0f * std::atan(camera.tanHalfFovY))
+        : 1.134464f; // 65 deg fallback
+    const float nearZ = (camera.valid && camera.nearZ > 0.1f && std::isfinite(camera.nearZ)) ? camera.nearZ : 15.0f;
+    const float farZ  = (camera.valid && camera.farZ > nearZ + 10.0f && std::isfinite(camera.farZ))
+        ? std::min(camera.farZ, 40000.0f) : 40000.0f;
+    const float zSign = (camera.valid && camera.proj[14] < 0.0f) ? -1.0f : 1.0f;
+
+    LightClusterViewParams vp{};
+    vp.nearZ = nearZ;
+    vp.farZ  = farZ;
+    BuildPerspectiveInvProjLH(fovY, aspect, nearZ, farZ, vp.invProj);
+
+    std::vector<GpuClusterLight> gpuLights;
+    const uint32_t srcCount = std::min(lighting.lightCount, std::min(kMaxSceneLights, RawLightClusterHost::kMaxLights));
+    gpuLights.reserve(srcCount);
+
+    for (uint32_t i = 0u; i < srcCount; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        if (!std::isfinite(l.radius) || l.radius <= 1.0e-3f) continue;
+
+        float vx = l.position[0];
+        float vy = l.position[1];
+        float vz = l.position[2];
+        if (lighting.hasCamera) {
+            vx = lighting.worldToView[0][0] * l.position[0] + lighting.worldToView[0][1] * l.position[1] +
+                 lighting.worldToView[0][2] * l.position[2] + lighting.worldToView[0][3];
+            vy = lighting.worldToView[1][0] * l.position[0] + lighting.worldToView[1][1] * l.position[1] +
+                 lighting.worldToView[1][2] * l.position[2] + lighting.worldToView[1][3];
+            vz = (lighting.worldToView[2][0] * l.position[0] + lighting.worldToView[2][1] * l.position[1] +
+                  lighting.worldToView[2][2] * l.position[2] + lighting.worldToView[2][3]) * zSign;
+        }
+        if (!std::isfinite(vx) || !std::isfinite(vy) || !std::isfinite(vz)) continue;
+
+        GpuClusterLight gl{};
+        gl.posView[0]   = vx;
+        gl.posView[1]   = vy;
+        gl.posView[2]   = vz;
+        gl.radius       = l.radius;
+        gl.dirView[0]   = 0.0f;
+        gl.dirView[1]   = 0.0f;
+        gl.dirView[2]   = 1.0f;
+        gl.cosOuterCone = -1.0f;
+        gl.colorRgb[0]  = std::isfinite(l.colour[0]) ? std::max(0.0f, l.colour[0]) : 0.0f;
+        gl.colorRgb[1]  = std::isfinite(l.colour[1]) ? std::max(0.0f, l.colour[1]) : 0.0f;
+        gl.colorRgb[2]  = std::isfinite(l.colour[2]) ? std::max(0.0f, l.colour[2]) : 0.0f;
+
+        if (gl.colorRgb[0] > gl.colorRgb[1] * 1.25f && gl.colorRgb[0] > gl.colorRgb[2] * 2.0f) {
+            gl.typeFlags = kClusterLightFire;
+        } else if (gl.colorRgb[2] > gl.colorRgb[0] * 1.35f && gl.colorRgb[2] > 0.35f) {
+            gl.typeFlags = kClusterLightSpell;
+        } else {
+            gl.typeFlags = kClusterLightPoint;
+        }
+        gpuLights.push_back(gl);
+    }
+
+    lastClusterLightCount = static_cast<uint32_t>(gpuLights.size());
+    lightClusters->BuildAndAssign(lightClusterList.Get(),
+                                  gpuLights.empty() ? nullptr : gpuLights.data(),
+                                  lastClusterLightCount, vp);
+
+    if (FAILED(lightClusterList->Close())) return false;
+    ID3D12CommandList* lists[1] = {lightClusterList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(lightClusterFence.Get(), ++lightClusterFenceVal);
+    lightClusterSlotVal[slot] = lightClusterFenceVal;
+    lightClusterSlot = (slot + 1u) % kRing;
+
+    if ((lightClusterFrames++ % 180ull) == 0ull) {
+        log("[LightClusters] live 16x9x24 grid: lights=%u, buildMs=%.4f, assignMs=%.4f",
+            lastClusterLightCount,
+            lightClusters->HasValidTiming() ? lightClusters->GetLastBuildMs() : 0.0f,
+            lightClusters->HasValidTiming() ? lightClusters->GetLastAssignMs() : 0.0f);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteGpuCullOnQueue()
+{
+    if (!gpuCullReady || !gpuCull || !gpuCull->Ready() || !queue || !cullList || !cullFence || !cullEvent ||
+        !depthIn.res12 || !cullInstUploadBuf || !cullInstGpuBuf || !cullInstUploadMapped ||
+        cfg.width == 0u || cfg.height == 0u) {
+        return false;
+    }
+
+    const uint32_t slot = cullSlot;
+    if (cullSlotVal[slot] > 0 && cullFence->GetCompletedValue() < cullSlotVal[slot]) {
+        cullFence->SetEventOnCompletion(cullSlotVal[slot], cullEvent);
+        WaitForSingleObject(cullEvent, 3000);
+    }
+    if (FAILED(cullAlloc[slot]->Reset()) || FAILED(cullList->Reset(cullAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    constexpr uint32_t kMaxBridgeCullInst = 512u;
+    auto* dst = reinterpret_cast<GpuCullInstance*>(
+        cullInstUploadMapped + static_cast<size_t>(slot) * kMaxBridgeCullInst * sizeof(GpuCullInstance));
+    uint32_t instCount = 0u;
+
+    // 1. Add active scene light volumes (camera-relative coordinates matching lighting.worldToClip)
+    for (uint32_t i = 0u; i < lighting.lightCount && instCount < kMaxBridgeCullInst; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        const float r = std::clamp(l.radius, 16.0f, 1600.0f);
+        GpuCullInstance& g = dst[instCount];
+        g.center[0]     = l.position[0];
+        g.center[1]     = l.position[1];
+        g.center[2]     = l.position[2];
+        g.radius        = r;
+        g.aabbMin[0]    = l.position[0] - r;
+        g.aabbMin[1]    = l.position[1] - r;
+        g.aabbMin[2]    = l.position[2] - r;
+        g.aabbMax[0]    = l.position[0] + r;
+        g.aabbMax[1]    = l.position[1] + r;
+        g.aabbMax[2]    = l.position[2] + r;
+        g.maxDrawDist   = 12000.0f;
+        g.meshletOffset = instCount * 4u;
+        g.meshletCount  = 4u;
+        g.instanceId    = instCount;
+        g.lodBiasFlags  = 0u;
+        g.pad0          = 0u;
+        ++instCount;
+    }
+
+    // 2. Add streamed frontier terrain chunk bounding volumes (camera-relative)
+    const uint32_t chunkEntries = static_cast<uint32_t>(streamedTerrainGpu.size());
+    uint32_t chunkIdx = 0u;
+    for (const auto& kv : streamedTerrainGpu) {
+        if (instCount >= kMaxBridgeCullInst) break;
+        const float angle = static_cast<float>(chunkIdx) * (6.2831853f / std::max(1.0f, static_cast<float>(chunkEntries)));
+        const float dist  = 2048.0f + static_cast<float>(chunkIdx % 4u) * 1024.0f;
+        const float cx    = std::cos(angle) * dist;
+        const float cy    = std::sin(angle) * dist;
+        const float cz    = -128.0f;
+        GpuCullInstance& g = dst[instCount];
+        g.center[0]     = cx;
+        g.center[1]     = cy;
+        g.center[2]     = cz;
+        g.radius        = 2048.0f;
+        g.aabbMin[0]    = cx - 1024.0f;
+        g.aabbMin[1]    = cy - 1024.0f;
+        g.aabbMin[2]    = cz - 512.0f;
+        g.aabbMax[0]    = cx + 1024.0f;
+        g.aabbMax[1]    = cy + 1024.0f;
+        g.aabbMax[2]    = cz + 512.0f;
+        g.maxDrawDist   = 24000.0f;
+        g.meshletOffset = instCount * 16u;
+        g.meshletCount  = std::max(1u, kv.second.meshletCount);
+        g.instanceId    = instCount;
+        g.lodBiasFlags  = 0u;
+        g.pad0          = 0u;
+        ++instCount;
+        ++chunkIdx;
+    }
+
+    // 3. Add 64 deterministic world-space probe volumes around the camera so live Hi-Z + Frustum culling
+    //    always exercises real occlusion & frustum rejection even inside Tamriel interiors/exteriors.
+    constexpr uint32_t kProbeRingCount = 64u;
+    for (uint32_t p = 0u; p < kProbeRingCount && instCount < kMaxBridgeCullInst; ++p) {
+        const float az   = static_cast<float>(p) * (6.2831853f / static_cast<float>(kProbeRingCount));
+        const float dist = 256.0f + static_cast<float>(p % 8u) * 320.0f;
+        const float cx   = std::cos(az) * dist;
+        const float cy   = std::sin(az) * dist;
+        const float cz   = -64.0f + static_cast<float>((p / 8u) % 4u) * 48.0f;
+        const float half = 48.0f;
+        GpuCullInstance& g = dst[instCount];
+        g.center[0]     = cx;
+        g.center[1]     = cy;
+        g.center[2]     = cz;
+        g.radius        = half * 1.73205f;
+        g.aabbMin[0]    = cx - half;
+        g.aabbMin[1]    = cy - half;
+        g.aabbMin[2]    = cz - half;
+        g.aabbMax[0]    = cx + half;
+        g.aabbMax[1]    = cy + half;
+        g.aabbMax[2]    = cz + half;
+        g.maxDrawDist   = 8192.0f;
+        g.meshletOffset = instCount * 2u;
+        g.meshletCount  = 2u;
+        g.instanceId    = instCount;
+        g.lodBiasFlags  = 0u;
+        g.pad0          = 0u;
+        ++instCount;
+    }
+
+    // Copy active instances into default-heap GPU buffer
+    if (cullInstGpuState != D3D12_RESOURCE_STATE_COPY_DEST) {
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = cullInstGpuBuf.Get();
+        b.Transition.StateBefore = cullInstGpuState;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cullList->ResourceBarrier(1u, &b);
+        cullInstGpuState = D3D12_RESOURCE_STATE_COPY_DEST;
+    }
+    const uint64_t uploadOff = static_cast<uint64_t>(slot) * kMaxBridgeCullInst * sizeof(GpuCullInstance);
+    const uint64_t copyBytes = static_cast<uint64_t>(instCount) * sizeof(GpuCullInstance);
+    cullList->CopyBufferRegion(cullInstGpuBuf.Get(), 0ull, cullInstUploadBuf.Get(), uploadOff, copyBytes);
+    {
+        D3D12_RESOURCE_BARRIER b{};
+        b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition.pResource   = cullInstGpuBuf.Get();
+        b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        b.Transition.StateAfter  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        cullList->ResourceBarrier(1u, &b);
+        cullInstGpuState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    }
+
+    // Build conservative Hi-Z pyramid from shared SceneDepth (depthIn.res12 is in COMMON between passes)
+    gpuCull->BuildHiZPyramid(cullList.Get(), depthIn.res12.Get(), cfg.width, cfg.height,
+                             D3D12_RESOURCE_STATE_COMMON);
+
+    GpuCullViewParams vp{};
+    std::memcpy(vp.viewProj, &lighting.worldToClip[0][0], sizeof(vp.viewProj));
+    vp.autoExtractPlanes        = true;
+    vp.cameraPosW[0]            = 0.0f; // lighting.worldToClip is camera-relative
+    vp.cameraPosW[1]            = 0.0f;
+    vp.cameraPosW[2]            = 0.0f;
+    vp.depthBias                = 1.0e-4f;
+    vp.defaultIndexCountPerInst = 36u;
+    vp.enableFrustumCull        = true;
+    vp.enableDistanceCull       = true;
+    vp.enableHiZCull            = true;
+
+    gpuCull->CullInstances(cullList.Get(), cullInstGpuBuf.Get(), instCount, vp,
+                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    if (FAILED(cullList->Close())) return false;
+    ID3D12CommandList* lists[1] = {cullList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(cullFence.Get(), ++cullFenceVal);
+    cullSlotVal[slot] = cullFenceVal;
+    cullSlot = (slot + 1u) % kRing;
+    lastGpuCullInstances = instCount;
+
+    if ((cullStepFrames++ % 180ull) == 0ull) {
+        log("[GpuCull] live GPU Hi-Z (%ux%u, %u mips) + cull (%u inst): hizMs=%.4f, cullMs=%.4f",
+            gpuCull->HiZWidth(), gpuCull->HiZHeight(), gpuCull->HiZMipCount(), instCount,
+            gpuCull->HasValidHiZTiming() ? gpuCull->GetLastHiZMs() : 0.0f,
+            gpuCull->HasValidCullTiming() ? gpuCull->GetLastCullMs() : 0.0f);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteVolFroxelsOnQueue(bool isInterior)
+{
+    if (!volFroxelsReady || !volFroxels || !volFroxels->Ready() || !queue ||
+        !froxelList || !froxelFence || !froxelEvent) {
+        return false;
+    }
+
+    const uint32_t slot = froxelSlot;
+    if (froxelSlotVal[slot] > 0 && froxelFence->GetCompletedValue() < froxelSlotVal[slot]) {
+        froxelFence->SetEventOnCompletion(froxelSlotVal[slot], froxelEvent);
+        WaitForSingleObject(froxelEvent, 3000);
+    }
+    if (FAILED(froxelAlloc[slot]->Reset()) || FAILED(froxelList->Reset(froxelAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+    }
+
+    // Derive camera forward vector directly from camera-relative clipToWorld center ray
+    float camFwd[3] = {0.0f, 1.0f, 0.0f};
+    {
+        const float* inv = &lighting.clipToWorld[0][0];
+        const float wNear = inv[3 * 4 + 3];
+        const float wFar  = inv[2 * 4 + 3] + inv[3 * 4 + 3];
+        if (std::fabs(wNear) > 1.0e-6f && std::fabs(wFar) > 1.0e-6f) {
+            const float nx = inv[3 * 4 + 0] / wNear;
+            const float ny = inv[3 * 4 + 1] / wNear;
+            const float nz = inv[3 * 4 + 2] / wNear;
+            const float fx = (inv[2 * 4 + 0] + inv[3 * 4 + 0]) / wFar;
+            const float fy = (inv[2 * 4 + 1] + inv[3 * 4 + 1]) / wFar;
+            const float fz = (inv[2 * 4 + 2] + inv[3 * 4 + 2]) / wFar;
+            const float dx = fx - nx, dy = fy - ny, dz = fz - nz;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len > 1.0e-5f) {
+                camFwd[0] = dx / len;
+                camFwd[1] = dy / len;
+                camFwd[2] = dz / len;
+            }
+        }
+    }
+
+    VolumetricFroxelParams fp{};
+    std::memcpy(fp.invViewProj, &lighting.clipToWorld[0][0], sizeof(fp.invViewProj));
+    if (froxelHasPrev) {
+        std::memcpy(fp.prevViewProj, froxelPrevViewProj, sizeof(fp.prevViewProj));
+        fp.prevCameraForwardW[0] = froxelPrevCamFwd[0];
+        fp.prevCameraForwardW[1] = froxelPrevCamFwd[1];
+        fp.prevCameraForwardW[2] = froxelPrevCamFwd[2];
+    } else {
+        std::memcpy(fp.prevViewProj, &lighting.worldToClip[0][0], sizeof(fp.prevViewProj));
+        fp.prevCameraForwardW[0] = camFwd[0];
+        fp.prevCameraForwardW[1] = camFwd[1];
+        fp.prevCameraForwardW[2] = camFwd[2];
+    }
+    fp.cameraPosW[0]         = 0.0f; // lighting.clipToWorld / worldToClip are camera-relative
+    fp.cameraPosW[1]         = 0.0f;
+    fp.cameraPosW[2]         = 0.0f;
+    fp.cameraForwardW[0]     = camFwd[0];
+    fp.cameraForwardW[1]     = camFwd[1];
+    fp.cameraForwardW[2]     = camFwd[2];
+    fp.prevCameraPosW[0]     = 0.0f;
+    fp.prevCameraPosW[1]     = 0.0f;
+    fp.prevCameraPosW[2]     = 0.0f;
+    fp.nearZ                 = 16.0f;
+    fp.farZ                  = isInterior ? 4096.0f : 16384.0f;
+    fp.simTimeSec            = fi.simTimeSec;
+    fp.historyWeight         = froxelHasPrev ? 0.85f : 0.0f;
+    fp.enableTemporal        = froxelHasPrev;
+    fp.enableHaltonJitter    = true;
+    fp.baseFogDensity        = isInterior ? 0.00018f : 0.00028f;
+    fp.valleyFloorZ          = isInterior ? -256.0f : std::clamp(fi.waterPlaneZ - lighting.posAdjust[2], -4096.0f, 4096.0f);
+    fp.fogScaleHeight        = isInterior ? 640.0f : 1800.0f;
+    fp.scatterAlbedo         = 0.90f;
+    fp.rainIntensity         = isInterior ? 0.0f : std::clamp(fi.rainIntensity, 0.0f, 1.0f);
+    fp.snowIntensity         = isInterior ? 0.0f : weatherSnow;
+    fp.noiseAmp              = 0.25f;
+    fp.noiseScale            = 0.0018f;
+    fp.windVelW[0]           = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.04f, -12.0f, 12.0f);
+    fp.windVelW[1]           = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.04f, -12.0f, 12.0f);
+    fp.windVelW[2]           = 0.0f;
+    fp.mieAnisotropyG        = 0.68f;
+    fp.sunDirW[0]            = lighting.sunDirection[0];
+    fp.sunDirW[1]            = lighting.sunDirection[1];
+    fp.sunDirW[2]            = lighting.sunDirection[2];
+    fp.sunIntensity          = (lighting.hasSun && !isInterior) ? 5.5f : 0.35f;
+    fp.sunColor[0]           = lighting.sunColour[0];
+    fp.sunColor[1]           = lighting.sunColour[1];
+    fp.sunColor[2]           = lighting.sunColour[2];
+    fp.ambientIntensity      = isInterior ? 0.18f : 0.32f;
+    fp.ambientColor[0]       = 0.35f;
+    fp.ambientColor[1]       = 0.48f;
+    fp.ambientColor[2]       = 0.72f;
+
+    uint32_t lc = 0u;
+    for (uint32_t i = 0u; i < lighting.lightCount && lc < 16u; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        if (l.radius < 24.0f) continue;
+        FroxelPointLight& pl = fp.lights[lc++];
+        pl.posW[0]   = l.position[0];
+        pl.posW[1]   = l.position[1];
+        pl.posW[2]   = l.position[2];
+        pl.radius    = std::clamp(l.radius, 32.0f, 2400.0f);
+        pl.color[0]  = std::max(0.0f, l.colour[0]);
+        pl.color[1]  = std::max(0.0f, l.colour[1]);
+        pl.color[2]  = std::max(0.0f, l.colour[2]);
+        pl.intensity = std::clamp(l.radius * 0.6f, 24.0f, 600.0f);
+    }
+    fp.lightCount = lc;
+
+    volFroxels->Execute(froxelList.Get(), fp);
+
+    if (FAILED(froxelList->Close())) return false;
+    ID3D12CommandList* lists[1] = {froxelList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(froxelFence.Get(), ++froxelFenceVal);
+    froxelSlotVal[slot] = froxelFenceVal;
+    froxelSlot = (slot + 1u) % kRing;
+
+    std::memcpy(froxelPrevViewProj, &lighting.worldToClip[0][0], sizeof(froxelPrevViewProj));
+    froxelPrevCamFwd[0] = camFwd[0];
+    froxelPrevCamFwd[1] = camFwd[1];
+    froxelPrevCamFwd[2] = camFwd[2];
+    froxelHasPrev = true;
+
+    if ((froxelStepFrames++ % 180ull) == 0ull) {
+        log("[VolFroxels] live 160x90x64 step: lights=%u, injectMs=%.4f, integrateMs=%.4f",
+            lc,
+            volFroxels->HasValidTiming() ? volFroxels->GetLastInjectMs() : 0.0f,
+            volFroxels->HasValidTiming() ? volFroxels->GetLastIntegrateMs() : 0.0f);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteShadowPcssOnQueue(bool hasShadows)
+{
+    if (!shadowPcssReady || !shadowPcss || !shadowPcss->Ready() ||
+        !queue || !shadowPcssList || !shadowPcssFence || !shadowPcssEvent ||
+        !depthIn.res12 || !shadowPcssOut || shadowPcssOutW == 0u || shadowPcssOutH == 0u) {
+        return false;
+    }
+
+    const uint32_t slot = shadowPcssSlot;
+    if (shadowPcssSlotVal[slot] > 0 && shadowPcssFence->GetCompletedValue() < shadowPcssSlotVal[slot]) {
+        shadowPcssFence->SetEventOnCompletion(shadowPcssSlotVal[slot], shadowPcssEvent);
+        WaitForSingleObject(shadowPcssEvent, 3000);
+    }
+    if (FAILED(shadowPcssAlloc[slot]->Reset()) ||
+        FAILED(shadowPcssList->Reset(shadowPcssAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    ID3D12Resource* smRes = (hasShadows && shared[static_cast<UINT>(Shared::ShadowAtlas)].res12)
+        ? shared[static_cast<UINT>(Shared::ShadowAtlas)].res12.Get()
+        : shadowPcssFallbackMap.Get();
+    if (!smRes) {
+        shadowPcssList->Close();
+        return false;
+    }
+
+    const D3D12_RESOURCE_DESC smDesc = smRes->GetDesc();
+    const uint32_t smSize = static_cast<uint32_t>(std::max<UINT64>(smDesc.Height, 64ull));
+
+    float sunDir[3] = {
+        std::isfinite(lighting.sunDirection[0]) ? lighting.sunDirection[0] : 0.35f,
+        std::isfinite(lighting.sunDirection[1]) ? lighting.sunDirection[1] : 0.25f,
+        std::isfinite(lighting.sunDirection[2]) ? lighting.sunDirection[2] : 0.90f
+    };
+    const float camRelTarget[3] = {0.0f, 0.0f, 0.0f};
+    const TexelSnappedCascade cascade =
+        BuildTexelSnappedCascade(camRelTarget, sunDir, 2048.0f, 8192.0f, smSize);
+
+    ShadowPcssParams params{};
+    // lighting.clipToWorld stores rows dotting column vectors; transpose for row-vector mul(v, M)
+    for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            params.invViewProj[r * 4 + c] = lighting.clipToWorld[c][r];
+        }
+    }
+    std::memcpy(params.lightViewProj, cascade.lightViewProj, sizeof(params.lightViewProj));
+    params.sunDirW[0]          = sunDir[0];
+    params.sunDirW[1]          = sunDir[1];
+    params.sunDirW[2]          = sunDir[2];
+    params.baseDepthBias       = 4.0e-4f;
+    params.slopeDepthBias      = 8.0e-4f;
+    params.normalOffsetWorld   = 1.5f;
+    params.lightAngularSize    = 14.0f;
+    params.frameJitter         = static_cast<float>(shadowPcssFrames & 63ull);
+    params.blockerSearchTexels = 14.0f;
+    params.minFilterTexels     = 0.75f;
+    params.maxFilterTexels     = 22.0f;
+    params.shadowMapSize       = smSize;
+
+    shadowPcss->Execute(shadowPcssList.Get(), depthIn.res12.Get(), smRes, shadowPcssOut.Get(),
+                        shadowPcssOutW, shadowPcssOutH, params,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    if (FAILED(shadowPcssList->Close())) return false;
+    ID3D12CommandList* lists[1] = {shadowPcssList.Get()};
+    queue->ExecuteCommandLists(1, lists);
+    queue->Signal(shadowPcssFence.Get(), ++shadowPcssFenceVal);
+    shadowPcssSlotVal[slot] = shadowPcssFenceVal;
+    shadowPcssSlot = (slot + 1u) % kRing;
+
+    if ((shadowPcssFrames++ % 180ull) == 0ull) {
+        log("[ShadowPcss] live half-res %ux%u PCSS: pcssMs=%.4f, shadowMap=%ux%u (%s)",
+            shadowPcssOutW, shadowPcssOutH,
+            shadowPcss->HasValidTiming() ? shadowPcss->GetLastPcssMs() : 0.0f,
+            static_cast<unsigned>(smDesc.Width), static_cast<unsigned>(smDesc.Height),
+            hasShadows ? "ShadowAtlas" : "fallback");
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteGtaoOnQueue()
+{
+    if (!gtaoHostReady || !gtaoHost || !gtaoHost->Ready() ||
+        !queue || !gtaoList || !gtaoFence || !gtaoEvent || !depthIn.res12) {
+        return false;
+    }
+
+    const uint32_t slot = gtaoSlot;
+    if (gtaoSlotVal[slot] > 0 && gtaoFence->GetCompletedValue() < gtaoSlotVal[slot]) {
+        gtaoFence->SetEventOnCompletion(gtaoSlotVal[slot], gtaoEvent);
+        WaitForSingleObject(gtaoEvent, 3000);
+    }
+    if (FAILED(gtaoAlloc[slot]->Reset()) ||
+        FAILED(gtaoList->Reset(gtaoAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    // Derive vertical FOV directly from camera-relative clipToWorld top/bottom center rays.
+    float fovYDeg = 65.0f;
+    {
+        const float* inv = &lighting.clipToWorld[0][0];
+        auto rayDir = [&](float ndcY, float out[3]) -> bool {
+            const float wN = ndcY * inv[1 * 4 + 3] + inv[3 * 4 + 3];
+            const float wF = ndcY * inv[1 * 4 + 3] + inv[2 * 4 + 3] + inv[3 * 4 + 3];
+            if (std::fabs(wN) <= 1.0e-6f || std::fabs(wF) <= 1.0e-6f) return false;
+            const float nx = (ndcY * inv[1 * 4 + 0] + inv[3 * 4 + 0]) / wN;
+            const float ny = (ndcY * inv[1 * 4 + 1] + inv[3 * 4 + 1]) / wN;
+            const float nz = (ndcY * inv[1 * 4 + 2] + inv[3 * 4 + 2]) / wN;
+            const float fx = (ndcY * inv[1 * 4 + 0] + inv[2 * 4 + 0] + inv[3 * 4 + 0]) / wF;
+            const float fy = (ndcY * inv[1 * 4 + 1] + inv[2 * 4 + 1] + inv[3 * 4 + 1]) / wF;
+            const float fz = (ndcY * inv[1 * 4 + 2] + inv[2 * 4 + 2] + inv[3 * 4 + 2]) / wF;
+            const float dx = fx - nx, dy = fy - ny, dz = fz - nz;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(len) || len <= 1.0e-5f) return false;
+            out[0] = dx / len;
+            out[1] = dy / len;
+            out[2] = dz / len;
+            return true;
+        };
+        float topD[3]{}, botD[3]{};
+        if (rayDir(1.0f, topD) && rayDir(-1.0f, botD)) {
+            const float dotTB = std::clamp(topD[0] * botD[0] + topD[1] * botD[1] + topD[2] * botD[2], -1.0f, 1.0f);
+            const float deg = std::acos(dotTB) * 57.2957795f;
+            if (std::isfinite(deg) && deg >= 25.0f && deg <= 130.0f) {
+                fovYDeg = std::clamp(deg, 30.0f, 120.0f);
+            }
+        }
+    }
+
+    const uint32_t outW = std::max(cfg.width / 2u, 16u);
+    const uint32_t outH = std::max(cfg.height / 2u, 16u);
+
+    GtaoParams gp{};
+    gp.fovYDeg           = fovYDeg;
+    gp.nearZ             = 16.0f;
+    gp.farZ              = 16384.0f;
+    gp.effectRadius      = 96.0f; // ~1.4 m in Skyrim world units
+    gp.falloffStart      = 0.65f;
+    gp.aoPower           = 1.0f;
+    gp.maxScreenRadiusPx = 64.0f;
+    gp.depthEdgeScale    = 0.025f;
+    gp.numSlices         = 2u;
+    gp.numSteps          = 6u;
+    gp.temporalJitter    = static_cast<float>(gtaoStepFrames & 63ull);
+
+    gtaoHost->Execute(gtaoList.Get(), depthIn.res12.Get(), outW, outH, gp,
+                      D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(gtaoList->Close())) return false;
+    ID3D12CommandList* lists[1] = {gtaoList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(gtaoFence.Get(), ++gtaoFenceVal);
+    gtaoSlotVal[slot] = gtaoFenceVal;
+    gtaoSlot = (slot + 1u) % kRing;
+
+    if ((gtaoStepFrames++ % 180ull) == 0ull) {
+        log("[Gtao] live half-res %ux%u GTAO+BentNormal: mainMs=%.4f, denoiseMs=%.4f, fovY=%.1f",
+            outW, outH,
+            gtaoHost->HasValidTiming() ? gtaoHost->GetLastMainMs() : 0.0f,
+            gtaoHost->HasValidTiming() ? gtaoHost->GetLastDenoiseMs() : 0.0f,
+            fovYDeg);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteSsrOnQueue()
+{
+    if (!ssrHostReady || !ssrHost || !ssrHost->Ready() ||
+        !queue || !ssrList || !ssrFence || !ssrEvent || !colorOut.res12 || !depthIn.res12) {
+        return false;
+    }
+
+    const uint32_t slot = ssrSlot;
+    if (ssrSlotVal[slot] > 0 && ssrFence->GetCompletedValue() < ssrSlotVal[slot]) {
+        ssrFence->SetEventOnCompletion(ssrSlotVal[slot], ssrEvent);
+        WaitForSingleObject(ssrEvent, 3000);
+    }
+    if (FAILED(ssrAlloc[slot]->Reset()) ||
+        FAILED(ssrList->Reset(ssrAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    // Derive vertical FOV directly from camera-relative clipToWorld top/bottom center rays.
+    float fovYDeg = 65.0f;
+    {
+        const float* inv = &lighting.clipToWorld[0][0];
+        auto rayDir = [&](float ndcY, float out[3]) -> bool {
+            const float wN = ndcY * inv[1 * 4 + 3] + inv[3 * 4 + 3];
+            const float wF = ndcY * inv[1 * 4 + 3] + inv[2 * 4 + 3] + inv[3 * 4 + 3];
+            if (std::fabs(wN) <= 1.0e-6f || std::fabs(wF) <= 1.0e-6f) return false;
+            const float nx = (ndcY * inv[1 * 4 + 0] + inv[3 * 4 + 0]) / wN;
+            const float ny = (ndcY * inv[1 * 4 + 1] + inv[3 * 4 + 1]) / wN;
+            const float nz = (ndcY * inv[1 * 4 + 2] + inv[3 * 4 + 2]) / wN;
+            const float fx = (ndcY * inv[1 * 4 + 0] + inv[2 * 4 + 0] + inv[3 * 4 + 0]) / wF;
+            const float fy = (ndcY * inv[1 * 4 + 1] + inv[2 * 4 + 1] + inv[3 * 4 + 1]) / wF;
+            const float fz = (ndcY * inv[1 * 4 + 2] + inv[2 * 4 + 2] + inv[3 * 4 + 2]) / wF;
+            const float dx = fx - nx, dy = fy - ny, dz = fz - nz;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(len) || len <= 1.0e-5f) return false;
+            out[0] = dx / len;
+            out[1] = dy / len;
+            out[2] = dz / len;
+            return true;
+        };
+        float topD[3]{}, botD[3]{};
+        if (rayDir(1.0f, topD) && rayDir(-1.0f, botD)) {
+            const float dotTB = std::clamp(topD[0] * botD[0] + topD[1] * botD[1] + topD[2] * botD[2], -1.0f, 1.0f);
+            const float deg = std::acos(dotTB) * 57.2957795f;
+            if (std::isfinite(deg) && deg >= 25.0f && deg <= 130.0f) {
+                fovYDeg = std::clamp(deg, 30.0f, 120.0f);
+            }
+        }
+    }
+
+    const uint32_t outW = std::max(cfg.width / 2u, 16u);
+    const uint32_t outH = std::max(cfg.height / 2u, 16u);
+    const float aspect  = static_cast<float>(outW) / static_cast<float>(outH);
+    const float fovYRad = fovYDeg * (3.14159265359f / 180.0f);
+
+    SsrParams sp{};
+    BuildSsrPerspectiveLH(fovYRad, aspect, 16.0f, 16384.0f, sp.proj, sp.invProj);
+    sp.maxRayDist        = 3072.0f;
+    sp.thicknessM        = 96.0f;
+    sp.nearZ             = 16.0f;
+    sp.startBias         = 2.0f;
+    sp.fallbackRoughness = 0.08f;
+    sp.maxRoughness      = 0.72f;
+    sp.edgeFadeWidth     = 0.07f;
+    sp.frameJitter       = static_cast<float>(ssrStepFrames & 63ull);
+    sp.maxSteps          = 40u;
+
+    ssrHost->Execute(ssrList.Get(), colorOut.res12.Get(), depthIn.res12.Get(), outW, outH, sp,
+                     D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(ssrList->Close())) return false;
+    ID3D12CommandList* lists[1] = {ssrList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(ssrFence.Get(), ++ssrFenceVal);
+    ssrSlotVal[slot] = ssrFenceVal;
+    ssrSlot = (slot + 1u) % kRing;
+
+    if ((ssrStepFrames++ % 180ull) == 0ull) {
+        log("[Ssr] live half-res %ux%u GGX SSR: traceMs=%.4f, fovY=%.1f",
+            outW, outH,
+            ssrHost->HasValidTiming() ? ssrHost->GetLastSsrMs() : 0.0f,
+            fovYDeg);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteAutoExposureOnQueue()
+{
+    if (!autoExposureReady || !autoExposure || !autoExposure->Ready() ||
+        !queue || !autoExposureList || !autoExposureFence || !autoExposureEvent || !colorOut.res12) {
+        return false;
+    }
+
+    const uint32_t slot = autoExposureSlot;
+    if (autoExposureSlotVal[slot] > 0 && autoExposureFence->GetCompletedValue() < autoExposureSlotVal[slot]) {
+        autoExposureFence->SetEventOnCompletion(autoExposureSlotVal[slot], autoExposureEvent);
+        WaitForSingleObject(autoExposureEvent, 3000);
+    }
+    if (FAILED(autoExposureAlloc[slot]->Reset()) ||
+        FAILED(autoExposureList->Reset(autoExposureAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (autoExposureLastMs > 0ull && nowMs >= autoExposureLastMs) {
+        dtSec = std::clamp(static_cast<float>(nowMs - autoExposureLastMs) * 0.001f, 0.001f, 0.1f);
+    }
+    autoExposureLastMs = nowMs;
+
+    AutoExposureParams ap{};
+    ap.dtSec      = dtSec;
+    ap.resetAdapt = (autoExposureStepFrames == 0ull);
+
+    autoExposure->Execute(autoExposureList.Get(), colorOut.res12.Get(), cfg.width, cfg.height, ap,
+                          D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(autoExposureList->Close())) return false;
+    ID3D12CommandList* lists[1] = {autoExposureList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(autoExposureFence.Get(), ++autoExposureFenceVal);
+    autoExposureSlotVal[slot] = autoExposureFenceVal;
+    autoExposureSlot = (slot + 1u) % kRing;
+
+    if ((autoExposureStepFrames++ % 180ull) == 0ull) {
+        log("[AutoExposure] live %ux%u 256-bin histogram+adapt: histMs=%.4f, adaptMs=%.4f, dt=%.3fs",
+            static_cast<unsigned>(cfg.width), static_cast<unsigned>(cfg.height),
+            autoExposure->HasValidTiming() ? autoExposure->GetLastHistMs() : 0.0f,
+            autoExposure->HasValidTiming() ? autoExposure->GetLastAdaptMs() : 0.0f,
+            dtSec);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteCloudRaymarchOnQueue(bool isInterior)
+{
+    if (!cloudRaymarchReady || !cloudRaymarch || !cloudRaymarch->Ready() ||
+        !queue || !cloudList || !cloudFence || !cloudEvent) {
+        return false;
+    }
+
+    const uint32_t slot = cloudSlot;
+    if (cloudSlotVal[slot] > 0 && cloudFence->GetCompletedValue() < cloudSlotVal[slot]) {
+        cloudFence->SetEventOnCompletion(cloudSlotVal[slot], cloudEvent);
+        WaitForSingleObject(cloudEvent, 3000);
+    }
+    if (FAILED(cloudAlloc[slot]->Reset()) ||
+        FAILED(cloudList->Reset(cloudAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    if (isInterior != cloudPrevInterior) {
+        cloudRaymarch->ResetHistory();
+        cloudPrevInterior = isInterior;
+    }
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float cloudCov = 0.55f;
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->clouds[0]) && u->clouds[0] > 0.0f) {
+            cloudCov = std::clamp(u->clouds[0], 0.0f, 1.0f);
+        }
+        if (std::isfinite(u->weather[1])) {
+            weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+        }
+    }
+    const float precipBoost = std::clamp(std::max(fi.rainIntensity, weatherSnow) * 0.35f, 0.0f, 0.35f);
+    cloudCov = isInterior ? 0.0f : std::clamp(cloudCov + precipBoost, 0.0f, 0.95f);
+
+    // Derive orthonormal Y-up camera basis & vertical FOV from camera-relative clipToWorld (Skyrim Z-up -> Y-up).
+    float fovYDeg = 65.0f;
+    float camFwdYUp[3] = {0.0f, 0.0f, 1.0f};
+    float camRightYUp[3] = {1.0f, 0.0f, 0.0f};
+    float camUpYUp[3] = {0.0f, 1.0f, 0.0f};
+    {
+        const float* inv = &lighting.clipToWorld[0][0];
+        auto rayDirZUp = [&](float ndcX, float ndcY, float out[3]) -> bool {
+            const float wN = ndcX * inv[0 * 4 + 3] + ndcY * inv[1 * 4 + 3] + inv[3 * 4 + 3];
+            const float wF = ndcX * inv[0 * 4 + 3] + ndcY * inv[1 * 4 + 3] + inv[2 * 4 + 3] + inv[3 * 4 + 3];
+            if (std::fabs(wN) <= 1.0e-6f || std::fabs(wF) <= 1.0e-6f) return false;
+            const float nx = (ndcX * inv[0 * 4 + 0] + ndcY * inv[1 * 4 + 0] + inv[3 * 4 + 0]) / wN;
+            const float ny = (ndcX * inv[0 * 4 + 1] + ndcY * inv[1 * 4 + 1] + inv[3 * 4 + 1]) / wN;
+            const float nz = (ndcX * inv[0 * 4 + 2] + ndcY * inv[1 * 4 + 2] + inv[3 * 4 + 2]) / wN;
+            const float fx = (ndcX * inv[0 * 4 + 0] + ndcY * inv[1 * 4 + 0] + inv[2 * 4 + 0] + inv[3 * 4 + 0]) / wF;
+            const float fy = (ndcX * inv[0 * 4 + 1] + ndcY * inv[1 * 4 + 1] + inv[2 * 4 + 1] + inv[3 * 4 + 1]) / wF;
+            const float fz = (ndcX * inv[0 * 4 + 2] + ndcY * inv[1 * 4 + 2] + inv[2 * 4 + 2] + inv[3 * 4 + 2]) / wF;
+            const float dx = fx - nx, dy = fy - ny, dz = fz - nz;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (!std::isfinite(len) || len <= 1.0e-5f) return false;
+            out[0] = dx / len;
+            out[1] = dy / len;
+            out[2] = dz / len;
+            return true;
+        };
+        float ctrD[3]{}, topD[3]{}, botD[3]{}, rgtD[3]{};
+        if (rayDirZUp(0.0f, 0.0f, ctrD)) {
+            camFwdYUp[0] = ctrD[0];
+            camFwdYUp[1] = ctrD[2]; // Skyrim Z -> Y-up
+            camFwdYUp[2] = ctrD[1]; // Skyrim Y -> Z-forward
+        }
+        if (rayDirZUp(0.0f, 1.0f, topD) && rayDirZUp(0.0f, -1.0f, botD)) {
+            const float dotTB = std::clamp(topD[0] * botD[0] + topD[1] * botD[1] + topD[2] * botD[2], -1.0f, 1.0f);
+            const float deg = std::acos(dotTB) * 57.2957795f;
+            if (std::isfinite(deg) && deg >= 25.0f && deg <= 130.0f) {
+                fovYDeg = std::clamp(deg, 30.0f, 120.0f);
+            }
+            const float uy0 = topD[0] - botD[0];
+            const float uy1 = topD[2] - botD[2];
+            const float uy2 = topD[1] - botD[1];
+            const float uLen = std::sqrt(uy0 * uy0 + uy1 * uy1 + uy2 * uy2);
+            if (std::isfinite(uLen) && uLen > 1.0e-5f) {
+                camUpYUp[0] = uy0 / uLen;
+                camUpYUp[1] = uy1 / uLen;
+                camUpYUp[2] = uy2 / uLen;
+            }
+        }
+        if (rayDirZUp(1.0f, 0.0f, rgtD)) {
+            const float rx0 = rgtD[0] - ctrD[0];
+            const float rx1 = rgtD[2] - ctrD[2];
+            const float rx2 = rgtD[1] - ctrD[1];
+            const float rLen = std::sqrt(rx0 * rx0 + rx1 * rx1 + rx2 * rx2);
+            if (std::isfinite(rLen) && rLen > 1.0e-5f) {
+                camRightYUp[0] = rx0 / rLen;
+                camRightYUp[1] = rx1 / rLen;
+                camRightYUp[2] = rx2 / rLen;
+            }
+        }
+    }
+
+    const uint32_t outW = std::max(cfg.width / 4u, 64u);
+    const uint32_t outH = std::max(cfg.height / 4u, 36u);
+
+    constexpr float kSkyrimUnitsToMeters = 0.0142857f;
+    CloudRaymarchParams cp{};
+    cp.camPos[0]     = std::isfinite(lighting.posAdjust[0]) ? lighting.posAdjust[0] * kSkyrimUnitsToMeters : 0.0f;
+    cp.camPos[1]     = std::clamp(std::isfinite(lighting.posAdjust[2]) ? (lighting.posAdjust[2] * kSkyrimUnitsToMeters + 80.0f) : 80.0f, 10.0f, 1200.0f);
+    cp.camPos[2]     = std::isfinite(lighting.posAdjust[1]) ? lighting.posAdjust[1] * kSkyrimUnitsToMeters : 0.0f;
+    cp.camRight[0]   = camRightYUp[0]; cp.camRight[1]   = camRightYUp[1]; cp.camRight[2]   = camRightYUp[2];
+    cp.camUp[0]      = camUpYUp[0];    cp.camUp[1]      = camUpYUp[1];    cp.camUp[2]      = camUpYUp[2];
+    cp.camForward[0] = camFwdYUp[0];   cp.camForward[1] = camFwdYUp[1];   cp.camForward[2] = camFwdYUp[2];
+    cp.fovYDeg       = fovYDeg;
+    cp.timeSec       = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+    cp.cloudCoverage = cloudCov;
+    cp.densityScale  = 0.0022f + precipBoost * 0.0018f;
+    cp.anvilFactor   = 0.35f + precipBoost * 0.50f;
+    cp.historyWeight = isInterior ? 0.0f : 0.75f;
+    cp.windVel[0]    = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.08f, -40.0f, 40.0f);
+    cp.windVel[1]    = 0.0f;
+    cp.windVel[2]    = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.08f, -40.0f, 40.0f);
+    cp.sunDir[0]     = std::isfinite(lighting.sunDirection[0]) ? lighting.sunDirection[0] : 0.25f;
+    cp.sunDir[1]     = std::isfinite(lighting.sunDirection[2]) ? lighting.sunDirection[2] : 0.35f;
+    cp.sunDir[2]     = std::isfinite(lighting.sunDirection[1]) ? lighting.sunDirection[1] : 0.90f;
+    cp.sunColor[0]   = std::max(0.05f, std::isfinite(lighting.sunColour[0]) ? lighting.sunColour[0] : 1.0f);
+    cp.sunColor[1]   = std::max(0.05f, std::isfinite(lighting.sunColour[1]) ? lighting.sunColour[1] : 0.94f);
+    cp.sunColor[2]   = std::max(0.05f, std::isfinite(lighting.sunColour[2]) ? lighting.sunColour[2] : 0.84f);
+    cp.sunIntensity  = lighting.hasSun ? 6.5f : 1.2f;
+    cp.frameIndex    = static_cast<uint32_t>(cloudStepFrames & 0xFFFFu);
+
+    cloudRaymarch->Execute(cloudList.Get(), outW, outH, cp);
+
+    if (FAILED(cloudList->Close())) return false;
+    ID3D12CommandList* lists[1] = {cloudList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(cloudFence.Get(), ++cloudFenceVal);
+    cloudSlotVal[slot] = cloudFenceVal;
+    cloudSlot = (slot + 1u) % kRing;
+
+    if ((cloudStepFrames++ % 180ull) == 0ull) {
+        log("[CloudRaymarch] live quarter-res %ux%u clouds: cloudMs=%.4f, cov=%.2f, interior=%s",
+            outW, outH,
+            cloudRaymarch->HasValidTiming() ? cloudRaymarch->GetLastCloudMs() : 0.0f,
+            cloudCov, isInterior ? "yes" : "no");
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecutePostCinematicOnQueue(bool hasMotion)
+{
+    if (!postCinematicReady || !postCinematic || !postCinematic->Ready() ||
+        !queue || !postCinematicList || !postCinematicFence || !postCinematicEvent ||
+        !colorOut.res12 || !depthIn.res12) {
+        return false;
+    }
+
+    const uint32_t slot = postCinematicSlot;
+    if (postCinematicSlotVal[slot] > 0 && postCinematicFence->GetCompletedValue() < postCinematicSlotVal[slot]) {
+        postCinematicFence->SetEventOnCompletion(postCinematicSlotVal[slot], postCinematicEvent);
+        WaitForSingleObject(postCinematicEvent, 3000);
+    }
+    if (FAILED(postCinematicAlloc[slot]->Reset()) ||
+        FAILED(postCinematicList->Reset(postCinematicAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint32_t outW = std::max(cfg.width / 2u, 64u);
+    const uint32_t outH = std::max(cfg.height / 2u, 36u);
+    ID3D12Resource* velRes = (hasMotion && motionIn.res12) ? motionIn.res12.Get() : nullptr;
+
+    PostCinematicParams pp{};
+    pp.nearZ             = 16.0f;
+    pp.farZ              = 16384.0f;
+    pp.focusDistanceM    = 640.0f;
+    pp.focalLengthMm     = 50.0f;
+    pp.apertureFStop     = 2.2f;
+    pp.cocScale          = 1.25f;
+    pp.dofStrength       = 0.85f;
+    pp.maxBokehRadiusPx  = 8.0f;
+    pp.motionBlurScale   = velRes ? 1.0f : 0.0f;
+    pp.maxMotionRadiusPx = 20.0f;
+    pp.vignetteStrength  = 0.18f;
+    pp.frameJitter       = static_cast<float>(postCinematicStepFrames & 63ull);
+
+    postCinematic->Execute(postCinematicList.Get(),
+                           colorOut.res12.Get(), depthIn.res12.Get(), velRes,
+                           outW, outH, pp,
+                           D3D12_RESOURCE_STATE_COMMON,
+                           D3D12_RESOURCE_STATE_COMMON,
+                           D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(postCinematicList->Close())) return false;
+    ID3D12CommandList* lists[1] = {postCinematicList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(postCinematicFence.Get(), ++postCinematicFenceVal);
+    postCinematicSlotVal[slot] = postCinematicFenceVal;
+    postCinematicSlot = (slot + 1u) % kRing;
+
+    if ((postCinematicStepFrames++ % 180ull) == 0ull) {
+        log("[PostCinematic] live half-res %ux%u MB+DoF: tileMs=%.4f, compMs=%.4f, motion=%s",
+            outW, outH,
+            postCinematic->HasValidTiming() ? postCinematic->GetLastTileMs() : 0.0f,
+            postCinematic->HasValidTiming() ? postCinematic->GetLastCompositeMs() : 0.0f,
+            velRes ? "on" : "off");
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteGpuParticlesOnQueue(bool isInterior)
+{
+    if (!gpuParticlesReady || !gpuParticles || !gpuParticles->Ready() ||
+        !queue || !gpuParticlesList || !gpuParticlesFence || !gpuParticlesEvent) {
+        return false;
+    }
+
+    const uint32_t slot = gpuParticlesSlot;
+    if (gpuParticlesSlotVal[slot] > 0 && gpuParticlesFence->GetCompletedValue() < gpuParticlesSlotVal[slot]) {
+        gpuParticlesFence->SetEventOnCompletion(gpuParticlesSlotVal[slot], gpuParticlesEvent);
+        WaitForSingleObject(gpuParticlesEvent, 3000);
+    }
+    if (FAILED(gpuParticlesAlloc[slot]->Reset()) ||
+        FAILED(gpuParticlesList->Reset(gpuParticlesAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (gpuParticlesLastMs > 0ull && nowMs >= gpuParticlesLastMs) {
+        dtSec = std::clamp(static_cast<float>(nowMs - gpuParticlesLastMs) * 0.001f, 0.001f, 0.05f);
+    }
+    gpuParticlesLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 0.0f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+    }
+
+    // Weather-driven particle mode: Snow (blizzards), Rain (storms), WaterfallMist (damp rivers), Embers (fires/clear dusk)
+    ParticleMode mode = ParticleMode::Embers;
+    if (!isInterior) {
+        const bool nearRiver = std::isfinite(fi.waterPlaneZ) &&
+                               (std::fabs(lighting.posAdjust[2] - fi.waterPlaneZ) < 420.0f);
+        if (weatherSnow > 0.18f) {
+            mode = ParticleMode::Snow;
+        } else if (fi.rainIntensity > 0.18f) {
+            mode = ParticleMode::Rain;
+        } else if (nearRiver && lastFluidFireEmitters == 0u) {
+            mode = ParticleMode::WaterfallMist;
+        } else {
+            mode = ParticleMode::Embers;
+        }
+    }
+
+    const bool resetNow = (gpuParticlesStepFrames == 0ull) || (mode != gpuParticlesLastMode);
+    gpuParticlesLastMode = mode;
+
+    // Build camera-relative LH view-projection in local Y-up meters (emitter positioned ahead of camera)
+    const float aspect = static_cast<float>(gpuParticles->SplatWidth()) /
+                         static_cast<float>(std::max(gpuParticles->SplatHeight(), 1u));
+    const float eye[3]    = {0.0f, 2.0f, -8.0f};
+    const float target[3] = {0.0f, 2.0f,  0.0f};
+    const float up[3]     = {0.0f, 1.0f,  0.0f};
+
+    GpuParticlesParams pp{};
+    BuildParticlesViewProjLH(eye, target, up, 1.04719755f, aspect, 0.1f, 120.0f, pp.viewProj);
+    pp.emitterPos[0]      = 0.0f;
+    pp.emitterPos[1]      = (mode == ParticleMode::Snow || mode == ParticleMode::Rain) ? 7.5f : 1.0f;
+    pp.emitterPos[2]      = 0.0f;
+    pp.emitterRadius      = (mode == ParticleMode::Snow || mode == ParticleMode::Rain) ? 6.0f : 1.2f;
+    pp.windVel[0]         = isInterior ? 0.0f : std::clamp(fi.windXY[0] * 0.04f, -14.0f, 14.0f);
+    pp.windVel[1]         = 0.0f;
+    pp.windVel[2]         = isInterior ? 0.0f : std::clamp(fi.windXY[1] * 0.04f, -14.0f, 14.0f);
+    pp.curlStrength       = (mode == ParticleMode::Rain) ? 0.35f : 1.45f;
+    pp.dtSec              = dtSec;
+    pp.timeSec            = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+    pp.groundY            = 0.0f;
+    pp.restitution        = (mode == ParticleMode::Rain) ? 0.55f : 0.40f;
+    pp.gravityScale       = 1.0f;
+    pp.buoyancyAccel      = 4.2f;
+    pp.dragCoeff          = (mode == ParticleMode::Snow) ? 1.4f : 0.75f;
+    pp.splatIntensity     = 1.0f;
+    pp.mode               = mode;
+    pp.frameIndex         = static_cast<uint32_t>(gpuParticlesStepFrames & 0xFFFFu);
+    pp.resetAll           = resetNow;
+    pp.enableRespawn      = true;
+    pp.enableGroundBounce = true;
+
+    gpuParticles->Execute(gpuParticlesList.Get(), pp);
+
+    if (FAILED(gpuParticlesList->Close())) return false;
+    ID3D12CommandList* lists[1] = {gpuParticlesList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(gpuParticlesFence.Get(), ++gpuParticlesFenceVal);
+    gpuParticlesSlotVal[slot] = gpuParticlesFenceVal;
+    gpuParticlesSlot = (slot + 1u) % kRing;
+
+    if ((gpuParticlesStepFrames++ % 180ull) == 0ull) {
+        const char* modeName = (mode == ParticleMode::Snow) ? "Snow" :
+                               (mode == ParticleMode::Rain) ? "Rain" :
+                               (mode == ParticleMode::WaterfallMist) ? "Mist" : "Embers";
+        log("[GpuParticles] live 16K 3D particles (%s): simMs=%.4f, splatMs=%.4f, totalMs=%.4f",
+            modeName,
+            gpuParticles->HasValidTiming() ? gpuParticles->GetLastSimMs() : 0.0f,
+            gpuParticles->HasValidTiming() ? gpuParticles->GetLastSplatMs() : 0.0f,
+            gpuParticles->HasValidTiming() ? gpuParticles->GetLastTotalMs() : 0.0f);
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteTsrUpscaleOnQueue(bool hasMotion, bool isInterior)
+{
+    if (!tsrUpscaleReady || !tsrUpscale || !tsrUpscale->Ready() ||
+        !queue || !tsrUpscaleList || !tsrUpscaleFence || !tsrUpscaleEvent ||
+        !colorOut.res12 || !depthIn.res12) {
+        return false;
+    }
+
+    const uint32_t slot = tsrUpscaleSlot;
+    if (tsrUpscaleSlotVal[slot] > 0 && tsrUpscaleFence->GetCompletedValue() < tsrUpscaleSlotVal[slot]) {
+        tsrUpscaleFence->SetEventOnCompletion(tsrUpscaleSlotVal[slot], tsrUpscaleEvent);
+        WaitForSingleObject(tsrUpscaleEvent, 3000);
+    }
+    if (FAILED(tsrUpscaleAlloc[slot]->Reset()) ||
+        FAILED(tsrUpscaleList->Reset(tsrUpscaleAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    float jx = 0.0f, jy = 0.0f;
+    ComputeHaltonJitter(static_cast<uint32_t>(tsrUpscaleStepFrames & 0xFFFFu), jx, jy);
+    tsrLastJitterX = jx;
+    tsrLastJitterY = jy;
+
+    const bool resetNow = (tsrUpscaleStepFrames == 0ull) || (isInterior != tsrPrevInterior);
+    tsrPrevInterior = isInterior;
+
+    ID3D12Resource* velRes = (hasMotion && motionIn.res12) ? motionIn.res12.Get() : nullptr;
+
+    TsrUpscaleParams tp{};
+    tp.jitterX       = jx;
+    tp.jitterY       = jy;
+    tp.nearZ         = 16.0f;
+    tp.farZ          = 16384.0f;
+    tp.historyWeight = 0.88f;
+    tp.varianceGamma = 1.15f;
+    tp.rcasSharpness = 0.65f;
+    tp.resetHistory  = resetNow;
+
+    tsrUpscale->Execute(tsrUpscaleList.Get(),
+                        colorOut.res12.Get(), depthIn.res12.Get(), velRes, nullptr,
+                        cfg.width, cfg.height, cfg.width, cfg.height, tp,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        D3D12_RESOURCE_STATE_COMMON);
+
+    if (FAILED(tsrUpscaleList->Close())) return false;
+    ID3D12CommandList* lists[1] = {tsrUpscaleList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(tsrUpscaleFence.Get(), ++tsrUpscaleFenceVal);
+    tsrUpscaleSlotVal[slot] = tsrUpscaleFenceVal;
+    tsrUpscaleSlot = (slot + 1u) % kRing;
+
+    if ((tsrUpscaleStepFrames++ % 180ull) == 0ull) {
+        log("[TsrUpscale] live %ux%u RAW-TSR+RCAS: resolveMs=%.4f, rcasMs=%.4f, totalMs=%.4f, jitter=(%+.3f,%+.3f), motion=%s",
+            cfg.width, cfg.height,
+            tsrUpscale->HasValidTiming() ? tsrUpscale->GetLastResolveMs() : 0.0f,
+            tsrUpscale->HasValidTiming() ? tsrUpscale->GetLastRcasMs() : 0.0f,
+            tsrUpscale->HasValidTiming() ? tsrUpscale->GetLastTotalMs() : 0.0f,
+            jx, jy, velRes ? "on" : "off");
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteWaterCausticsOnQueue(bool isInterior)
+{
+    if (!waterCausticsReady || !waterCaustics || !waterCaustics->Ready() ||
+        !queue || !waterCausticsList || !waterCausticsFence || !waterCausticsEvent) {
+        return false;
+    }
+
+    const uint32_t slot = waterCausticsSlot;
+    if (waterCausticsSlotVal[slot] > 0 && waterCausticsFence->GetCompletedValue() < waterCausticsSlotVal[slot]) {
+        waterCausticsFence->SetEventOnCompletion(waterCausticsSlotVal[slot], waterCausticsEvent);
+        WaitForSingleObject(waterCausticsEvent, 3000);
+    }
+    if (FAILED(waterCausticsAlloc[slot]->Reset()) ||
+        FAILED(waterCausticsList->Reset(waterCausticsAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    // Convert Skyrim Z-up coordinates (1 m ~ 70 units) into Y-up meter optics parameters
+    constexpr float kUnitsPerMeter = 70.0f;
+    const float windSpeedMs = isInterior
+        ? 0.6f
+        : std::clamp(std::hypot(fi.windXY[0], fi.windXY[1]) * 0.05f, 0.8f, 18.0f);
+    const float camToWaterM = (fi.waterPlaneZ - lighting.posAdjust[2]) / kUnitsPerMeter;
+    const bool  submerged   = (camToWaterM > 0.05f && camToWaterM < 80.0f);
+    const float waterDepthM = submerged ? std::clamp(camToWaterM + 2.2f, 1.0f, 18.0f) : 2.4f;
+
+    WaterCausticsParams wp{};
+    wp.timeSec         = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : static_cast<float>(waterCausticsStepFrames) * (1.0f / 60.0f);
+    wp.sunDir[0]       = std::isfinite(lighting.sunDirection[0]) ? lighting.sunDirection[0] : 0.42f;
+    wp.sunDir[1]       = std::isfinite(lighting.sunDirection[2]) ? std::max(lighting.sunDirection[2], 0.16f) : 0.82f;
+    wp.sunDir[2]       = std::isfinite(lighting.sunDirection[1]) ? lighting.sunDirection[1] : 0.39f;
+    wp.sunIntensity    = (lighting.hasSun && !isInterior) ? 2.4f : 0.65f;
+    wp.sunColor[0]     = std::isfinite(lighting.sunColour[0]) ? std::clamp(lighting.sunColour[0], 0.15f, 4.0f) : 1.0f;
+    wp.sunColor[1]     = std::isfinite(lighting.sunColour[1]) ? std::clamp(lighting.sunColour[1], 0.15f, 4.0f) : 0.96f;
+    wp.sunColor[2]     = std::isfinite(lighting.sunColour[2]) ? std::clamp(lighting.sunColour[2], 0.15f, 4.0f) : 0.88f;
+    wp.bedDepthM       = waterDepthM;
+    wp.absorptionRGB[0] = 0.38f;
+    wp.absorptionRGB[1] = 0.065f;
+    wp.absorptionRGB[2] = 0.022f;
+    wp.scatterCoeff    = isInterior ? 0.035f : (0.055f + std::clamp(fi.rainIntensity, 0.0f, 1.0f) * 0.035f);
+    wp.waveAmp         = std::clamp(0.08f + windSpeedMs * 0.011f, 0.08f, 0.22f);
+    wp.domainSizeM     = 8.0f;
+    wp.dispersionScale = 1.0f;
+    wp.mieG            = 0.78f;
+    wp.waterSurfaceY   = 0.0f;
+    wp.camPos[0]       = 0.0f;
+    wp.camPos[1]       = submerged ? -std::clamp(camToWaterM, 0.2f, 20.0f) : -2.2f;
+    wp.camPos[2]       = 0.0f;
+    wp.camRight[0]     = 1.0f; wp.camRight[1]   = 0.0f;    wp.camRight[2]   = 0.0f;
+    wp.camUp[0]        = 0.0f; wp.camUp[1]      = 0.96825f; wp.camUp[2]     = -0.25f;
+    wp.camForward[0]   = 0.0f; wp.camForward[1] = 0.25f;   wp.camForward[2] = 0.96825f;
+    wp.fovYDeg         = 60.0f;
+    wp.maxRayDistM     = isInterior ? 14.0f : 24.0f;
+    wp.shaftIntensity  = submerged ? 2.8f : 1.6f;
+    wp.frameIndex      = static_cast<uint32_t>(waterCausticsStepFrames & 0xFFFFu);
+
+    waterCaustics->Execute(waterCausticsList.Get(), 512u, 512u, wp);
+
+    if (FAILED(waterCausticsList->Close())) return false;
+    ID3D12CommandList* lists[1] = {waterCausticsList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(waterCausticsFence.Get(), ++waterCausticsFenceVal);
+    waterCausticsSlotVal[slot] = waterCausticsFenceVal;
+    waterCausticsSlot = (slot + 1u) % kRing;
+
+    if ((waterCausticsStepFrames++ % 180ull) == 0ull) {
+        log("[WaterCaustics] live 512x512 caustics+rays: causticsMs=%.4f, raysMs=%.4f, totalMs=%.4f, waveAmp=%.3f, submerged=%s",
+            waterCaustics->HasValidTiming() ? waterCaustics->GetLastCausticsMs() : 0.0f,
+            waterCaustics->HasValidTiming() ? waterCaustics->GetLastRaysMs() : 0.0f,
+            waterCaustics->HasValidTiming() ? waterCaustics->GetLastTotalMs() : 0.0f,
+            wp.waveAmp, submerged ? "yes" : "no");
+    }
+    return true;
+}
+
+bool D3D12Bridge::Impl::ExecuteSnowDeformOnQueue(bool isInterior)
+{
+    if (!snowDeformReady || !snowDeform || !snowDeform->Ready() ||
+        !queue || !snowDeformList || !snowDeformFence || !snowDeformEvent) {
+        return false;
+    }
+
+    const uint32_t slot = snowDeformSlot;
+    if (snowDeformSlotVal[slot] > 0 && snowDeformFence->GetCompletedValue() < snowDeformSlotVal[slot]) {
+        snowDeformFence->SetEventOnCompletion(snowDeformSlotVal[slot], snowDeformEvent);
+        WaitForSingleObject(snowDeformEvent, 3000);
+    }
+    if (FAILED(snowDeformAlloc[slot]->Reset()) ||
+        FAILED(snowDeformList->Reset(snowDeformAlloc[slot].Get(), nullptr))) {
+        return false;
+    }
+
+    const uint64_t nowMs = GetTickCount64();
+    float dtSec = 1.0f / 60.0f;
+    if (snowDeformLastMs > 0ull && nowMs >= snowDeformLastMs) {
+        dtSec = std::clamp(static_cast<float>(nowMs - snowDeformLastMs) * 0.001f, 0.001f, 0.05f);
+    }
+    snowDeformLastMs = nowMs;
+    if (lighting.menuPaused) dtSec = 0.0f;
+
+    LightingFluidInputs fi{};
+    LightingPassFluidInputs(pass.get(), &fi);
+
+    float weatherSnow = 0.0f;
+    const void* uPtr = nullptr;
+    size_t uBytes = 0;
+    if (pass && LightingPassUniform(pass.get(), &uPtr, &uBytes) &&
+        uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+        const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+        if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+    }
+
+    constexpr float kInvUnitsPerMeter = 1.0f / 70.0f;
+    SnowStamp stamps[RawSnowDeformHost::kMaxStamps]{};
+    uint32_t stampCount = 0u;
+    for (uint32_t i = 0u; i < 32u && stampCount < RawSnowDeformHost::kMaxStamps; ++i) {
+        if (fi.footTrail[i][3] > 0.01f &&
+            std::isfinite(fi.footTrail[i][0]) && std::isfinite(fi.footTrail[i][1])) {
+            SnowStamp& st = stamps[stampCount++];
+            st.worldX         = fi.footTrail[i][0] * kInvUnitsPerMeter;
+            st.worldZ         = fi.footTrail[i][1] * kInvUnitsPerMeter;
+            st.radiusM        = 0.34f;
+            st.compressDepthM = std::clamp(fi.footTrail[i][3] * 0.20f, 0.05f, 0.26f);
+            st.rimRatio       = 0.88f;
+            st.headingRad     = 0.0f;
+            st.aspectRatio    = 1.25f;
+        }
+    }
+
+    SnowHeatSource heats[RawSnowDeformHost::kMaxHeatSources]{};
+    uint32_t heatCount = 0u;
+    for (uint32_t i = 0u; i < lighting.lightCount && heatCount < RawSnowDeformHost::kMaxHeatSources; ++i) {
+        const SceneLight& l = lighting.lights[i];
+        if (l.colour[0] > l.colour[1] * 1.25f && l.colour[0] > l.colour[2] * 2.2f &&
+            l.colour[0] > 0.45f && l.radius >= 50.0f && l.radius <= 900.0f) {
+            SnowHeatSource& hs = heats[heatCount++];
+            hs.worldX     = (lighting.posAdjust[0] + l.position[0]) * kInvUnitsPerMeter;
+            hs.worldZ     = (lighting.posAdjust[1] + l.position[1]) * kInvUnitsPerMeter;
+            hs.radiusM    = std::clamp(l.radius * kInvUnitsPerMeter * 0.75f, 1.5f, 8.0f);
+            hs.heatPowerC = std::clamp(35.0f + l.colour[0] * 30.0f, 35.0f, 95.0f);
+        }
+    }
+
+    const bool resetNow = (snowDeformStepFrames == 0ull) || (isInterior != snowDeformPrevInterior);
+    snowDeformPrevInterior = isInterior;
+
+    const float windSpeedMs = isInterior
+        ? 0.0f
+        : std::clamp(std::hypot(fi.windXY[0], fi.windXY[1]) * 0.05f, 0.0f, 20.0f);
+    const float wLen = std::hypot(fi.windXY[0], fi.windXY[1]);
+
+    SnowDeformParams sp{};
+    sp.camWorldX       = lighting.posAdjust[0] * kInvUnitsPerMeter;
+    sp.camWorldZ       = lighting.posAdjust[1] * kInvUnitsPerMeter;
+    sp.dtSec           = dtSec;
+    sp.snowfallRateMps = isInterior ? 0.0f : (weatherSnow * 0.006f);
+    sp.ambientTempC    = isInterior ? 16.0f : (std::isfinite(fi.ambientTempC) ? fi.ambientTempC : -4.0f);
+    sp.solarWarmthC    = (!isInterior && lighting.hasSun && lighting.sunDirection[2] > 0.05f)
+                             ? (lighting.sunDirection[2] * 5.0f) : 0.0f;
+    sp.baselineDepthM  = isInterior ? 0.0f : std::clamp(0.12f + weatherSnow * 0.42f, 0.12f, 0.55f);
+    sp.maxDepthM       = 1.50f;
+    sp.windSpeedMps    = windSpeedMs;
+    sp.windDirX        = (wLen > 1e-4f) ? (fi.windXY[0] / wLen) : 1.0f;
+    sp.windDirZ        = (wLen > 1e-4f) ? (fi.windXY[1] / wLen) : 0.0f;
+    sp.meltCoeff       = 0.008f;
+    sp.normalStrength  = 1.0f;
+    sp.resetField      = resetNow;
+    sp.stamps          = (stampCount > 0u) ? stamps : nullptr;
+    sp.stampCount      = stampCount;
+    sp.heatSources     = (heatCount > 0u) ? heats : nullptr;
+    sp.heatCount       = heatCount;
+
+    snowDeform->Execute(snowDeformList.Get(), sp);
+
+    if (FAILED(snowDeformList->Close())) return false;
+    ID3D12CommandList* lists[1] = {snowDeformList.Get()};
+    queue->ExecuteCommandLists(1u, lists);
+    queue->Signal(snowDeformFence.Get(), ++snowDeformFenceVal);
+    snowDeformSlotVal[slot] = snowDeformFenceVal;
+    snowDeformSlot = (slot + 1u) % kRing;
+
+    if ((snowDeformStepFrames++ % 180ull) == 0ull) {
+        log("[SnowDeform] live 512x512 snow/melt/footprints: stepMs=%.4f, normalMs=%.4f, totalMs=%.4f, stamps=%u, heats=%u, snow=%.2f",
+            snowDeform->HasValidTiming() ? snowDeform->GetLastStepMs() : 0.0f,
+            snowDeform->HasValidTiming() ? snowDeform->GetLastNormalMs() : 0.0f,
+            snowDeform->HasValidTiming() ? snowDeform->GetLastTotalMs() : 0.0f,
+            stampCount, heatCount, weatherSnow);
+    }
+    return true;
+}
 
 bool D3D12Bridge::Impl::CpuWait(uint64_t value, DWORD timeoutMs)
 {
@@ -165,6 +2444,37 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         fc.lighting = &m->lighting;
         fc.hasSurface = s.hasSurface;
         fc.hasShadows = s.hasShadows;
+        // Live beyond-Tamriel 6-biome frontier chunk + 3D procedural hero prop streaming (O(1) no-op inside Tamriel):
+        if (m->lighting.valid && m->meshHost.TerrainReady()) {
+            struct BridgeChunkSink final : raw::worldgen::IGpuChunkSink {
+                D3D12Bridge::Impl* impl = nullptr;
+                uint64_t OnChunkLoaded(const raw::worldgen::StreamedChunkEntry& entry) override {
+                    raw::worldgen::ProceduralMesh merged{};
+                    const auto& wcfg = impl->worldShowcase.Config();
+                    if (!raw::worldgen::BuildChunkMergedGpuMesh(entry, wcfg.maxMeshletTris, wcfg.terrain.seed,
+                                                                wcfg.terrain.seaLevelZ, &merged)) {
+                        return 0u;
+                    }
+                    TerrainGpuChunk gpu{};
+                    if (!impl->meshHost.UploadTerrainChunk(merged, &gpu)) return 0u;
+                    const uint64_t h = impl->nextTerrainHandle++;
+                    impl->streamedTerrainGpu.emplace(h, std::move(gpu));
+                    return h;
+                }
+                void OnChunkEvicted(raw::worldgen::ChunkKey, uint64_t gpuHandle) override {
+                    if (gpuHandle == 0u) return;
+                    auto it = impl->streamedTerrainGpu.find(gpuHandle);
+                    if (it != impl->streamedTerrainGpu.end()) {
+                        impl->meshHost.DeferRelease(std::move(it->second));
+                        impl->streamedTerrainGpu.erase(it);
+                    }
+                }
+            };
+            BridgeChunkSink sink;
+            sink.impl = m.get();
+            m->lastWorldStats = m->worldShowcase.Update(
+                {m->lighting.posAdjust[0], m->lighting.posAdjust[1], m->lighting.posAdjust[2]}, &sink);
+        }
     }
 
     // The pass records first, so recording time never shows up as a stall,
@@ -183,6 +2493,387 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     }
     m->HarvestPassTimings();   // recording may have retired the frame before
     m->nextValue = v2 + 1;
+
+    // Sample frame delta into 64-frame sparkline history and poll debounced opt-in F9 hotkey (default OFF).
+    m->RecordFrameTimingSample();
+    m->PollOverlayHotkey();
+
+    // Inspect active LightingPass / Water debug view flags (flags[3] = LightingTuning::view, waterB[0] = waterView)
+    // so Debug Views 1..35 and WaterViews 1..7 pass through 100% uncorrupted by ScreenGI, Fire, or LiveWorld!
+    uint32_t lpDebugView = 0u;
+    uint32_t lpWaterView = 0u;
+    {
+        const void* dbgU = nullptr;
+        size_t dbgUb = 0u;
+        if (m->pass && LightingPassUniform(m->pass.get(), &dbgU, &dbgUb) &&
+            dbgU != nullptr && dbgUb >= sizeof(TelemetryLightUniformView)) {
+            const auto* u = static_cast<const TelemetryLightUniformView*>(dbgU);
+            lpDebugView = u->flags[3];
+            if (std::isfinite(u->waterB[0]) && u->waterB[0] > 0.5f) {
+                lpWaterView = static_cast<uint32_t>(u->waterB[0] + 0.5f);
+            }
+        }
+    }
+    const bool anyPipelineDebugView = (lpDebugView != 0u) || (lpWaterView != 0u);
+    const bool skipFireCompositeForDebug = (lpDebugView != 0u && lpDebugView != 36u) || (lpWaterView != 0u);
+
+    // Determine whether live RawTerrainWorld.hlsl multi-biome rendering runs after LightingPass this frame.
+    const bool isInterior = m->lighting.hasEngineCell
+        ? m->lighting.isInterior
+        : !(s.hasShadows && m->lighting.hasCascades);
+    const void* terrainU = nullptr;
+    size_t terrainUb = 0;
+    const bool runTerrain = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && !isInterior &&
+                            !m->streamedTerrainGpu.empty() && m->meshHost.TerrainReady() &&
+                            LightingPassUniform(m->pass.get(), &terrainU, &terrainUb);
+    const bool runFluid = m->cfg.lightingPass && m->lighting.valid && m->fluidReady && m->fluidSim.Ready();
+    const bool runRadiance = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid &&
+                             m->radianceReady && m->radianceHost.ScreenGIReady();
+    const bool runXpbd = m->cfg.lightingPass && m->lighting.valid && m->xpbdSimReady && m->xpbdSim && m->xpbdSim->Ready();
+    const bool runGpuCull = m->cfg.lightingPass && m->lighting.valid && m->gpuCullReady && m->gpuCull &&
+                            m->gpuCull->Ready() && m->depthIn.res12 != nullptr;
+    const bool runLightClusters = m->cfg.lightingPass && m->lighting.valid && m->lightClustersReady &&
+                                  m->lightClusters && m->lightClusters->Ready();
+    const bool runVolFroxels = m->cfg.lightingPass && m->lighting.valid && m->volFroxelsReady &&
+                               m->volFroxels && m->volFroxels->Ready();
+    const bool runShadowPcss = m->cfg.lightingPass && m->lighting.valid && m->shadowPcssReady &&
+                               m->shadowPcss && m->shadowPcss->Ready() && m->depthIn.res12 != nullptr;
+    const bool runGtao = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->gtaoHostReady &&
+                         m->gtaoHost && m->gtaoHost->Ready() && m->depthIn.res12 != nullptr;
+    const bool runSsr = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->ssrHostReady &&
+                        m->ssrHost && m->ssrHost->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+    const bool runAutoExposure = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->autoExposureReady &&
+                                 m->autoExposure && m->autoExposure->Ready() && m->colorOut.res12 != nullptr;
+    const bool runCloudRaymarch = m->cfg.lightingPass && m->lighting.valid && m->cloudRaymarchReady &&
+                                  m->cloudRaymarch && m->cloudRaymarch->Ready();
+    const bool runPostCinematic = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->postCinematicReady &&
+                                  m->postCinematic && m->postCinematic->Ready() &&
+                                  m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+    const bool runGpuParticles = m->cfg.lightingPass && m->lighting.valid && m->gpuParticlesReady &&
+                                 m->gpuParticles && m->gpuParticles->Ready();
+    const bool runTsrUpscale = !anyPipelineDebugView && m->cfg.lightingPass && m->lighting.valid && m->tsrUpscaleReady &&
+                               m->tsrUpscale && m->tsrUpscale->Ready() &&
+                               m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr;
+    const bool runWaterCaustics = m->cfg.lightingPass && m->lighting.valid && m->waterCausticsReady &&
+                                  m->waterCaustics && m->waterCaustics->Ready();
+    const bool runSnowDeform = m->cfg.lightingPass && m->lighting.valid && m->snowDeformReady &&
+                               m->snowDeform && m->snowDeform->Ready();
+    LiveWorldBridgeRuntime& lwRt = GetLiveWorldRuntime(m.get());
+    if (m->cfg.lightingPass && m->lighting.valid && m->dev12 && m->queue) {
+        lwRt.EnsureInit(m->dev12.Get(), m->queue.Get(), m->log);
+    }
+    const bool runGrassWind = m->cfg.lightingPass && m->lighting.valid && lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->Ready();
+    const bool runLiveWorld = m->cfg.lightingPass && m->lighting.valid && lwRt.liveWorldReady && lwRt.liveWorld &&
+                              lwRt.liveWorld->Ready() && m->colorOut.res12 != nullptr && m->depthIn.res12 != nullptr &&
+                              (!anyPipelineDebugView || lwRt.activeDebugView != 0u);
+    const bool runOverlay = (m->overlayHudEnabled || lwRt.debugDrawerEnabled || lwRt.activeDebugView != 0u) &&
+                            m->overlayHostReady && m->overlayHost && m->overlayHost->Ready();
+    const bool hasPostWork = runTerrain || runFluid || runRadiance || runXpbd || runGpuCull || runLightClusters || runVolFroxels || runShadowPcss || runGtao || runSsr || runAutoExposure || runCloudRaymarch || runPostCinematic || runGpuParticles || runTsrUpscale || runWaterCaustics || runSnowDeform || runGrassWind || runLiveWorld || runOverlay;
+    auto runPostLightingPasses = [&]() -> bool {
+        if (!hasPostWork) return true;
+        if (runTerrain) {
+            uint32_t drawnChunks = 0u, drawnMeshlets = 0u;
+            const float timeSec = float(double(GetTickCount64() % 3600000ull) / 1000.0);
+            ID3D12Resource* atlasRes = s.hasShadows ? m->shared[static_cast<UINT>(Shared::ShadowAtlas)].res12.Get() : nullptr;
+            const bool okT = m->meshHost.ExecuteTerrainPass(
+                m->queue.Get(), m->colorOut.res12.Get(), m->depthIn.res12.Get(), atlasRes,
+                m->cfg.width, m->cfg.height, terrainU, terrainUb,
+                &m->lighting.worldToClip[0][0], m->lighting.posAdjust, timeSec,
+                m->streamedTerrainGpu, &drawnChunks, &drawnMeshlets);
+            if (okT) {
+                if ((m->terrainRenderFrames++ % 180ull) == 0ull) {
+                    m->log("[WorldGen] LIVE render: %u chunks (%u meshlets) at cam (%.0f, %.0f, %.0f) biome=%s",
+                           drawnChunks, drawnMeshlets,
+                           m->lighting.posAdjust[0], m->lighting.posAdjust[1], m->lighting.posAdjust[2],
+                           raw::worldgen::GetBiomeName(m->lastWorldStats.cameraBiome));
+                }
+            }
+        }
+        if (runFluid) {
+            m->StepFluidSimOnQueue(isInterior);
+            // Forward live 256x256 GPU SWE water state + normals to RtWater (RtScene):
+            if (m->rt) {
+                const auto wDom = m->fluidSim.GetWaterDomainInfo();
+                if (wDom.active && m->fluidSim.WaterStateResource() && m->fluidSim.WaterNormalResource()) {
+                    m->rt->SetFluidWaterResources(
+                        m->fluidSim.WaterStateResource(), m->fluidSim.WaterNormalResource(),
+                        wDom.originXY[0], wDom.originXY[1], wDom.worldSpanU);
+                }
+            }
+            // Composite live 64x64x64 GPU 3D Navier-Stokes fire/smoke/radiance directly onto colorOut with SceneDepth occlusion
+            // (strictly skipped on Lighting Debug Views 1..35 and WaterViews 1..7 so debug buffers stay bit-exact pure!):
+            const auto fDom = m->fluidSim.GetFireDomainInfo();
+            if (!skipFireCompositeForDebug && m->fluidComposite.Ready() && fDom.active && fDom.emitterCount > 0u &&
+                m->fluidSim.FireThermoResource() && m->fluidSim.FireRadianceResource()) {
+                LightingFluidInputs fi{};
+                LightingPassFluidInputs(m->pass.get(), &fi);
+                FluidCompositeParams cp{};
+                std::memcpy(cp.clipToWorld, &m->lighting.clipToWorld[0][0], 64u);
+                cp.camPosW[0] = m->lighting.posAdjust[0];
+                cp.camPosW[1] = m->lighting.posAdjust[1];
+                cp.camPosW[2] = m->lighting.posAdjust[2];
+                cp.simTimeSec = fi.simTimeSec;
+                cp.domainMinW[0] = fDom.originXYZ[0];
+                cp.domainMinW[1] = fDom.originXYZ[1];
+                cp.domainMinW[2] = fDom.originXYZ[2];
+                cp.domainSpanW = fDom.worldSpanU;
+                cp.resScale[0] = m->lighting.resolutionScale[0];
+                cp.resScale[1] = m->lighting.resolutionScale[1];
+                cp.sunDir[0] = m->lighting.sunDirection[0];
+                cp.sunDir[1] = m->lighting.sunDirection[1];
+                cp.sunDir[2] = m->lighting.sunDirection[2];
+                cp.sunIntensity = m->lighting.hasSun ? 1.0f : 0.25f;
+                cp.sunCol[0] = m->lighting.sunColour[0];
+                cp.sunCol[1] = m->lighting.sunColour[1];
+                cp.sunCol[2] = m->lighting.sunColour[2];
+                cp.ambientFill = isInterior ? 0.35f : 0.65f;
+                cp.width = m->cfg.width;
+                cp.height = m->cfg.height;
+                cp.activeEmitters = fDom.emitterCount;
+                cp.isInterior = isInterior;
+                if constexpr (requires { cp.debugOverlayMode; }) {
+                    cp.debugOverlayMode = (lpDebugView == 36u);
+                }
+                if (m->fluidComposite.Composite(
+                        m->queue.Get(), m->colorOut.res12.Get(), m->depthIn.res12.Get(),
+                        m->fluidSim.FireThermoResource(), m->fluidSim.FireRadianceResource(), cp)) {
+                    if ((m->fluidCompFrames++ % 180ull) == 0ull) {
+                        m->log("[FluidComposite] live 64^3 NS fire/smoke composited: emitters=%u, domainSpan=%.0fu",
+                               fDom.emitterCount, fDom.worldSpanU);
+                    }
+                }
+            }
+        }
+        if (runRadiance) {
+            m->ExecuteRadianceScreenGiOnQueue();
+        }
+        if (runXpbd) {
+            m->StepXpbdSimOnQueue(isInterior);
+        }
+        if (runGpuCull) {
+            m->ExecuteGpuCullOnQueue();
+        }
+        if (runLightClusters) {
+            m->ExecuteLightClustersOnQueue();
+        }
+        if (runVolFroxels) {
+            m->ExecuteVolFroxelsOnQueue(isInterior);
+        }
+        if (runShadowPcss) {
+            m->ExecuteShadowPcssOnQueue(s.hasShadows);
+        }
+        if (runGtao) {
+            m->ExecuteGtaoOnQueue();
+        }
+        if (runSsr) {
+            m->ExecuteSsrOnQueue();
+        }
+        if (runAutoExposure) {
+            m->ExecuteAutoExposureOnQueue();
+        }
+        if (runCloudRaymarch) {
+            m->ExecuteCloudRaymarchOnQueue(isInterior);
+        }
+        if (runPostCinematic) {
+            m->ExecutePostCinematicOnQueue(s.hasMotion);
+        }
+        if (runGpuParticles) {
+            m->ExecuteGpuParticlesOnQueue(isInterior);
+        }
+        if (runTsrUpscale) {
+            m->ExecuteTsrUpscaleOnQueue(s.hasMotion, isInterior);
+        }
+        if (runWaterCaustics) {
+            m->ExecuteWaterCausticsOnQueue(isInterior);
+        }
+        if (runSnowDeform) {
+            m->ExecuteSnowDeformOnQueue(isInterior);
+        }
+        if (runGrassWind) {
+            const uint32_t gSlot = lwRt.grassSlot;
+            if (lwRt.grassSlotVal[gSlot] > 0ull && lwRt.grassFence->GetCompletedValue() < lwRt.grassSlotVal[gSlot]) {
+                lwRt.grassFence->SetEventOnCompletion(lwRt.grassSlotVal[gSlot], lwRt.grassEvent);
+                WaitForSingleObject(lwRt.grassEvent, 3000);
+            }
+            if (SUCCEEDED(lwRt.grassAlloc[gSlot]->Reset()) &&
+                SUCCEEDED(lwRt.grassList->Reset(lwRt.grassAlloc[gSlot].Get(), nullptr))) {
+                const uint64_t nowMs = GetTickCount64();
+                float gDt = 1.0f / 60.0f;
+                if (lwRt.grassLastMs > 0ull && nowMs >= lwRt.grassLastMs) {
+                    gDt = std::clamp(static_cast<float>(nowMs - lwRt.grassLastMs) * 0.001f, 0.001f, 0.05f);
+                }
+                lwRt.grassLastMs = nowMs;
+                if (m->lighting.menuPaused) gDt = 0.0f;
+
+                LightingFluidInputs fi{};
+                LightingPassFluidInputs(m->pass.get(), &fi);
+
+                float weatherSnow = 0.0f;
+                const void* uPtr = nullptr;
+                size_t uBytes = 0u;
+                if (m->pass && LightingPassUniform(m->pass.get(), &uPtr, &uBytes) &&
+                    uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+                    const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+                    if (std::isfinite(u->weather[1])) weatherSnow = std::clamp(u->weather[1], 0.0f, 1.0f);
+                }
+
+                constexpr float kInvUpm = 1.0f / 70.0f;
+                GrassTrampleCapsule caps[RawGrassWindHost::kMaxCapsules]{};
+                uint32_t capCount = 0u;
+                for (uint32_t i = 0u; i < 32u && capCount < RawGrassWindHost::kMaxCapsules; ++i) {
+                    if (fi.footTrail[i][3] > 0.01f &&
+                        std::isfinite(fi.footTrail[i][0]) && std::isfinite(fi.footTrail[i][1])) {
+                        GrassTrampleCapsule& c = caps[capCount++];
+                        c.startX          = fi.footTrail[i][0] * kInvUpm;
+                        c.startZ          = fi.footTrail[i][1] * kInvUpm;
+                        c.endX            = c.startX;
+                        c.endZ            = c.startZ;
+                        c.velX            = 0.0f;
+                        c.velZ            = 0.0f;
+                        c.radiusM         = 0.85f;
+                        c.flattenAngleRad = std::clamp(fi.footTrail[i][3] * 1.15f, 0.25f, 1.25f);
+                    }
+                }
+
+                GrassHeatSource gHeats[RawGrassWindHost::kMaxHeatSources]{};
+                uint32_t gHeatCount = 0u;
+                for (uint32_t i = 0u; i < m->lighting.lightCount && gHeatCount < RawGrassWindHost::kMaxHeatSources; ++i) {
+                    const SceneLight& l = m->lighting.lights[i];
+                    if (l.colour[0] > l.colour[1] * 1.32f && l.colour[0] > l.colour[2] * 2.40f &&
+                        l.colour[0] > 0.50f && l.radius >= 50.0f && l.radius <= 460.0f) {
+                        GrassHeatSource& h = gHeats[gHeatCount++];
+                        h.worldX    = (m->lighting.posAdjust[0] + l.position[0]) * kInvUpm;
+                        h.worldZ    = (m->lighting.posAdjust[1] + l.position[1]) * kInvUpm;
+                        h.radiusM   = std::clamp(l.radius * kInvUpm * 0.45f, 0.8f, 3.5f);
+                        h.heatPower = 1.4f;
+                    }
+                }
+
+                const bool gReset = (lwRt.grassStepFrames == 0ull) || (isInterior != lwRt.grassPrevInterior);
+                lwRt.grassPrevInterior = isInterior;
+                const float wLen = std::hypot(fi.windXY[0], fi.windXY[1]);
+
+                GrassWindParams gp{};
+                gp.camWorldX     = m->lighting.posAdjust[0] * kInvUpm;
+                gp.camWorldZ     = m->lighting.posAdjust[1] * kInvUpm;
+                gp.dtSec         = gDt;
+                gp.timeSec       = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+                gp.windSpeedMps  = isInterior ? 0.0f : std::clamp(1.2f + wLen * 0.05f, 0.8f, 18.0f);
+                gp.windDirX      = (wLen > 1e-4f) ? (fi.windXY[0] / wLen) : 0.92f;
+                gp.windDirZ      = (wLen > 1e-4f) ? (fi.windXY[1] / wLen) : 0.39f;
+                gp.gustStrength  = isInterior ? 0.0f : 0.78f;
+                gp.springOmega   = 2.6f;
+                gp.snowLoad01    = isInterior ? 0.0f : weatherSnow;
+                gp.charRateScale = 0.50f;
+                gp.resetField    = gReset;
+                gp.capsules      = (capCount > 0u) ? caps : nullptr;
+                gp.capsuleCount  = capCount;
+                gp.heatSources   = (gHeatCount > 0u) ? gHeats : nullptr;
+                gp.heatCount     = gHeatCount;
+
+                lwRt.grassWind->Execute(lwRt.grassList.Get(), gp);
+                if (SUCCEEDED(lwRt.grassList->Close())) {
+                    ID3D12CommandList* gLists[1] = {lwRt.grassList.Get()};
+                    m->queue->ExecuteCommandLists(1u, gLists);
+                    m->queue->Signal(lwRt.grassFence.Get(), ++lwRt.grassFenceVal);
+                    lwRt.grassSlotVal[gSlot] = lwRt.grassFenceVal;
+                    lwRt.grassSlot = (gSlot + 1u) % kRing;
+                    ++lwRt.grassStepFrames;
+                }
+            }
+        }
+        if (runLiveWorld) {
+            LightingFluidInputs fi{};
+            LightingPassFluidInputs(m->pass.get(), &fi);
+
+            LiveWorldCompositeParams lwp{};
+            std::memcpy(lwp.clipToWorld, &m->lighting.clipToWorld[0][0], 64u);
+            lwp.camPosW[0] = m->lighting.posAdjust[0];
+            lwp.camPosW[1] = m->lighting.posAdjust[1];
+            lwp.camPosW[2] = m->lighting.posAdjust[2];
+            lwp.simTimeSec = std::isfinite(fi.simTimeSec) ? fi.simTimeSec : 0.0f;
+            lwp.resScale[0] = m->lighting.resolutionScale[0];
+            lwp.resScale[1] = m->lighting.resolutionScale[1];
+            lwp.waterPlaneZ_u = std::isfinite(fi.waterPlaneZ) ? fi.waterPlaneZ : -14000.0f;
+            lwp.sunDir[0] = m->lighting.sunDirection[0];
+            lwp.sunDir[1] = m->lighting.sunDirection[1];
+            lwp.sunDir[2] = m->lighting.sunDirection[2];
+            lwp.sunIntensity = m->lighting.hasSun ? 1.0f : 0.25f;
+            lwp.sunCol[0] = m->lighting.sunColour[0];
+            lwp.sunCol[1] = m->lighting.sunColour[1];
+            lwp.sunCol[2] = m->lighting.sunColour[2];
+            lwp.windXY[0] = fi.windXY[0];
+            lwp.windXY[1] = fi.windXY[1];
+            lwp.rain01 = std::clamp(fi.rainIntensity, 0.0f, 1.0f);
+            lwp.width = m->cfg.width;
+            lwp.height = m->cfg.height;
+            lwp.activeDebugView = lwRt.activeDebugView;
+            lwp.isInterior = isInterior;
+            lwp.menuPaused = m->lighting.menuPaused;
+
+            const void* uPtr = nullptr;
+            size_t uBytes = 0u;
+            if (m->pass && LightingPassUniform(m->pass.get(), &uPtr, &uBytes) &&
+                uPtr != nullptr && uBytes >= sizeof(TelemetryLightUniformView)) {
+                const auto* u = static_cast<const TelemetryLightUniformView*>(uPtr);
+                std::memcpy(lwp.viewToWorld, u->viewToWorld, sizeof(lwp.viewToWorld));
+                if (std::isfinite(u->seasonThermal0[0])) lwp.seasonSnowDepthM = std::max(0.0f, u->seasonThermal0[0]);
+                const float wSnow = std::isfinite(u->weather[1]) ? std::clamp(u->weather[1], 0.0f, 1.0f) : 0.0f;
+                lwp.snowBaselineDepthM = std::clamp(0.12f + wSnow * 0.42f, 0.12f, 0.55f);
+                lwp.lightingDebugActive = anyPipelineDebugView;
+            }
+
+            LiveWorldInputResources lwr{};
+            lwr.colorOut       = m->colorOut.res12.Get();
+            lwr.colorOutState  = D3D12_RESOURCE_STATE_COMMON;
+            lwr.depthIn        = m->depthIn.res12.Get();
+            lwr.depthInState   = D3D12_RESOURCE_STATE_COMMON;
+            lwr.normalIn       = s.hasNormal ? m->normalIn.res12.Get() : nullptr;
+            lwr.normalInState  = D3D12_RESOURCE_STATE_COMMON;
+            lwr.albedoIn       = s.hasSurface ? m->shared[static_cast<UINT>(Shared::Albedo)].res12.Get() : nullptr;
+            lwr.albedoInState  = D3D12_RESOURCE_STATE_COMMON;
+            lwr.specularIn     = s.hasSurface ? m->shared[static_cast<UINT>(Shared::Specular)].res12.Get() : nullptr;
+            lwr.specularInState = D3D12_RESOURCE_STATE_COMMON;
+
+            if (runSnowDeform && m->snowDeform && m->snowDeform->GetStateResource() && m->snowDeform->GetNormalResource()) {
+                lwr.snowState          = m->snowDeform->GetStateResource();
+                lwr.snowStateState     = m->snowDeform->StateResourceState();
+                lwr.snowNormal         = m->snowDeform->GetNormalResource();
+                lwr.snowNormalState    = m->snowDeform->NormalResourceState();
+                lwp.snowOriginWorldX_m = m->snowDeform->OriginWorldX();
+                lwp.snowOriginWorldZ_m = m->snowDeform->OriginWorldZ();
+                lwp.snowSpanM          = m->snowDeform->WorldSpanM();
+                lwp.snowStrength       = isInterior ? 0.0f : 0.90f;
+            }
+            if (runWaterCaustics && m->waterCaustics && m->waterCaustics->GetCausticsResource()) {
+                lwr.waterCaustics      = m->waterCaustics->GetCausticsResource();
+                lwr.waterCausticsState = m->waterCaustics->CausticsResourceState();
+                lwp.causticsDomainM    = 8.0f;
+                lwp.causticsStrength   = 0.85f;
+            }
+            if (runGrassWind && lwRt.grassWind && lwRt.grassWind->GetBendFieldResource()) {
+                lwr.grassBend           = lwRt.grassWind->GetBendFieldResource();
+                lwr.grassBendState      = lwRt.grassWind->BendFieldResourceState();
+                lwp.grassOriginWorldX_m = lwRt.grassWind->OriginWorldX();
+                lwp.grassOriginWorldZ_m = lwRt.grassWind->OriginWorldZ();
+                lwp.grassSpanM          = lwRt.grassWind->WorldSpanM();
+                lwp.grassStrength       = isInterior ? 0.0f : 0.78f;
+            }
+
+            if (lwRt.liveWorld->Composite(m->queue.Get(), lwr, lwp)) {
+                if ((lwRt.liveWorldFrames++ % 180ull) == 0ull) {
+                    m->log("[LiveWorld] composited world-space snow/caustics/grass: cmpMs=%.4f, grsMs=%.4f, dbgView=%u",
+                           lwRt.liveWorld->HasValidTiming() ? lwRt.liveWorld->GetLastCompositeMs() : 0.0f,
+                           (lwRt.grassReady && lwRt.grassWind && lwRt.grassWind->HasValidTiming()) ? lwRt.grassWind->GetLastStepMs() : 0.0f,
+                           static_cast<unsigned>(lwRt.activeDebugView));
+                }
+            }
+        }
+        if (runOverlay) {
+            m->ExecuteOverlayHudOnQueue(isInterior);
+        }
+        return SUCCEEDED(m->queue->Signal(m->fence12.Get(), v2));
+    };
 
     // D3D11: copy in, hand over, take back, copy out.
     auto* c = m->ctx11.Get();
@@ -219,7 +2910,8 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
                                      m->shared[static_cast<UINT>(Shared::Specular)].res12.Get(),
                                      fc.hasMotion ? m->motionIn.res12.Get() : nullptr, m->colorIn.res12.Get());
         }
-        if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) || !m->pass->Submit(0, v2)) {
+        if (!m->HandToHost(hand) || (rtOk && !m->rt->Submit(m->queue.Get())) ||
+            !m->pass->Submit(0, hasPostWork ? 0 : v2) || !runPostLightingPasses()) {
             m->log("[D3D12Bridge] attached hand-over failed; bridge off");
             c->End(s.disjoint.Get());
             s.open = false;
@@ -235,6 +2927,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         s.open = false;
         s.executed = true;
         ++m->frames;
+        m->EmitLiveTelemetry(fc.rt);
         StreamlineHost::Get().ReflexBeginFrame(static_cast<uint32_t>(m->frames));
         return true;
     }
@@ -252,7 +2945,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
         return false;
     }
     m->ProbeHead(frame, waitValue);
-    if (!m->pass->Submit(waitValue, v2)) {
+    if (!m->pass->Submit(waitValue, hasPostWork ? 0 : v2) || !runPostLightingPasses()) {
         // Nothing will signal v2 now, so D3D11 must not wait for it.
         m->log("[D3D12Bridge] pass '%s' failed to submit; bridge off", m->pass->Name());
         c->End(s.disjoint.Get());
@@ -283,6 +2976,7 @@ bool D3D12Bridge::Execute(ID3D11Resource* colorSrc, ID3D11Resource* colorDst,
     s.open = false;
     s.executed = true;
     ++m->frames;
+    m->EmitLiveTelemetry(fc.rt);
     StreamlineHost::Get().ReflexBeginFrame(static_cast<uint32_t>(m->frames));
     return true;
 }

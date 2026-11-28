@@ -220,19 +220,72 @@ D3D12_GPU_DESCRIPTOR_HANDLE Device::SamplerTable(const uint32_t* ids, uint32_t n
     std::lock_guard<std::mutex> g(cacheM_);
     auto it = sampTables_.find(key);
     if (it != sampTables_.end()) return it->second;
-    if (sampUsed_ + n > kSamplerDescriptors) {
-        Log("sampler heap exhausted (%u unique tables)", unsigned(sampTables_.size()));
-        return samplerHeap->GetGPUDescriptorHandleForHeapStart();
+
+    const D3D12_GPU_DESCRIPTOR_HANDLE gpuBase = samplerHeap->GetGPUDescriptorHandleForHeapStart();
+
+    // 1. Exact contiguous sub-array reuse: if ids[0..n) already sits inside sampSlotIds_[0..sampUsed_),
+    //    reuse that exact GPU descriptor range at 0 new descriptors!
+    if (n > 0 && sampUsed_ >= n) {
+        const uint32_t limit = sampUsed_ - n;
+        for (uint32_t pos = 0; pos <= limit; ++pos) {
+            if (sampSlotIds_[pos] == ids[0] && memcmp(&sampSlotIds_[pos], ids, n * sizeof(uint32_t)) == 0) {
+                D3D12_GPU_DESCRIPTOR_HANDLE h = gpuBase;
+                h.ptr += UINT64(pos) * sampInc;
+                sampTables_.emplace(key, h);
+                return h;
+            }
+        }
     }
+
+    // 2. Suffix-prefix overlap packing: match the longest tail of sampSlotIds_ against a prefix of ids[0..n)
+    //    so overlapping Skyrim sampler tables consume only the truly new tail descriptors!
+    uint32_t overlap = 0;
+    const uint32_t maxOv = n > 1 ? std::min(sampUsed_, n - 1) : 0;
+    for (uint32_t k = maxOv; k >= 1; --k) {
+        if (memcmp(&sampSlotIds_[sampUsed_ - k], ids, k * sizeof(uint32_t)) == 0) {
+            overlap = k;
+            break;
+        }
+    }
+
+    const uint32_t need = n - overlap;
+    if (sampUsed_ + need > kSamplerDescriptors) {
+        if (!sampExhaustedLogged_) {
+            sampExhaustedLogged_ = true;
+            Log("sampler heap full (%u unique tables, %u/%u slots used); using best-prefix fallback",
+                unsigned(sampTables_.size()), unsigned(sampUsed_), unsigned(kSamplerDescriptors));
+        }
+        // Best-prefix fallback: find the existing offset with the most matching leading sampler slots
+        // (far cleaner than blindly returning slot 0!).
+        uint32_t bestPos = 0, bestMatch = 0;
+        if (n > 0 && sampUsed_ >= n) {
+            const uint32_t limit = sampUsed_ - n;
+            for (uint32_t pos = 0; pos <= limit; ++pos) {
+                uint32_t m = 0;
+                while (m < n && sampSlotIds_[pos + m] == ids[m]) ++m;
+                if (m > bestMatch) {
+                    bestMatch = m;
+                    bestPos = pos;
+                    if (m == n) break;
+                }
+            }
+        }
+        D3D12_GPU_DESCRIPTOR_HANDLE h = gpuBase;
+        h.ptr += UINT64(bestPos) * sampInc;
+        return h;
+    }
+
+    const uint32_t startPos = sampUsed_ - overlap;
     D3D12_CPU_DESCRIPTOR_HANDLE c = samplerHeap->GetCPUDescriptorHandleForHeapStart();
     c.ptr += SIZE_T(sampUsed_) * sampInc;
-    for (uint32_t i = 0; i < n; ++i) {
-        D3D12_CPU_DESCRIPTOR_HANDLE dst{c.ptr + SIZE_T(i) * sampInc};
+    for (uint32_t i = overlap; i < n; ++i) {
+        D3D12_CPU_DESCRIPTOR_HANDLE dst{c.ptr + SIZE_T(i - overlap) * sampInc};
         d3d->CopyDescriptorsSimple(1, dst, sampHandles_[ids[i]], D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+        sampSlotIds_[sampUsed_ + (i - overlap)] = ids[i];
     }
-    D3D12_GPU_DESCRIPTOR_HANDLE h = samplerHeap->GetGPUDescriptorHandleForHeapStart();
-    h.ptr += UINT64(sampUsed_) * sampInc;
-    sampUsed_ += n;
+    D3D12_GPU_DESCRIPTOR_HANDLE h = gpuBase;
+    h.ptr += UINT64(startPos) * sampInc;
+    sampUsed_ += need;
     sampTables_.emplace(key, h);
     return h;
 }

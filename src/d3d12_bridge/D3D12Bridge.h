@@ -169,6 +169,10 @@ struct RtDraw
     uint32_t blendInfo = 0;              // actors: colour write mask of target 0 | blend on << 8 | depth write << 9
     uint8_t* diagVb = nullptr; uint8_t* diagBv = nullptr;
     uint32_t diagVbBytes = 0, diagBvBytes = 0;
+    // Live 4x curved/snowpack-lifted TxSubdiv D3D12 buffers (optional, COM ref held until ReleaseRtDraw):
+    ID3D12Resource* subdivVb = nullptr;
+    ID3D12Resource* subdivIb = nullptr;
+    uint32_t subdivIndexCount = 0, subdivVertCount = 0;
     // How the references are given back; nullptr: Release. The RAW proxy on raw::tx takes them as the
     // layer's plain host references (raw::tx::HoldBuffer, HoldView): no locked instruction per draw.
     void (*drop)(RtDraw&) = nullptr;
@@ -183,9 +187,12 @@ inline void ReleaseRtDraw(RtDraw& d)
     if (d.alphaSrv) d.alphaSrv->Release();
     if (d.uvVb) d.uvVb->Release();
     if (d.blendVb) d.blendVb->Release();
+    if (d.subdivVb) d.subdivVb->Release();
+    if (d.subdivIb) d.subdivIb->Release();
     delete[] d.bones;
     delete[] d.diagVb; delete[] d.diagBv;
     d.diagVb = nullptr; d.diagBv = nullptr; d.diagVbBytes = d.diagBvBytes = 0;
+    d.subdivVb = nullptr; d.subdivIb = nullptr; d.subdivIndexCount = d.subdivVertCount = 0;
     d.vb = nullptr; d.ib = nullptr; d.alphaSrv = nullptr; d.uvVb = nullptr; d.blendVb = nullptr; d.bones = nullptr;
 }
 
@@ -229,6 +236,7 @@ struct RtTuning
     bool     cache = true;           // the world-space radiance cache
     float    cacheCell = 16.0f;      // game units: the finest cell, doubling with distance
     int      debugView = 0;          // 1 the primary ray (RtDebug=1), 2 the cache at each pixel, 3 the hit's colour copy
+    int      hwTier = 3;             // 0..4 hardware GPU tier (RTX 3060=1 .. 4090=3 .. 5090=4) for adaptive ray budgets
     float    cameraPos[3] = {};      // the camera in a world frame that stays put (SceneLighting::cameraStep summed)
 };
 
@@ -405,6 +413,8 @@ public:
     bool TuneEngine(const EngineTuning& t);
     IBridgePass* ActivePass();   // the pass behind the seam, for its own knobs (LightingPassTune)
     bool ReadEngineVisibility(std::vector<float>* out);
+    // Pristine D3D11 colorOut texture written by LightingPass/Rawlss5Pass before post-opaque decals/water/particles.
+    ID3D11Texture2D* ColorOutTex11() const;
 
     // A D3D12-side read of a shared texture, as tight rows: proof of what
     // crossed the bridge. Waits for the queue. Slow; for captures and tests.

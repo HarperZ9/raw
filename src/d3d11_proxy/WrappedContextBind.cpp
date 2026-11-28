@@ -49,21 +49,31 @@ void STDMETHODCALLTYPE WrappedContext::CSSetConstantBuffers(UINT StartSlot, UINT
 
 void STDMETHODCALLTYPE WrappedContext::IASetInputLayout(ID3D11InputLayout* pInputLayout)
 {
+    m_drawBindState.inputLayout = pInputLayout;
     m_real->IASetInputLayout(pInputLayout);
 }
 
 void STDMETHODCALLTYPE WrappedContext::IASetVertexBuffers(UINT StartSlot, UINT NumBuffers, ID3D11Buffer* const* ppVBs, const UINT* pStrides, const UINT* pOffsets)
 {
+    if (StartSlot == 0u && NumBuffers > 0u) {
+        m_drawBindState.vertexBuffer0 = ppVBs ? ppVBs[0] : nullptr;
+        m_drawBindState.vb0Stride     = pStrides ? pStrides[0] : 0u;
+        m_drawBindState.vb0Offset     = pOffsets ? pOffsets[0] : 0u;
+    }
     m_real->IASetVertexBuffers(StartSlot, NumBuffers, ppVBs, pStrides, pOffsets);
 }
 
 void STDMETHODCALLTYPE WrappedContext::IASetIndexBuffer(ID3D11Buffer* pIB, DXGI_FORMAT Format, UINT Offset)
 {
+    m_drawBindState.indexBuffer = pIB;
+    m_drawBindState.ibFormat    = Format;
+    m_drawBindState.ibOffset    = Offset;
     m_real->IASetIndexBuffer(pIB, Format, Offset);
 }
 
 void STDMETHODCALLTYPE WrappedContext::IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY Topology)
 {
+    m_drawBindState.topology = Topology;
     m_real->IASetPrimitiveTopology(Topology);
 }
 

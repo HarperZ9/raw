@@ -21,49 +21,90 @@ SamplerState S2 : register(s2);
 struct In { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 static const float3 W = float3(0.2125f, 0.7154f, 0.0721f);
 
-// Stephen Hill's Exact Fitted ACES RRT + ODT (Rec.709 -> AP1 -> RRT/ODT -> Rec.709):
-// Eliminates naive per-channel Narkowicz yellow-shift on fire/sunsets and purple-crush on deep blues.
-float3 filmic(float3 color) {
-    static const float3x3 kAcesIn = float3x3(
-        0.59719f, 0.35458f, 0.04823f,
-        0.07600f, 0.90834f, 0.01566f,
-        0.02840f, 0.13383f, 0.83777f);
-    static const float3x3 kAcesOut = float3x3(
-         1.60475f, -0.53108f, -0.07367f,
-        -0.10208f,  1.10813f, -0.00605f,
-        -0.00327f, -0.07276f,  1.07602f);
-    float3 v = mul(kAcesIn, max(color, 0.0f.xxx));
-    const float3 a = v * (v + 0.0245786f) - 0.000090537f;
-    const float3 b = v * (0.983729f * v + 0.4329510f) + 0.238081f;
-    return saturate(mul(kAcesOut, a / b));
+// Wave 55: FXC ps_5_0 + DXC SM 6.6/6.10 IEEE-754 NaN/Inf sanitization (bit-exact exponent check, zero X3577 warnings even without /Gis).
+bool isFiniteF32(float v) {
+    return (asuint(v) & 0x7F800000u) != 0x7F800000u;
+}
+float sanitizeNonNeg(float v) {
+    return isFiniteF32(v) ? max(v, 0.0f) : 0.0f;
+}
+float3 sanitizeHdr3(float3 c) {
+    return float3(sanitizeNonNeg(c.r), sanitizeNonNeg(c.g), sanitizeNonNeg(c.b));
 }
 
-// Wide-gamut Troy Sobotka AgX Display Transform + Perceptual Linear Punchy Look:
-// Preserves shadow toe detail (removes gamma-space pow(1.12) shadow crush) while keeping vivid fire/sky hues & clean highlight rolloff.
+// Wave 55: Physically-grounded Scotopic Purkinje Effect (human rod-vision night shift, applied BEFORE AgX tone-mapping).
+// Strictly gated to genuinely dim low-luminance night/cave pixels (sceneLum < 0.018 linear; ZERO effect on sunlit daytime,
+// torchlit faces, or bright highlights!). Gently shifts dim chromaticity toward subtle silver-blue rod perception
+// float3(0.84, 0.94, 1.12) with max 22% rod desaturation while preserving shadow energy so blacks never crush.
+float3 applyScotopicPurkinje(float3 linCol, float surrLum, float adaptedAvg) {
+    const float3 c = sanitizeHdr3(linCol);
+    const float sceneLum = dot(c, W);
+    if (sceneLum >= 0.018f) { return c; }
+    const float mesopicLum = max(sceneLum, max(surrLum, 0.0f) * 0.75f);
+    // Smooth onset below 0.018 linear, strictly 0.0 at/above 0.018:
+    const float dimMask = 1.0f - smoothstep(0.0012f, 0.018f, mesopicLum);
+    if (dimMask <= 1.0e-4f) { return c; }
+    // Protect warm firelight / torchlit skin tones even in dim rooms:
+    const float warmExcess = saturate((c.r - c.b) / max(sceneLum + 0.004f, 0.004f));
+    const float warmGuard = 1.0f - smoothstep(0.18f, 0.65f, warmExcess);
+    // Stronger in genuinely dark nocturnal/cave adaptations, gently restrained in bright-adapted views:
+    const float envGate = lerp(0.50f, 1.0f, 1.0f - smoothstep(0.035f, 0.14f, max(adaptedAvg, 0.0f)));
+    const float purkinjeW = saturate(dimMask * warmGuard * envGate) * 0.22f;
+    // CIE 1951 scotopic rod luminous efficiency (peaked ~507 nm cyan-green, red-insensitive), energy-balanced to protect shadow toe:
+    const float rodLum = dot(c, float3(0.062f, 0.618f, 0.320f));
+    const float rodBase = lerp(sceneLum, max(rodLum, sceneLum * 0.95f), 0.65f);
+    const float3 rodTarget = rodBase * float3(0.84f, 0.94f, 1.12f);
+    return max(lerp(c, rodTarget, purkinjeW), 0.0f.xxx);
+}
+
+// AgX-Inspired Perceptual Filmic Tone Mapping (Troy Sobotka AgX inset/outset matrix + 7-term C2 sigmoid + Punchy Look):
+// - Keeps bright Planck blackbody fire yellows/oranges luminous golden-white (never salmon-pink!)
+// - Preserves pure luminous emerald-cyan auroras & deep cobalt glacial shadows (zero purple hue skew!)
+// - Protects crisp dark contrast with zero crushed blacks and silky 16.5-stop HDR highlight rolloff.
 float3 tonemapAgX(float3 color) {
+    // Exact AgX perceptual inset matrix (Rec.709 linear -> AgX inset working space):
     static const float3x3 kAgXIn = float3x3(
-        0.842479f, 0.0784336f, 0.0792237f,
-        0.0423304f, 0.878468f, 0.0791661f,
-        0.0423756f, 0.0784336f, 0.879142f);
+        0.84247906f, 0.07843360f, 0.07922375f,
+        0.04232824f, 0.87846864f, 0.07916613f,
+        0.04237565f, 0.07843360f, 0.87914297f);
+    // Exact inverse AgX outset matrix (AgX display -> Rec.709 display):
     static const float3x3 kAgXOut = float3x3(
-         1.19687f,  -0.0980208f, -0.0990297f,
-        -0.0528968f, 1.15190f,   -0.0989611f,
-        -0.0529716f, -0.0980434f, 1.15107f);
-    float3 x = mul(kAgXIn, max(color, 0.0f.xxx));
-    x = clamp(log2(max(x, 1.0e-10f)), -12.47393f, 4.026069f);
-    x = (x + 12.47393f) / (4.026069f + 12.47393f);
-    const float3 x2 = x * x, x4 = x2 * x2;
+         1.19687900f, -0.09802088f, -0.09902974f,
+        -0.05289685f,  1.15190313f, -0.09896118f,
+        -0.05297163f, -0.09804345f,  1.15107367f);
+    // Guard against NaN/Inf & negative out-of-gamut inputs while preserving full linear HDR dynamic range:
+    float3 x = sanitizeHdr3(color);
+    x = mul(kAgXIn, x);
+    // Log2 encoding spanning 16.5 photographic stops [-12.47393, +4.026069] EV relative to mid-grey:
+    x = clamp(log2(max(x, 1.0e-10f.xxx)), -12.47393f, 4.026069f);
+    x = (x + 12.47393f) * (1.0f / (4.026069f + 12.47393f));
+    // 6th-order C2-continuous AgX sigmoid curve (smooth toe, crisp midtone slope, progressive white convergence):
+    const float3 x2 = x * x;
+    const float3 x4 = x2 * x2;
     x = 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
-    float3 agxOut = saturate(mul(kAgXOut, x));
-    // Gentle S-curve midtone punch + subtle chroma restoration in display space before clean 2.2 linear decode:
+    // Outset back to Rec.709 display space with smooth gamut-safe highlight preservation:
+    float3 agxOut = saturate(mul(kAgXOut, saturate(x)));
+    // Perceptual AgX Punchy Look (toe-protected midtone contrast + hue-preserving chroma restoration):
+    // Deep shadows below 0.04 stay strictly uncrushed while midtones/highlights gain photographic punch!
     const float lumaA = dot(agxOut, W);
-    agxOut = saturate(lerp(lumaA.xxx, agxOut, 1.09f));
-    agxOut = saturate(lerp(agxOut, agxOut * agxOut * (3.0f - 2.0f * agxOut), 0.14f));
-    return pow(agxOut, 2.2f);
+    const float toeProtect = smoothstep(0.015f, 0.24f, lumaA);
+    const float3 punchy = pow(max(agxOut, 1.0e-5f.xxx), 1.14f);
+    agxOut = lerp(agxOut, punchy, 0.55f * toeProtect);
+    const float lumaP = dot(agxOut, W);
+    // Restore subtle chroma in midtones while letting extreme highlights (>0.82) glide cleanly to golden/pure white:
+    const float satBoost = lerp(1.13f, 1.02f, smoothstep(0.68f, 0.96f, lumaP));
+    agxOut = saturate(lerp(lumaP.xxx, agxOut, satBoost));
+    return pow(max(agxOut, 1.0e-6f.xxx), 2.2f);
+}
+
+// Filmic Curve 1 (Upgraded to AgX-Perceptual inset/outset transform - eliminates legacy ACES salmon-fire & blue-purple skew):
+float3 filmic(float3 color) {
+    return tonemapAgX(color);
 }
 
 // Gran Turismo / Uchimura piecewise curve (SIGGRAPH 2017): linear midtones, smooth toe & shoulder.
-float3 tonemapGT(float3 x) {
+float3 tonemapGT(float3 xIn) {
+    const float3 x = sanitizeHdr3(xIn);
     static const float P = 1.0f, a = 1.0f, m = 0.22f, l = 0.4f, c = 1.25f, b = 0.0f;
     const float l0 = ((P - m) * l) / a;
     const float S0 = m + l0, S1 = m + a * l0;
@@ -71,19 +112,19 @@ float3 tonemapGT(float3 x) {
     const float3 w0 = 1.0f - smoothstep(0.0f, m, x);
     const float3 w2 = step(S0, x);
     const float3 w1 = 1.0f - w0 - w2;
-    const float3 T = m * pow(max(x / m, 1.0e-6f), c) + b;
+    const float3 T = m * pow(max(x / m, 1.0e-6f.xxx), c) + b;
     const float3 L = m + a * (x - m);
-    const float3 S = P - (P - S1) * exp(CP * (x - S0));
+    const float3 S = P - (P - S1) * exp(clamp(CP * (x - S0), -40.0f, 40.0f));
     return saturate(T * w0 + L * w1 + S * w2);
 }
 
 // Timothy Lottes (GDC 2016) & John Hable (Uncharted 2) curves.
 float3 tonemapLottes(float3 x) {
-    const float3 cr = pow(max(x, 0.0f.xxx), 1.45f);
-    return saturate(cr / (cr * 1.18f + 0.24f));
+    const float3 cr = pow(max(sanitizeHdr3(x), 1.0e-6f.xxx), 1.45f);
+    return saturate(cr / max(cr * 1.18f + 0.24f, 1.0e-5f.xxx));
 }
-float3 hableP(float3 x) { return ((x * (0.15f * x + 0.05f) + 0.004f) / (x * (0.15f * x + 0.50f) + 0.06f)) - 0.066667f; }
-float3 tonemapHable(float3 x) { return saturate(hableP(max(x, 0.0f.xxx) * 1.85f) / hableP(11.2f.xxx)); }
+float3 hableP(float3 x) { return ((x * (0.15f * x + 0.05f) + 0.004f) / max(x * (0.15f * x + 0.50f) + 0.06f, 1.0e-5f.xxx)) - 0.066667f; }
+float3 tonemapHable(float3 x) { return saturate(hableP(sanitizeHdr3(x) * 1.85f) / max(hableP(11.2f.xxx), 1.0e-5f.xxx)); }
 
 // ACES 2.0 CAM Perceptual Tonemap (ported from Playground native/src/renderer/aces2_cam.cpp + aces2_gamut.cpp):
 // AP1 gamut compression + Hellwig-JMh perceptual lightness Michaelis-Menten tone scale + constant-hue highlight rolloff.
@@ -118,10 +159,11 @@ float3 tonemapAces2CAM(float3 x) {
 }
 
 // Perceptual Oklab color space (Bjorn Ottosson 2020 / Elder EotE_FilmScience.fxh) for detail-preserving grading.
-float3 linToOklab(float3 lin) {
-    const float l = pow(max(0.4122214708f * lin.r + 0.5363325363f * lin.g + 0.0514459929f * lin.b, 0.0f), 1.0f / 3.0f);
-    const float m = pow(max(0.2119034982f * lin.r + 0.6806995451f * lin.g + 0.1073969566f * lin.b, 0.0f), 1.0f / 3.0f);
-    const float s = pow(max(0.0883024619f * lin.r + 0.2817188376f * lin.g + 0.6299787005f * lin.b, 0.0f), 1.0f / 3.0f);
+float3 linToOklab(float3 linIn) {
+    const float3 lin = sanitizeHdr3(linIn);
+    const float l = pow(max(0.4122214708f * lin.r + 0.5363325363f * lin.g + 0.0514459929f * lin.b, 1.0e-7f), 1.0f / 3.0f);
+    const float m = pow(max(0.2119034982f * lin.r + 0.6806995451f * lin.g + 0.1073969566f * lin.b, 1.0e-7f), 1.0f / 3.0f);
+    const float s = pow(max(0.0883024619f * lin.r + 0.2817188376f * lin.g + 0.6299787005f * lin.b, 1.0e-7f), 1.0f / 3.0f);
     return float3(0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s,
                   1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s,
                   0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s);
@@ -220,34 +262,30 @@ float3 fxaaAndCas(float2 suv) {
         aa = Scene.Sample(S1, aaUv).rgb;
     }
 
-    // Stage 1: Bilateral Edge-Preserving Micro-Smoothing (smooths flat skin/plaster/sky noise while locking edges).
-    // Stage 2: Anti-Ringing 9-Tap RCAS Adaptive Contrast Sharpening (OV9, bit 8 = 256).
+    // Anti-Ringing 9-Tap RCAS Adaptive Contrast Sharpening (OV9, bit 8 = 256):
+    // Removed flat-surface bilateral skin blur that smoothed facial pores & wrinkles into waxy plastic!
     const uint ovPost = uint(RO.y + 0.5f);
     if ((ovPost & 256u) != 0u) {
-        // Edge-preserving bilateral micro-smoothing on low-gradient flats (skin, stone faces, calm water).
-        const float lA = dot(aa / (1.0f + aa), W);
-        float3 bSum = aa;
-        float bW = 1.0f;
-        const float wN = exp(-abs(ln - lA) * 32.0f) * 0.22f;
-        const float wS = exp(-abs(ls - lA) * 32.0f) * 0.22f;
-        const float wE = exp(-abs(le - lA) * 32.0f) * 0.22f;
-        const float wW = exp(-abs(lw - lA) * 32.0f) * 0.22f;
-        bSum += n * wN + s * wS + e * wE + ww * wW;
-        bW += wN + wS + wE + wW;
-        const float3 smoothed = bSum / bW;
-        // 9-tap local min/max anti-ringing RCAS micro-contrast sharpening (crisp stone/bark/armor with zero halos).
-        const float3 mn = min(min(smoothed, min(min(n, s), min(e, ww))), min(min(nw, ne), min(sw, se)));
-        const float3 mx = max(max(smoothed, max(max(n, s), max(e, ww))), max(max(nw, ne), max(sw, se)));
+        const float3 mn = min(min(aa, min(min(n, s), min(e, ww))), min(min(nw, ne), min(sw, se)));
+        const float3 mx = max(max(aa, max(max(n, s), max(e, ww))), max(max(nw, ne), max(sw, se)));
         const float3 amp = saturate(min(mn, max(2.0f.xxx - mx, 0.0f.xxx)) / max(mx, 1.0e-4f.xxx));
-        const float3 wCAS = sqrt(amp) * (-0.165f * clamp(RP.y, 0.0f, 2.0f));
-        const float3 sharp = (smoothed + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.28f.xxx);
-        return clamp(sharp, mn * 0.94f, mx * 1.06f);
+        const float3 wCAS = sqrt(amp) * (-0.135f * clamp(RP.y, 0.0f, 2.0f));
+        const float3 sharp = (aa + (n + s + e + ww) * wCAS) / max(1.0f.xxx + 4.0f * wCAS, 0.30f.xxx);
+        return clamp(sharp, mn * 0.96f, mx * 1.04f);
     }
     return aa;
 }
 
 float4 main(In i) : SV_Target {
     const uint ovInit = uint(RO.y + 0.5f);
+    // Wave 65 Bit-Exact Raw Debug-Layer Bypass (bit 13 = 8192 set by Tonemap.cpp when light.view != 0 || light.waterView != 0):
+    // Skips headbob, FXAA/CAS, motion blur, CA, exposure, AgX curve, bloom, LUT, vignette, grain, and display gamma
+    // so every Lighting (1..36) and Water (1..7) diagnostic channel (normals, MVs, classes, masks, NaN heatmap) lands bit-exact.
+    if ((ovInit & 8192u) != 0u) {
+        const float2 dbgUv = min(max(i.uv * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
+        const float3 rawDbg = sanitizeHdr3(Scene.SampleLevel(S1, dbgUv, 0.0f).rgb);
+        return float4(saturate(rawDbg), 1.0f);
+    }
     float2 baseUv = i.uv;
     // OV12 (bit 11 = 2048): Tasteful, ultra-subtle biomechanical stride breathing (0.0008 roll, 0.992 micro-margin
     // eliminates jarring screen-edge sliding/cropping while keeping natural grounded movement feel!).
@@ -288,18 +326,26 @@ float4 main(In i) : SV_Target {
             hdr = rAcc / rW;
         }
     }
-    // OV11 (bit 10 = 1024): Subtle Inward-Only Sharp-Green Apochromatic Lens Dispersion
-    // (samples strictly INWARD toward screen center -> ZERO bottom-edge smear bar & ZERO garish rainbow grass!).
+    // OV11 (bit 10 = 1024): Edge-Stopped Apochromatic Lens Dispersion.
+    // Suppresses RGB separation across high-contrast depth/silhouette edges (pine needles vs sky, waterfalls vs dark stone)
+    // so purple/magenta pixel speckles are mathematically impossible while smooth corners keep subtle cinema optics!
     if ((ovInit & 1024u) != 0u) {
         const float2 caVec = baseUv - 0.5f.xx;
         const float caR = length(caVec);
-        const float caT = saturate((caR - 0.30f) / 0.44f);
-        const float caMag = (caT * caT) * 0.00095f * clamp(RQ.x, 0.0f, 2.0f);
-        if (caMag > 0.00003f) {
+        const float caT = saturate((caR - 0.34f) / 0.40f);
+        const float caMag = (caT * caT) * 0.00024f * clamp(RQ.x, 0.0f, 2.0f);
+        if (caMag > 0.00002f) {
             const float2 dirC = caVec / max(caR, 1.0e-4f);
             const float2 uvR = min(max((baseUv - dirC * (caMag * 0.45f)) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
             const float2 uvB = min(max((baseUv - dirC * caMag) * F[43].xy, 0.0f), float2(F[44].z, F[43].y));
-            hdr = float3(Scene.Sample(S1, uvR).r, hdr.g, Scene.Sample(S1, uvB).b);
+            const float3 tapR = Scene.Sample(S1, uvR).rgb;
+            const float3 tapB = Scene.Sample(S1, uvB).rgb;
+            const float lC = dot(hdr, W);
+            const float lR = dot(tapR, W);
+            const float lB = dot(tapB, W);
+            const float edgeJump = (abs(lR - lC) + abs(lB - lC)) / max(lC + 0.08f, 0.08f);
+            const float caGate = exp(-edgeJump * edgeJump * 28.0f);
+            hdr = lerp(hdr, float3(tapR.r, hdr.g, tapB.b), caGate);
         }
     }
     // Only apply legacy pre-tonemap highlight knee on older LDR curves (RB.x <= 3.5).
@@ -314,20 +360,23 @@ float4 main(In i) : SV_Target {
             hdr *= compLum / hdrLum;
         }
     }
-    const float3 bloom = P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb;
-    const float2 lum = Lum.Sample(S2, i.uv).xy;
+    const float3 bloom = sanitizeHdr3(P[0].x > 0.5f ? Bloom.Sample(S0, suv).rgb : Bloom.Sample(S0, i.uv).rgb);
+    const float2 lumRaw = Lum.Sample(S2, i.uv).xy;
+    const float2 lum = float2(isFiniteF32(lumRaw.x) ? max(lumRaw.x, 1.0e-5f) : 0.18f, isFiniteF32(lumRaw.y) ? max(lumRaw.y, 1.0e-5f) : 0.18f);
     const float avg = max(lum.x, 1.0e-5f);
+    hdr = sanitizeHdr3(hdr);
     // True Full-Frame Temporally-Smoothed Eye Adaptation (100% driven by Skyrim's full-screen Lum texture t2):
     // Eliminates 4-pixel liveMeter strobe flicker and caps interior gain (0.62..1.18) so ice caves/exits stay balanced.
-    const float metered = clamp(avg, RA.z, RA.w);
-    const float evDiff = log2(max(metered / max(RC.y, 0.05f), 1.0e-4f));
+    const float metered = clamp(avg, max(RA.z, 1.0e-5f), max(RA.w, max(RA.z, 1.0e-4f)));
+    const float evDiff = clamp(log2(max(metered / max(RC.y, 0.05f), 1.0e-4f)), -12.0f, 12.0f);
     const float eyeShare = evDiff > 0.0f ? max(RC.x, 0.72f) : (RC.z > 0.0f ? max(RC.z, 0.45f) : 0.45f);
     const bool isIntExp = (RX.w > 0.0f && RX.w < 0.99f);
     const float eyeComp = isIntExp ? clamp(exp2(-evDiff * eyeShare * 0.52f), 0.62f, 1.18f)
                                    : clamp(exp2(-evDiff * eyeShare * 0.85f), 0.42f, 1.45f);
     const float camera = (RB.y / max(RC.y, 0.05f)) * eyeComp;
     // RX.w: the interior factor the proxy sets per frame (ToneX5 in a cell with no sun cascades, else 1).
-    const float exposure = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(RA.y);
+    const float exposureRaw = (RA.x < 0.5f ? lum.y / avg : camera * (RX.w > 0.0f ? RX.w : 1.0f)) * exp2(clamp(RA.y, -12.0f, 12.0f));
+    const float exposure = isFiniteF32(exposureRaw) ? clamp(exposureRaw, 1.0e-4f, 64.0f) : 1.0f;
     float3 mapped;
     float pivot = lum.x;
     if (RB.x < 0.5f) {
@@ -338,14 +387,41 @@ float4 main(In i) : SV_Target {
         // Removed Skyrim's blurry 2011 vanilla Bloom (t0) from ltmRatio so our 6-level Jimenez HDR BloomPass.hlsl
         // is the sole bloom source (zero vanilla bloom halo bleed!).
         float3 xIn = hdr * exposure * RB.z;
-        // Photographic C2 Soft-Curve Rolling Highlights & Velvety Shadow Toe:
+        // Wave 29 Retinal Lateral-Inhibition, Local Mesopic Purkinje Rod/Cone Shift & Opponent Simultaneous Contrast:
+        // Uses an edge-stopped 4-tap local surround on Scene (+-9 px, similarity-weighted to prevent dark-pole haloing)
+        // so dark nocturnal shadows shift softly toward scotopic 507nm silver-blue while warm torch pools stay rich photopic amber!
+        float swR, shR;
+        Scene.GetDimensions(swR, shR);
+        const float2 spxR = 9.0f / max(float2(swR, shR), float2(1.0f, 1.0f));
+        const float2 uvMaxR = float2(F[44].z, F[43].y);
+        const float lSelf = max(dot(xIn, W), 1.0e-5f);
+        float3 surrAcc = xIn;
+        float surrW = 1.0f;
+        static const float2 kRetOff[4] = { float2(1.0f, 0.0f), float2(-1.0f, 0.0f), float2(0.0f, 1.0f), float2(0.0f, -1.0f) };
+        [unroll] for (int ri = 0; ri < 4; ri++) {
+            const float2 rUv = min(max(suv + kRetOff[ri] * spxR, 0.0f.xx), uvMaxR);
+            const float3 sTap = max(Scene.Sample(S1, rUv).rgb, 0.0f.xxx) * exposure * RB.z;
+            const float lTap = max(dot(sTap, W), 1.0e-5f);
+            // Strict edge-stop by log-luminance parity so bright sky NEVER halos onto dark foreground silhouettes:
+            const float relE = abs(log2(lTap / lSelf));
+            const float wR = exp(-relE * relE * 1.45f);
+            surrAcc += sTap * wR;
+            surrW += wR;
+        }
+        const float3 locSurr = surrAcc / max(surrW, 1.0e-4f);
+        const float lSurr = max(dot(locSurr, W), 1.0e-5f);
+        // Wave 55: Physically-grounded Scotopic Purkinje Rod-Vision Night Shift BEFORE AgX tone-mapping:
+        // Strictly < 0.018 linear (zero effect on sunlit daytime, torchlit faces, or bright highlights!).
+        xIn = applyScotopicPurkinje(xIn, lSurr, avg);
+        // Preserve full 16-stop HDR headroom for AgX/ACES2 (soft safety rolloff only above 3.2 linear,
+        // and crisp dark contrast with ultra-clean 0.00035 toe floor instead of milky 0.0025 black lift!):
         const float lPost = max(dot(xIn, W), 1.0e-5f);
-        const float rollKnee = max(RC.w * 0.35f, 0.85f);
+        const float rollKnee = max(RC.w * 0.75f, 3.20f);
         if (lPost > rollKnee) {
-            const float softL = rollKnee + (lPost - rollKnee) / (1.0f + (lPost - rollKnee) * 0.24f);
+            const float softL = rollKnee + (lPost - rollKnee) / (1.0f + (lPost - rollKnee) * 0.08f);
             xIn *= (softL / lPost);
         }
-        xIn = max(xIn, 0.0f.xxx) + (0.0025f / (1.0f + lPost * 18.0f));
+        xIn = max(xIn, 0.0f.xxx) + (0.00035f / (1.0f + lPost * 32.0f));
         if (RB.x < 4.5f)      mapped = tonemapAgX(xIn);
         else if (RB.x < 5.5f) mapped = tonemapGT(xIn);
         else if (RB.x < 6.5f) mapped = tonemapLottes(xIn);
@@ -367,8 +443,9 @@ float4 main(In i) : SV_Target {
         const float baseLum = max(dot(bloom, W) * exposure * RB.z, 0.02f);
         const float detailRatio = clamp(log2(max(l, 1.0e-4f) / baseLum), -1.25f, 1.25f);
         const float lLocal = l * exp2(detailRatio * 0.16f);
-        const float cHi = lerp(cu, 1.0f, saturate(log2(max(lLocal / RB.y, 1.0f)) * 0.5f));
-        const float lc = RB.y * pow(max(lLocal, 1.0e-5f) / RB.y, lLocal > RB.y ? cHi : lerp(cl, cu, saturate(lLocal / RB.y)));
+        const float rbKey = max(RB.y, 1.0e-4f);
+        const float cHi = lerp(cu, 1.0f, saturate(log2(max(lLocal / rbKey, 1.0f)) * 0.5f));
+        const float lc = rbKey * pow(max(lLocal / rbKey, 1.0e-5f), lLocal > rbKey ? cHi : lerp(cl, cu, saturate(lLocal / rbKey)));
         const float lOut = saturate(lc * (1.0f + lc / w2) / (1.0f + lc));
         float3 col = hdr * exposure * RB.z * (lOut / l);
         // AgX-style highlight shoulder desaturation: prevents neon orange/blue clipping in bright skies and fire.
@@ -378,11 +455,12 @@ float4 main(In i) : SV_Target {
         if (RA.x > 0.5f) { pivot = RB.y * (1.0f + RB.y / w2) / (1.0f + RB.y); }
     } else {
         const bool rh = RB.x > 1.5f;
-        mapped = rh ? reinhardW(hdr * exposure * RB.z) : filmic(hdr * exposure * RB.z);
-        if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(RA.y) * RB.z).xxx) : filmic((RB.y * exp2(RA.y) * RB.z).xxx), W); }   // the grade turns about mid grey
+        const float3 linPre = rh ? (hdr * exposure * RB.z) : applyScotopicPurkinje(hdr * exposure * RB.z, dot(hdr, W) * exposure * RB.z, avg);
+        mapped = rh ? reinhardW(linPre) : filmic(linPre);
+        if (RA.x > 0.5f) { pivot = dot(rh ? reinhardW((RB.y * exp2(clamp(RA.y, -12.0f, 12.0f)) * RB.z).xxx) : filmic((RB.y * exp2(clamp(RA.y, -12.0f, 12.0f)) * RB.z).xxx), W); }   // the grade turns about mid grey
     }
     // 100% Native 12-Pass 6-Level Jimenez HDR Bloom Pyramid (BloomPass.hlsl) owns all bloom in !match mode.
-    // Do NOT add Skyrim's blurry 2011 vanilla Bloom buffer (t0) on top of our HDR scene — use t0 strictly for
+    // Do NOT add Skyrim's blurry 2011 vanilla Bloom buffer (t0) on top of our HDR scene - use t0 strictly for
     // high-threshold (>1.15) optical halation / Panavision anamorphic flare (OV2) and 5-order lens ghosts (OV3).
     const uint ovMask = uint(RO.y + 0.5f);
     float bw0, bh0;
@@ -401,63 +479,73 @@ float4 main(In i) : SV_Target {
                             + Bloom.Sample(S0, suv - float2(bpx.x * 3.8f, -bpx.y * 3.8f)).rgb;
         const float hLumIn = dot(hInner * 0.5f, W);
         const float hLumOut = dot(hOuter * 0.5f, W);
-        // Warm-source Kodak 5219 halation STRICTLY on genuine >1.55 HDR warm peaks (flames, sun, torches;
-        // eliminates the pink-orange blotches on cyan ice-cave walls seen in 13.59.17!):
+        // Wave 72: Physical 3-wavelength spectral Kodak 5219 halation envelope (650nm deep-red outer scatter,
+        // 580nm warm-amber inner scatter, 460nm absorbed by anti-halation backing; strictly >1.55 HDR peaks and
+        // energy-capped so dark mist & cyan ice caves stay 100% pure with zero artificial washout!).
         const float warmMask = saturate((bloom.r - bloom.b * 0.85f) * 3.5f);
-        const float3 halation = float3(1.12f, 0.36f, 0.08f) * (warmMask * (saturate((bloomLum - 1.55f) * 0.35f) * 0.08f + saturate((hLumIn - 1.55f) * 0.30f) * 0.055f))
-                              + float3(1.00f, 0.14f, 0.04f) * (warmMask * saturate((hLumOut - 1.75f) * 0.28f) * 0.045f);
+        const float hPeakCore = saturate((bloomLum - 1.55f) * 0.35f);
+        const float hPeakIn   = saturate((hLumIn   - 1.55f) * 0.30f);
+        const float hPeakOut  = saturate((hLumOut  - 1.75f) * 0.28f);
+        const float3 halRaw = float3(1.10f, 0.42f, 0.06f) * (warmMask * (hPeakCore * 0.075f + hPeakIn * 0.055f))
+                            + float3(1.04f, 0.14f, 0.02f) * (warmMask * hPeakOut * 0.048f);
+        const float3 halation = halRaw / (1.0f + max(halRaw.r, max(halRaw.g, halRaw.b)) * 1.25f);
         float3 anaAcc = 0.0f.xxx;
-        [unroll] for (int ai = 1; ai <= 6; ai++) {
-            const float dx = float(ai) * 3.2f * bpx.x;
-            const float aw = 1.0f / float(ai + 1);
-            const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 1.45f.xxx, 0.0f.xxx);
-            const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 1.45f.xxx, 0.0f.xxx);
-            anaAcc += (bL + bR) * (0.5f * aw);
+        // Suppress horizontal anamorphic lens bar smoothly on indoor scenes (zero glare bars across tavern wall candles!)
+        // and raise threshold to >4.2 so only genuine intense outdoor sun glints / explosions streak:
+        const float anaOutdoorGate = isIntExp ? 0.0f : smoothstep(0.11f, 0.24f, avg);
+        if (anaOutdoorGate > 0.01f) {
+            [unroll] for (int ai = 1; ai <= 6; ai++) {
+                const float dx = float(ai) * 3.2f * bpx.x;
+                const float aw = 1.0f / float(ai + 1);
+                const float3 bL = max(Bloom.Sample(S0, saturate(suv - float2(dx, 0.0f))).rgb - 4.25f.xxx, 0.0f.xxx);
+                const float3 bR = max(Bloom.Sample(S0, saturate(suv + float2(dx, 0.0f))).rgb - 4.25f.xxx, 0.0f.xxx);
+                anaAcc += (bL + bR) * (0.5f * aw);
+            }
         }
-        // Subtle neutral-warm cinema anamorphic streak ONLY on true >1.45 HDR peaks (eliminates artificial blue glow!).
-        const float3 anamorphic = anaAcc * float3(0.84f, 0.90f, 1.02f) * 0.032f;
+        // Subtle neutral-warm cinema anamorphic streak ONLY on intense >4.25 outdoor HDR peaks:
+        const float3 anamorphic = anaAcc * float3(0.88f, 0.92f, 1.00f) * (0.022f * anaOutdoorGate);
         ovAdd += (halation + anamorphic) * clamp(RQ.w, 0.0f, 2.5f);
     }
     if ((ovMask & 4u) != 0u) {
-        // Layer 3: arXiv:2605.04017 (Hachisuka et al. 2026) 5-Order Optical Lens Transport Ghosts + Cat's-Eye Aperture Halo.
-        // centerClear keeps the screen-center crosshair / mouse-pointer zone completely free of collapsed lens ghosts & blue halos!
+        // Layer 3: Optical Lens Transport Ghosts + Aperture Starburst strictly on genuine >2.45 HDR peaks
+        // (sun disc, roaring fireballs, spells - eliminates prismatic blue/orange ring halos inside bright ice caves!).
+        const float starOutdoorGate = isIntExp ? 0.0f : smoothstep(0.11f, 0.24f, avg);
         const float2 cVec = suv - 0.5f.xx;
         const float cDist = length(cVec);
-        const float centerClear = smoothstep(0.08f, 0.26f, cDist);
-        const float catsEye = saturate(1.0f - cDist * cDist * 1.10f) * centerClear;
+        const float centerClear = smoothstep(0.10f, 0.28f, cDist);
+        const float catsEye = saturate(1.0f - cDist * cDist * 1.15f) * centerClear;
         float3 lensAcc = 0.0f.xxx;
         [unroll] for (int gi = 1; gi <= 5; gi++) {
             const float gScale = 0.35f + float(gi) * 0.24f;
             const float2 gUv = saturate(0.5f.xx - cVec * gScale);
-            // Chromatic radial dispersion across RGB lens elements (high 1.35 HDR threshold so walls/snow never ghost).
-            const float2 disp = cVec * (0.008f * float(gi));
-            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 1.35f, 0.0f);
-            const float gC = max(Bloom.Sample(S0, gUv).g - 1.35f, 0.0f);
-            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 1.35f, 0.0f);
+            const float2 disp = cVec * (0.006f * float(gi));
+            const float rC = max(Bloom.Sample(S0, saturate(gUv + disp)).r - 2.45f, 0.0f);
+            const float gC = max(Bloom.Sample(S0, gUv).g - 2.45f, 0.0f);
+            const float bC = max(Bloom.Sample(S0, saturate(gUv - disp)).b - 2.45f, 0.0f);
             const float3 gCol = float3(rC, gC, bC);
-            const float3 gTint = gi == 1 ? float3(1.06f, 0.98f, 0.88f)
-                               : (gi == 2 ? float3(0.96f, 1.00f, 1.04f)
-                               : (gi == 3 ? float3(1.02f, 0.94f, 1.02f)
-                               : (gi == 4 ? float3(0.94f, 1.02f, 0.96f) : float3(1.04f, 0.96f, 0.90f))));
+            const float3 gTint = gi == 1 ? float3(1.04f, 0.99f, 0.92f)
+                               : (gi == 2 ? float3(0.97f, 1.00f, 1.03f)
+                               : (gi == 3 ? float3(1.01f, 0.96f, 1.01f)
+                               : (gi == 4 ? float3(0.96f, 1.01f, 0.97f) : float3(1.02f, 0.98f, 0.94f))));
             lensAcc += gCol * gTint * (catsEye / float(gi + 1));
         }
         const float2 haloDir = cDist > 1.0e-4f ? cVec / cDist : float2(0.0f, 1.0f);
-        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 1.50f.xxx, 0.0f.xxx);
-        // 6-Blade Physical Cinema Aperture Diffraction Starburst & Spectral Sun/Spell Glare on ultra-bright HDR peaks (>1.45):
-        // sun through trees, fireballs, lightning spells, dragon shouts, enchanted weapons & bright lanterns!
+        const float3 haloCol = max(Bloom.Sample(S0, saturate(0.5f.xx - haloDir * 0.22f)).rgb - 2.65f.xxx, 0.0f.xxx);
         float3 starAcc = 0.0f.xxx;
-        static const float2 kStarDir[3] = { float2(1.0f, 0.0f), float2(0.5f, 0.866025f), float2(-0.5f, 0.866025f) };
-        [unroll] for (int si = 0; si < 3; ++si) {
-            [unroll] for (int st = 1; st <= 3; ++st) {
-                const float2 sOff = kStarDir[si] * (bTex * float(st) * 3.8f);
-                const float wS = 1.0f / float(st + 1);
-                const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 1.45f.xxx, 0.0f.xxx);
-                const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 1.45f.xxx, 0.0f.xxx);
-                const float3 sTint = si == 0 ? float3(1.04f, 0.99f, 0.94f) : (si == 1 ? float3(0.96f, 1.02f, 1.04f) : float3(1.02f, 0.97f, 1.02f));
-                starAcc += (sA + sB) * sTint * (wS * 0.09f);
+        if (starOutdoorGate > 0.01f) {
+            static const float2 kStarDir[3] = { float2(1.0f, 0.0f), float2(0.5f, 0.866025f), float2(-0.5f, 0.866025f) };
+            [unroll] for (int si = 0; si < 3; ++si) {
+                [unroll] for (int st = 1; st <= 3; ++st) {
+                    const float2 sOff = kStarDir[si] * (bTex * float(st) * 3.8f);
+                    const float wS = 1.0f / float(st + 1);
+                    const float3 sA = max(Bloom.Sample(S0, saturate(suv + sOff)).rgb - 3.85f.xxx, 0.0f.xxx);
+                    const float3 sB = max(Bloom.Sample(S0, saturate(suv - sOff)).rgb - 3.85f.xxx, 0.0f.xxx);
+                    const float3 sTint = si == 0 ? float3(1.03f, 0.99f, 0.96f) : (si == 1 ? float3(0.97f, 1.01f, 1.03f) : float3(1.01f, 0.98f, 1.01f));
+                    starAcc += (sA + sB) * sTint * (wS * 0.055f * starOutdoorGate);
+                }
             }
         }
-        ovAdd += min((lensAcc * 0.048f + haloCol * 0.025f * centerClear * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.22f.xxx);
+        ovAdd += min((lensAcc * 0.022f + haloCol * 0.010f * centerClear * saturate(1.0f - cDist * 1.35f) + starAcc) * clamp(RQ.w, 0.0f, 2.5f), 0.16f.xxx);
     }
     if ((ovMask & 8u) != 0u) {
         // Layer 4 (OV4): High-threshold optical highlight diffusion (>1.85 HDR ONLY: flames, sun, spells).
@@ -474,15 +562,7 @@ float4 main(In i) : SV_Target {
     // Modern wide-gamut curves (RB.x > 3.5: AgX / GT / Lottes / Hable): stop Skyrim 2011's muddy ImageSpace
     // weather tint & contrast from overwriting our Hillaire + AgX color science, while preserving strong gameplay
     // status flashes (low health, poison, night-eye) softly.
-    // Human Purkinje / Scotopic Night Vision Shift: in deep dark nights/dungeons (avg < 0.06), dark shadows shift subtly
-    // toward cool rod-cell blue-slate while warm firelight & highlights stay vivid amber-gold (Commons Cluster A).
-    if (RB.x > 3.5f && avg < 0.07f) {
-        const float scotW = saturate((0.07f - avg) / 0.055f);
-        const float pxLum = dot(mapped, W);
-        const float rodW = scotW * (1.0f - smoothstep(0.03f, 0.28f, pxLum));
-        const float3 scotTint = float3(pxLum * 0.78f, pxLum * 0.94f, pxLum * 1.24f);
-        mapped = saturate(lerp(mapped, scotTint, rodW * 0.38f));
-    }
+    // (Wave 55: Scotopic Purkinje shift is now applied strictly BEFORE AgX tone-mapping in linear HDR via applyScotopicPurkinje.)
     // Feature 10: Luminance-Preserving Filmic Split-Tone Micro-Contrast (cool alpine shadows, warm sunlit highlights).
     if (RB.x > 3.5f) {
         const float lSplit = saturate(dot(mapped, W));
@@ -495,11 +575,16 @@ float4 main(In i) : SV_Target {
     if (RB.x > 3.5f) {
         const float imadSat  = lerp(1.0f, P[3].x, 0.32f);
         const float imadTint = P[4].w * 0.22f;
-        const float imadCon  = lerp(1.0f, P[3].z, 0.25f);
+        const float imadCon  = clamp(lerp(1.0f, P[3].z, 0.25f), 0.50f, 1.60f);
         const float imadBri  = lerp(1.0f, P[3].w, 0.25f);
         c = imadSat * (c - g) + g;
         c = imadTint * (g * P[4] - c) + c;
-        c = imadCon * (imadBri * c - pivot) + pivot;
+        // Wave 70: Toe-safe power contrast around pivot in linear display space.
+        // Replaces linear `imadCon * (imadBri * c - pivot) + pivot` which subtracted `(imadCon - 1) * pivot`
+        // from dark linear shadows and drove shadowed interior alcoves negative into pitch-black #000000.
+        const float pivSafe = max(pivot, 0.04f);
+        const float3 cBri = max(imadBri * c.rgb, 0.0f.xxx);
+        c.rgb = pivSafe * pow(max(cBri / pivSafe, 1.0e-6f.xxx), imadCon);
     } else {
         c = P[3].x * (c - g) + g;
         c = P[4].w * (g * P[4] - c) + c;
@@ -520,24 +605,24 @@ float4 main(In i) : SV_Target {
             // 3: Cinema Contrast (restrained low-chroma land, crisp shadow toe).
             c.rgb = saturate(lerp(lumG.xxx, c.rgb, 0.86f) * 1.04f - 0.015f);
         } else if (RX.x < 4.5f) {
-            // 4: Kodak Vision3 500T Tungsten (deep cyan-indigo night/interior shadows + glowing amber firelight — artmedeiros / Cluster A).
+            // 4: Kodak Vision3 500T Tungsten (deep cyan-indigo night/interior shadows + glowing amber firelight - artmedeiros / Cluster A).
             c.rgb = saturate(c.rgb * lerp(float3(0.84f, 0.96f, 1.14f), float3(1.10f, 0.98f, 0.86f), smoothstep(0.16f, 0.76f, lumG)));
         } else if (RX.x < 5.5f) {
-            // 5: Fuji Velvia 50 Slide Film (vivid emerald foliage, deep cobalt skies, glowing sunset corals — author-01.jpg).
+            // 5: Fuji Velvia 50 Slide Film (vivid emerald foliage, deep cobalt skies, glowing sunset corals - author-01.jpg).
             float3 labV = linToOklab(saturate(c.rgb));
             labV.yz *= 1.18f;
             labV.x = lerp(labV.x, labV.x * labV.x * (3.0f - 2.0f * labV.x), 0.18f);
             c.rgb = saturate(oklabToLin(labV));
         } else if (RX.x < 6.5f) {
-            // 6: Tarkovsky Polaroid / Bleached Umber (low-chroma warm paper highs, muted cool-olive shadows — Cluster I/G).
+            // 6: Tarkovsky Polaroid / Bleached Umber (low-chroma warm paper highs, muted cool-olive shadows - Cluster I/G).
             const float3 muted = lerp(lumG.xxx, c.rgb, 0.74f);
             c.rgb = saturate(muted * lerp(float3(0.92f, 0.96f, 0.94f), float3(1.08f, 1.02f, 0.90f), smoothstep(0.18f, 0.82f, lumG)));
         } else if (RX.x < 7.5f) {
-            // 7: LomoChrome Purple False-Color Film (shifts foliage greens toward dreamy plum-violet — Cluster M).
+            // 7: LomoChrome Purple False-Color Film (shifts foliage greens toward dreamy plum-violet - Cluster M).
             const float grnL = saturate((c.g - max(c.r, c.b)) * 3.0f);
             c.rgb = saturate(lerp(c.rgb, float3(c.g * 0.95f + c.r * 0.35f, c.b * 0.55f + c.g * 0.25f, c.g * 1.10f + c.b * 0.30f), grnL * 0.78f));
         } else if (RX.x < 8.5f) {
-            // 8: Oil & Impasto Paint Shader (4-quadrant Kuwahara brush filter + subtle linen canvas weave — Commons Cluster H / Tyllinen).
+            // 8: Oil & Impasto Paint Shader (4-quadrant Kuwahara brush filter + subtle linen canvas weave - Commons Cluster H / Tyllinen).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
             float3 bestM = c.rgb; float bestV = 1.0e9f;
@@ -558,7 +643,7 @@ float4 main(In i) : SV_Target {
             const float canvas = 0.97f + 0.03f * sin(i.pos.x * 1.57f) * sin(i.pos.y * 1.57f);
             c.rgb = saturate(bestM * canvas);
         } else if (RX.x < 9.5f) {
-            // 9: Engraved Ink & Cross-Hatch Plate Shader (Sobel ink lines + 3-tier diagonal pen hatching on warm paper — Commons Cluster G / Escher).
+            // 9: Engraved Ink & Cross-Hatch Plate Shader (Sobel ink lines + 3-tier diagonal pen hatching on warm paper - Commons Cluster G / Escher).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
             const float lL = dot(tonemapAgX(Scene.Sample(S1, suv - float2(spx.x, 0.0f)).rgb * exposure * RB.z), W);
@@ -616,7 +701,7 @@ float4 main(In i) : SV_Target {
                                  : (triad == 1u ? float3(0.86f, 1.18f, 0.86f) : float3(0.86f, 0.86f, 1.18f));
             const float glassRefl = pow(saturate(1.0f - length(cc - float2(-0.35f, -0.45f)) * 0.72f), 3.0f) * 0.045f;
             c.rgb = saturate((crtCol * maskRGB * lerp(0.68f, 1.14f, scanMask) + glassRefl) * inBezel * saturate(1.08f - r2 * 0.22f));
-        } else {
+        } else if (RX.x < 13.5f) {
             // 13: 1988 NTSC VHS Magnetic Tape Signal (ported from Playground native/src/renderer/style_vhs.cpp).
             float sw, sh; Scene.GetDimensions(sw, sh);
             const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
@@ -636,6 +721,26 @@ float4 main(In i) : SV_Target {
                                 yRing - 1.106f * iCh + 1.703f * qCh);
             const float tapeNoise = (frac(sin(dot(i.pos.xy + RO.z * 71.0f, float2(12.9898f, 78.233f))) * 43758.5453f) - 0.5f) * 0.045f;
             c.rgb = saturate(vhs + tapeNoise);
+        } else if (RX.x < 14.5f) {
+            // 14: Kodak Aerochrome Infrared False-Color Emulsion (Daylight Cluster M: chlorophyll reflects crimson-magenta, clear sky drops deep cobalt).
+            const float chlorophyll = saturate((c.g - max(c.r * 0.85f, c.b * 0.90f)) * 4.2f);
+            const float skyBlue     = saturate((c.b - max(c.r, c.g * 0.92f)) * 3.5f);
+            const float3 irFoliage  = float3(saturate(c.g * 1.45f + c.r * 0.35f), c.b * 0.28f + c.r * 0.16f, c.g * 0.52f + c.b * 0.42f);
+            const float3 irSky      = float3(c.r * 0.22f, c.g * 0.38f, saturate(c.b * 0.72f + 0.04f));
+            float3 aero = lerp(c.rgb * float3(1.06f, 0.92f, 0.88f), irFoliage, chlorophyll * 0.88f);
+            aero = lerp(aero, irSky, skyBlue * 0.72f);
+            c.rgb = saturate(aero);
+        } else {
+            // 15: Prokudin-Gorskii Trichrome Glass-Plate Emulsion (Daylight Cluster M, BUILD-LIST #9: velocity-coupled RGB separation fringes).
+            float sw, sh; Scene.GetDimensions(sw, sh);
+            const float2 spx = 1.0f / max(float2(sw, sh), float2(1.0f, 1.0f));
+            const float plateShift = (1.5f + saturate(RO.w * 0.35f) * 4.5f) * spx.x;
+            const float rP = tonemapAgX(Scene.Sample(S1, min(max(suv + float2(plateShift,  plateShift * 0.35f), 0.0f), float2(F[44].z, F[43].y))).rgb * exposure * RB.z).r;
+            const float gP = c.g;
+            const float bP = tonemapAgX(Scene.Sample(S1, min(max(suv - float2(plateShift, -plateShift * 0.35f), 0.0f), float2(F[44].z, F[43].y))).rgb * exposure * RB.z).b;
+            const float3 tri = float3(rP, gP, bP);
+            const float silver = dot(tri, W);
+            c.rgb = saturate(lerp(silver.xxx, tri, 0.92f) * float3(1.03f, 1.00f, 0.93f));
         }
     }
     // Layer 1 (bit 0): Film Emulsion & Beer-Lambert Subtractive Density + Skin-Protected Oklab Vibrance
@@ -643,7 +748,7 @@ float4 main(In i) : SV_Target {
     if ((ovMask & 1u) != 0u) {
         float3 lab = linToOklab(saturate(c.rgb));
         const float chroma = length(lab.yz);
-        const float hue = atan2(lab.z, lab.y);
+        const float hue = chroma > 1.0e-6f ? atan2(lab.z, lab.y) : 0.0f;
         const float skinMask = smoothstep(0.20f, 0.55f, hue) * (1.0f - smoothstep(0.95f, 1.35f, hue)) * smoothstep(0.02f, 0.09f, chroma);
         const float vibBoost = lerp(1.12f, 1.02f, skinMask) * lerp(1.0f, 0.96f, saturate(chroma * 3.2f));
         lab.x *= (1.0f - saturate(chroma * 0.42f) * 0.20f);   // Beer-Lambert dye density: saturated hues hold richer depth
@@ -655,7 +760,7 @@ float4 main(In i) : SV_Target {
     if ((ovMask & 4096u) != 0u) {
         float3 labN = linToOklab(saturate(c.rgb));
         const float chN = length(labN.yz);
-        const float hueN = atan2(labN.z, labN.y);
+        const float hueN = chN > 1.0e-6f ? atan2(labN.z, labN.y) : 0.0f;
         const float skinN = smoothstep(0.18f, 0.55f, hueN) * (1.0f - smoothstep(0.95f, 1.35f, hueN)) * smoothstep(0.02f, 0.09f, chN);
         // Lift muted mid-chroma selectively while keeping already-vivid hues and skin tones natural.
         const float dynVib = 1.0f + (1.0f - skinN * 0.78f) * (1.0f - smoothstep(0.06f, 0.22f, chN)) * 0.34f;
@@ -716,30 +821,31 @@ float4 main(In i) : SV_Target {
     if ((ovMask & 128u) != 0u) {
         if (i.uv.y < 0.115f || i.uv.y > 0.885f) { c.rgb = 0.0f.xxx; }
     }
-    // Always-on Triangular-PDF (TPDF) Temporal Blue-Noise Dithering before 8-bit SDR write (eliminates sky/fog banding).
-    if (RB.w < 2.5f) {
-        const float2 dPos = i.pos.xy + (5.588238f * RO.z).xx;
-        const float d1 = frac(52.9829189f * frac(dot(dPos, float2(0.06711056f, 0.00583715f))));
-        const float d2 = frac(52.9829189f * frac(dot(dPos + float2(23.0f, 59.0f), float2(0.06711056f, 0.00583715f))));
-        c.rgb = saturate(c.rgb + ((d1 + d2 - 1.0f) / 255.0f).xxx);
-    }
-    // Optional PQ ST.2084 HDR10 transfer output (TonemapView >= 3, ported from superframe present_hdr.cpp).
+    // Zero-Banding Triangular-PDF Interleaved Gradient Noise (TPDF IGN) coordinates (vendor-invariant, zero sin() drift):
+    const float2 dPos = floor(i.pos.xy) + (5.588238f * RO.z).xx;
+    const float ign1 = frac(52.9829189f * frac(dot(dPos, float2(0.06711056f, 0.00583715f))));
+    const float ign2 = frac(52.9829189f * frac(dot(dPos + float2(23.0f, 59.0f), float2(0.06711056f, 0.00583715f))));
+    const float tpdfIgn = ign1 + ign2 - 1.0f;
+
+    // Optional PQ ST.2084 10-bit HDR10 transfer output (TonemapView >= 3) with subtle 10-bit TPDF IGN dither:
+    c.rgb = sanitizeHdr3(c.rgb);
     if (RB.w >= 2.5f) {
+        // Wave 72: Exact ITU-R BT.709 -> BT.2020 D65-white-preserving matrix (row sums == 1.000000).
         const float3 lin2020 = saturate(float3(
-            0.6274f * c.r + 0.3293f * c.g + 0.0433f * c.b,
-            0.0691f * c.r + 0.9195f * c.g + 0.0114f * c.b,
-            0.0164f * c.r + 0.0880f * c.g + 0.8956f * c.b));
-        const float3 ym = pow(lin2020 * 0.04f, 0.1593017578f);
-        c.rgb = pow((0.8359375f + 18.8515625f * ym) / (1.0f + 18.6875f * ym), 78.84375f);
+            0.627404f * c.r + 0.329283f * c.g + 0.043313f * c.b,
+            0.069097f * c.r + 0.919540f * c.g + 0.011362f * c.b,
+            0.016391f * c.r + 0.088013f * c.g + 0.895595f * c.b));
+        const float3 ym = pow(max(lin2020 * 0.04f, 1.0e-7f.xxx), 0.1593017578f);
+        c.rgb = pow(max((0.8359375f + 18.8515625f * ym) / max(1.0f + 18.6875f * ym, 1.0e-5f.xxx), 1.0e-7f.xxx), 78.84375f);
+        c.rgb = saturate(c.rgb + (tpdfIgn * (0.50f / 1023.0f)).xxx);
         return c;
     }
-    c.rgb = pow(saturate(c.rgb), F[42].x);
-    // Elder-inspired filmic finish: subtle optical vignette + terminal triangular dithering (eliminates 8-bit sky/fog banding).
+    // Final sRGB / display gamma encoding followed immediately by post-gamma TPDF IGN dithering:
+    // Eliminates ALL 8-bit color banding across twilight skies, night auroras, valley fog & underwater gradients!
+    const float outGamma = clamp(isFiniteF32(F[42].x) ? F[42].x : (1.0f / 2.2f), 0.25f, 2.5f);
+    c.rgb = pow(max(saturate(c.rgb), 1.0e-7f.xxx), outGamma);
     const float2 vc = i.uv - 0.5f;
     c.rgb *= lerp(1.0f, saturate(1.0f - dot(vc, vc) * 0.22f), 0.35f);
-    const float2 dp = floor(i.pos.xy);
-    const float h1 = frac(sin(dot(dp, float2(12.9898f, 78.233f))) * 43758.5453f);
-    const float h2 = frac(sin(dot(dp + float2(17.0f, 53.0f), float2(12.9898f, 78.233f))) * 43758.5453f);
-    c.rgb = saturate(c.rgb + ((h1 - h2) / 255.0f).xxx);
-    return c;
+    c.rgb = saturate(c.rgb + (tpdfIgn * (0.75f / 255.0f)).xxx);
+    return float4(sanitizeHdr3(c.rgb), 1.0f);
 }

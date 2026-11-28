@@ -1,0 +1,134 @@
+// RawAtmoWeather.bld: RAW Engine Deterministic Atmosphere & Meteorology Reference Kernels in BuildLang 1.4.0.
+// Counterparts to AtmosphereLut.hlsl, RawWeatherSim.cpp, and RawWorldEcosystem.cpp:
+//   1. rayleigh_density      - Exponential Rayleigh molecular scale-height density (H = 8.0 km)
+//   2. mie_density           - Exponential Mie aerosol scale-height density (H = 1.2 km default, turbidity-scaled)
+//   3. ozone_density         - Asymmetric stratospheric Chappuis ozone layer profile (10..42 km, peak 25 km)
+//   4. solar_declination_rad - Orbital axial-tilt solar declination (day_of_year, axial_tilt_deg)
+//   5. solar_cos_zenith      - Spherical solar zenith cosine (= sin(altitude)) from hour, latitude, declination
+//   6. snowpack_step_m       - Snowpack thermal energy-balance accumulation / melt ODE step (meters)
+//   7. black_ice_refreeze    - Sub-zero standing meltwater black-ice refreeze factor [0..1]
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn smoothstep_01(x: f64) -> f64 {
+    let t: f64 = clamp_f64(x, 0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// 1a. Rayleigh atmospheric density exp(-max(h_km, 0) / 8.0).
+// Matches src/d3d12_bridge/shaders/AtmosphereLut.hlsl (kRayH = 8.0 km, L41).
+fn rayleigh_density(h_km: f64) -> f64 {
+    let h: f64 = max_f64(h_km, 0.0);
+    exp(-h / 8.0)
+}
+
+// 1b. Mie aerosol atmospheric density exp(-max(h_km, 0) / max(mie_scale_h, 0.8)) * max(turbidity, 0).
+// Matches src/d3d12_bridge/shaders/AtmosphereLut.hlsl (kMieH = 1.2 km, L42).
+fn mie_density(h_km: f64, mie_scale_h: f64, turbidity: f64) -> f64 {
+    let h: f64 = max_f64(h_km, 0.0);
+    let sh: f64 = max_f64(mie_scale_h, 0.8);
+    let turb: f64 = max_f64(turbidity, 0.0);
+    exp(-h / sh) * turb
+}
+
+// 2. Stratospheric Chappuis ozone altitude profile peaking at 25 km (10..42 km layer).
+// Matches src/d3d12_bridge/shaders/AtmosphereLut.hlsl (L44-L46).
+fn ozone_density(h_km: f64) -> f64 {
+    let h: f64 = max_f64(h_km, 0.0);
+    if h < 25.0 {
+        smoothstep_01((h - 10.0) / 15.0)
+    } else {
+        smoothstep_01((42.0 - h) / 17.0)
+    }
+}
+
+// 3a. Orbital solar declination in radians (vernal equinox day 80, summer solstice ~172, winter ~355).
+// Matches src/worldgen/RawWeatherSim.cpp (ComputeSolarDeclinationRad, L95-L100).
+fn solar_declination_rad(day_of_year: f64, axial_tilt_deg: f64) -> f64 {
+    let pi_val: f64 = 3.14159265358979323846;
+    let deg_to_rad: f64 = pi_val / 180.0;
+    let tilt_rad: f64 = clamp_f64(axial_tilt_deg, 0.0, 45.0) * deg_to_rad;
+    tilt_rad * sin(2.0 * pi_val * (day_of_year - 80.0) / 365.0)
+}
+
+// 3b. Solar zenith cosine (equals sin(solar_altitude) in [-1, +1]).
+// Matches src/worldgen/RawWeatherSim.cpp (ComputeOrbitalSunElevation, L116-L123).
+fn solar_cos_zenith(game_hour: f64, latitude_deg: f64, declination_rad: f64) -> f64 {
+    let pi_val: f64 = 3.14159265358979323846;
+    let deg_to_rad: f64 = pi_val / 180.0;
+    let lat_rad: f64 = clamp_f64(latitude_deg, -89.0, 89.0) * deg_to_rad;
+    let dec: f64 = clamp_f64(declination_rad, -0.8, 0.8);
+    let hour_angle: f64 = ((game_hour - 12.5) / 24.0) * (2.0 * pi_val);
+    let cos_z: f64 = sin(lat_rad) * sin(dec) + cos(lat_rad) * cos(dec) * cos(hour_angle);
+    clamp_f64(cos_z, -1.0, 1.0)
+}
+
+// 4. Snowpack thermal energy-balance accumulation & melt ODE step (meters).
+//    Positive snow_fall_m_per_hr accumulates when temp_c <= 1.0 C;
+//    positive temperature + absorbed solar/fire heat melts snowpack via latent fusion enthalpy.
+// Matches src/worldgen/RawWeatherSim.cpp snowpack thermal ODE.
+fn snowpack_step_m(depth_m: f64, temp_c: f64, snow_fall_m_per_hr: f64, q_solar_wm2: f64, albedo: f64, dt_hours: f64) -> f64 {
+    let d0: f64 = max_f64(depth_m, 0.0);
+    let dt: f64 = max_f64(dt_hours, 0.0);
+    let alb: f64 = clamp_f64(albedo, 0.45, 0.92);
+    let snow_gate: f64 = smoothstep_01((1.5 - temp_c) / 2.5);
+    let accum_m: f64 = max_f64(snow_fall_m_per_hr, 0.0) * snow_gate * dt;
+    let degree_hr: f64 = max_f64(temp_c, 0.0);
+    let rad_abs_wm2: f64 = max_f64(q_solar_wm2, 0.0) * (1.0 - alb);
+    // Latent heat of fusion (334 kJ/kg) at 300 kg/m^3 snow density -> ~1.0e8 J/m^3:
+    let melt_rate_m_per_hr: f64 = degree_hr * 0.0042 + (rad_abs_wm2 * 3600.0) / 1.0e8;
+    let melt_m: f64 = melt_rate_m_per_hr * dt;
+    max_f64(d0 + accum_m - melt_m, 0.0)
+}
+
+// 5. Sub-zero black-ice refreeze factor [0..1] for standing meltwater / wet surfaces.
+//    Activates below -1.5 C and scales with standing water availability and cooling time.
+// Matches src/worldgen/RawWeatherSim.cpp & RawWorldEcosystem.cpp black-ice refreeze kinetics.
+fn black_ice_refreeze(prev_ice01: f64, temp_c: f64, melt_water_m: f64, dt_sec: f64) -> f64 {
+    let cur: f64 = clamp_f64(prev_ice01, 0.0, 1.0);
+    let dt: f64 = max_f64(dt_sec, 0.0);
+    if temp_c < -1.5 && melt_water_m > 1.0e-4 {
+        let cold_drive: f64 = clamp_f64((-1.5 - temp_c) / 8.0, 0.0, 1.5);
+        let water_avail: f64 = clamp_f64(melt_water_m / 0.02, 0.0, 1.0);
+        let rate: f64 = 0.055 * cold_drive * water_avail;
+        clamp_f64(cur + (1.0 - cur) * (1.0 - exp(-rate * dt)), 0.0, 1.0)
+    } else if temp_c > 0.5 {
+        let thaw: f64 = clamp_f64((temp_c - 0.5) * 0.04, 0.0, 0.5);
+        clamp_f64(cur * exp(-thaw * dt), 0.0, 1.0)
+    } else {
+        cur
+    }
+}
+
+fn main() ~ Console {
+    let r_sea: f64 = rayleigh_density(0.0);
+    let r_8km: f64 = rayleigh_density(8.0);
+    let m_12: f64 = mie_density(1.2, 1.2, 1.5);
+    let o_25: f64 = ozone_density(25.0);
+    let o_10: f64 = ozone_density(10.0);
+    let dec_sum: f64 = solar_declination_rad(172.0, 23.44);
+    let cosz_noon: f64 = solar_cos_zenith(12.5, 60.0, dec_sum);
+    let snow_melt: f64 = snowpack_step_m(0.50, 8.0, 0.0, 450.0, 0.70, 2.0);
+    let snow_acc: f64 = snowpack_step_m(0.50, -6.0, 0.04, 0.0, 0.88, 2.0);
+    let bice: f64 = black_ice_refreeze(0.0, -8.0, 0.03, 30.0);
+
+    println!("rayleigh_density(0km) = {} | rayleigh_density(8km) = {}", r_sea, r_8km);
+    println!("mie_density(1.2km, 1.2, 1.5) = {}", m_12);
+    println!("ozone_density(25km) = {} | ozone_density(10km) = {}", o_25, o_10);
+    println!("solar_declination_rad(172, 23.44) = {} | solar_cos_zenith(12.5h, 60N) = {}", dec_sum, cosz_noon);
+    println!("snowpack_step_m(melt) = {} | snowpack_step_m(accum) = {}", snow_melt, snow_acc);
+    println!("black_ice_refreeze(0 -> -8C, 30s) = {}", bice);
+}

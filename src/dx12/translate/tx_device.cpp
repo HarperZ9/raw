@@ -1,5 +1,7 @@
 // Device creation, lifetime and capability queries.
 #include "tx_context.h"
+#include <algorithm>
+#include <cmath>
 
 namespace raw::tx {
 
@@ -113,6 +115,11 @@ HRESULT Device::Init(const CreateParams& p)
 
     InitDefaults();
     InitPsoCache();
+    geometrySubdiv = p.geometrySubdiv;
+    if (geometrySubdiv) {
+        if (subdiv.Init(d3d.Get())) Log("tx_subdiv: live 1->4 curved PN-Triangle GPU geometry uplift active");
+        else geometrySubdiv = false;
+    }
 
     OpenRecording(init_);
     imm = new Context(this, false);
@@ -144,6 +151,7 @@ Device::~Device()
     initChunks_.ReturnAll();
     init_ = Recording{};
     SavePsoCache();
+    subdiv.Shutdown();
     psoLib_.Reset();
     psos_.clear(); csPsos_.clear(); mipPsos_.clear(); rootSigs_.clear();
     for (auto& h : qh) { h.readback.Reset(); h.heap.Reset(); }
@@ -295,6 +303,17 @@ HRESULT CreateDevice(const CreateParams& params, ID3D11Device** device, ID3D11De
     return S_OK;
 }
 
+const SubdivLayoutInfo* Device::GetSubdivLayout(uint32_t layoutId)
+{
+    if (!layoutId) return nullptr;
+    const LayoutData* ld = nullptr;
+    {
+        std::lock_guard<std::mutex> g(cacheM_);
+        if (layoutId < layouts_.size()) ld = layouts_[layoutId].get();
+    }
+    return subdiv.GetLayoutInfo(layoutId, ld);
+}
+
 Stats GetStats(ID3D11Device* device)
 {
     Device* d = Dev(device);
@@ -303,6 +322,8 @@ Stats GetStats(ID3D11Device* device)
     s.debugErrors = d->nDebugErrors; s.psoCreated = d->nPso; s.rootSignatures = d->nRootSig;
     s.submissions = d->nSubmit; s.barriers = d->nBarriers; s.draws = d->nDraws;
     s.unsupportedCalls = d->nUnsupported;
+    s.subdivMeshes = d->subdiv.MeshCount();
+    s.subdivDraws = d->nSubdivDraws;
     return s;
 }
 
@@ -310,6 +331,42 @@ void GetNative(ID3D11Device* device, void** d3d12Device, void** d3d12Queue)
 {
     if (d3d12Device) *d3d12Device = Dev(device)->d3d.Get();
     if (d3d12Queue) *d3d12Queue = Dev(device)->queue.Get();
+}
+
+void SetSubdivParams(ID3D11Device* device, float curvatureGain, float snowDepthU, float displaceAmp)
+{
+    if (!device) return;
+    Device* d = Dev(device);
+    if (!d->geometrySubdiv) return;
+    const float c = std::clamp(curvatureGain, 0.0f, 1.25f);
+    const float s = std::clamp(snowDepthU, 0.0f, 18.0f);
+    const float a = std::clamp(displaceAmp, 0.0f, 0.35f);
+    const float prevC = d->subdivCurvature.load(std::memory_order_relaxed);
+    const float prevS = d->subdivSnowDepth.load(std::memory_order_relaxed);
+    const float prevA = d->subdivDisplace.load(std::memory_order_relaxed);
+    if (std::fabs(c - prevC) > 0.05f || std::fabs(s - prevS) > 1.5f || std::fabs(a - prevA) > 0.04f) {
+        d->subdivCurvature.store(c, std::memory_order_relaxed);
+        d->subdivSnowDepth.store(s, std::memory_order_relaxed);
+        d->subdivDisplace.store(a, std::memory_order_relaxed);
+        Retire r;
+        d->subdiv.ClearAll(r);
+        if (!r.keep.empty()) d->RetireLater(std::move(r));
+        d->subdivEpoch.fetch_add(1u, std::memory_order_relaxed);
+    }
+}
+
+void SetWaterWaveState(ID3D11Device* device, float simTimeSec, float gravityMps2, float tideHeightU,
+                       float beaufort, float swellDirX, float swellDirY)
+{
+    if (!device) return;
+    Device* d = Dev(device);
+    d->waterTimeSec.store(simTimeSec, std::memory_order_relaxed);
+    d->waterGravity.store(std::clamp(gravityMps2, 1.0f, 30.0f), std::memory_order_relaxed);
+    d->waterTideU.store(std::clamp(tideHeightU, -24.0f, 24.0f), std::memory_order_relaxed);
+    d->waterBeaufort.store(std::clamp(beaufort, 0.0f, 12.0f), std::memory_order_relaxed);
+    d->waterSwellX.store(swellDirX, std::memory_order_relaxed);
+    d->waterSwellY.store(swellDirY, std::memory_order_relaxed);
+    d->waterStateGen.fetch_add(1u, std::memory_order_release);
 }
 
 }  // namespace raw::tx

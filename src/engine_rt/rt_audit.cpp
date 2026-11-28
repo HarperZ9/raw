@@ -119,11 +119,16 @@ void ProbeLive(const Image& img, AuditData* out) {
             const uint8_t* im = At<const uint8_t*>(img.base, imgSpaceRva);
             out->imgSpaceOk = ValidPtr(im);
         }
+        constexpr uintptr_t kWaterSystemObjectsArrayOffset   = 0x58u;
+        constexpr uintptr_t kShadowSceneActiveLightsOffset   = 0x130u;
+        constexpr uintptr_t kShadowSceneShadowCastersOffset  = 0x230u;
+        constexpr uintptr_t kBstArraySizeOffset              = 0x10u;
+        static_assert(kShadowSceneShadowCastersOffset > kShadowSceneActiveLightsOffset, "ShadowSceneNode array layout guard");
         if (waterSysRva) {
             const uint8_t* ws = At<const uint8_t*>(img.base, waterSysRva);
             if (ValidPtr(ws)) {
                 out->waterSysOk = true;
-                out->waterObjCount = At<uint32_t>(ws + 0x58, 0x10);
+                out->waterObjCount = At<uint32_t>(ws + kWaterSystemObjectsArrayOffset, kBstArraySizeOffset);
             }
         }
         if (shaderStateRva) {
@@ -132,8 +137,8 @@ void ProbeLive(const Image& img, AuditData* out) {
             if (ValidPtr(ssn)) {
                 out->ssnOk = true;
                 out->ssnPtr = reinterpret_cast<uint64_t>(ssn);
-                out->activeLights = At<uint32_t>(ssn + 0x130, 0x10);
-                out->shadowCasters = At<uint32_t>(ssn + 0x230, 0x10);
+                out->activeLights = At<uint32_t>(ssn + kShadowSceneActiveLightsOffset, kBstArraySizeOffset);
+                out->shadowCasters = At<uint32_t>(ssn + kShadowSceneShadowCastersOffset, kBstArraySizeOffset);
                 const uint8_t* bsl = At<const uint8_t*>(ssn, 0x200);
                 out->ssnSunLight = reinterpret_cast<uint64_t>(bsl);
                 if (ValidPtr(bsl)) {

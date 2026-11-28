@@ -12,6 +12,7 @@
 #include "SceneLights.h"
 #include "ProxyLog.h"
 #include "CBDirtyTracker.h"
+#include "Translate.h"
 #include "../core/dxbc/GBufferPatch.h"
 
 #include <algorithm>
@@ -178,23 +179,38 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     raw::bridge::RtDraw d;
     d.drop = geom::DropFor(real);   // before any reference is taken
     if (alpha) {
-        // The rays read the coordinates from the position's own vertex buffer.
-        // Coordinates in their own stream belong to the tree shaders, whose positions the vertex shader
-        // still moves (the primary-ray view showed their leaves scattered and huge): left out for now.
-        if (!L.uv.set || L.uv.slot != L.pos.slot || !UvFormatOk(L.uv.format)) {
+        // Rigid alpha-tested draws: accept both interleaved UVs (L.uv.slot == L.pos.slot) AND split-stream UVs
+        // on non-billboard rigid meshes (vines, bushes, fences, ferns, moss with RtAlphaDiscard / RtAlphaCoverage).
+        // Keep split-stream SoftLit tree leaf cards (RtAlphaFoliage) excluded because BSTreeShader expands them in VS.
+        const bool splitAllowed = (L.uv.slot == L.pos.slot) || (alpha != raw::bridge::RtAlphaFoliage);
+        if (!L.uv.set || !splitAllowed || !UvFormatOk(L.uv.format)) {
             if (g_n.alphaNoUv++ < 64 && (g_n.alphaNoUv & 7) == 1)
-                Log("[RT] alpha-tested draw left out: coordinates %s, slot %u (position slot %u), format %d", L.uv.set ? "found" : "absent",
-                    L.uv.slot, L.pos.slot, int(L.uv.format));
+                Log("[RT] alpha-tested draw left out: coordinates %s, slot %u (position slot %u), kind %u, format %d", L.uv.set ? "found" : "absent",
+                    L.uv.slot, L.pos.slot, unsigned(alpha), int(L.uv.format));
             return;
         }
         d.alphaSrv = AlphaTexture(real);
         if (!d.alphaSrv) { ++g_n.alphaNoTexture; return; }
+        if (L.uv.slot != L.pos.slot) {
+            UINT us = 0, uo = 0;
+            d.uvVb = geom::VertexBuffer(real, L.uv.slot, &us, &uo);
+            if (!d.uvVb) { raw::bridge::ReleaseRtDraw(d); ++g_n.alphaNoUv; return; }
+            d.uvStride = us; d.uvVbOffset = uo;
+        }
         d.alphaKind = alpha; d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format;
-    } else if (g_matOn && L.uv.set && L.uv.slot == L.pos.slot && UvFormatOk(L.uv.format)) {
-        // An opaque draw: its colour texture (t0 of the lit shaders) and coordinates, so an off-screen
-        // ray hit is shaded from the game's own material. Without them it still joins, uncoloured.
+    } else if (g_matOn && L.uv.set && UvFormatOk(L.uv.format)) {
+        // Opaque draws (both interleaved and split-stream UVs): capture colour texture + UV stream for off-screen RT hits.
         d.alphaSrv = AlphaTexture(real);
-        if (d.alphaSrv) { d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format; ++g_n.opaqueMat; }
+        if (d.alphaSrv) {
+            bool uvReady = true;
+            if (L.uv.slot != L.pos.slot) {
+                UINT us = 0, uo = 0;
+                d.uvVb = geom::VertexBuffer(real, L.uv.slot, &us, &uo);
+                if (d.uvVb) { d.uvStride = us; d.uvVbOffset = uo; }
+                else { d.alphaSrv->Release(); d.alphaSrv = nullptr; uvReady = false; }
+            }
+            if (uvReady) { d.uvOffset = L.uv.offset; d.uvFormat = L.uv.format; ++g_n.opaqueMat; }
+        }
     }
     UINT stride = 0, offset = 0;
     d.vb = geom::VertexBuffer(real, L.pos.slot, &stride, &offset);
@@ -202,6 +218,11 @@ void SceneGeometry_OnDraw(ID3D11DeviceContext* real, UINT indexCount, UINT start
     if (!d.vb || !d.ib) { raw::bridge::ReleaseRtDraw(d); ++g_n.noBuffers; return; }
     d.stride = stride; d.vbOffset = offset; d.posOffset = L.pos.offset; d.posFormat = pf;
     d.indexCount = indexCount; d.startIndex = startIndex; d.baseVertex = baseVertex;
+    // Sync DXR 1.2 BLAS directly to the 4x curved/snow-lifted TxSubdiv mesh when cached on raw::tx:
+    if (!alpha && raw::tx::IsLayerContext(real)) {
+        raw::tx::PeekSubdivMesh(real, indexCount, startIndex, baseVertex,
+                                &d.subdivVb, &d.subdivIb, &d.subdivIndexCount, &d.subdivVertCount);
+    }
     std::memcpy(d.world, w, sizeof d.world);
     // Alpha-tested too: most of the land's draws follow a prepass that tested the alpha (AlphaFollows).
     if (LodLand(real, w, d.lodRect)) { d.lodLand = true; ++g_n.lodLand; }

@@ -1,5 +1,6 @@
 // Weather state for the ray-tracing worker's dynamic weather (RAW engine runtime). Original work, MIT. See rt_weather.h.
 #include "rt_weather.h"
+#include "rt_softbody.h"
 #include "rt_version.h"
 #include "rt_view.h"
 
@@ -52,6 +53,14 @@ float Sat(float x) { return std::clamp(x, 0.0f, 1.0f); }
 struct SavedFog {
     float f[8];   // TESWeather::FogData (FNAM +0x678): dayNear, dayFar, nightNear, nightFar, dayPow, nightPow, dayMax, nightMax
 };
+// Wave 82 ABI layout guards (SkyrimSE 1.7.104.0 verified TESWeather & Sky offsets):
+static constexpr uint32_t kCe17104OffWeatherFormId = 0x14u;
+static constexpr uint32_t kCe17104OffWeatherData   = 0x664u;
+static constexpr uint32_t kCe17104OffWeatherFog    = 0x678u;
+static constexpr uint32_t kCe17104OffSkyCurWeather = 0x48u;
+static_assert(sizeof(SavedFog) == 32u, "TESWeather::FogData FNAM is 8 floats (32B)");
+static_assert(kCe17104OffWeatherFog == kCe17104OffWeatherData + 0x14u, "TESWeather FNAM follows DATA");
+static_assert(kCe17104OffWeatherFormId == 0x14u && kCe17104OffSkyCurWeather == 0x48u, "TESWeather/Sky ABI lock");
 std::unordered_map<const uint8_t*, SavedFog> g_savedFog;
 
 void NeutralizeVanillaFog(uint8_t* w) {
@@ -191,16 +200,22 @@ void Blend(State* s) {
     const float afternoonConv = float(std::exp(-std::pow((s->gameHour - 15.0f) / 2.6f, 2.0f))) * 0.16f;
     s->humidity = Sat(0.42f + lowPres * 0.48f + morningMist * 0.28f + (s->rain > 0.05f ? 0.30f : 0.0f));
 
-    // Blend synoptic cloud/precip/fog with scripted TESWeather (scripted storms always take priority):
-    const float synCloud = Sat(0.18f + lowPres * 0.72f + afternoonConv + arcticW * 0.14f);
+    // Blend synoptic cloud/fog/wind with live TESWeather, while keeping rain & snow strictly faithful to active
+    // TESWeather precipitation flags (flags & 4 = Rainy, flags & 8 = Snow) and mutually exclusive!
+    // Previously synPrecip invented fake snow=0.10 & rain=0.20 during dry cloudy weather (flags=2), which integrated
+    // wetness=1.0 AND snow=1.0 simultaneously and painted chalk-white snow onto sunny green Riverwood pine trees!
+    const float synCloud = Sat(0.18f + lowPres * 0.68f + afternoonConv + arcticW * 0.14f);
     const float synPrecip = Sat((lowPres - 0.58f) / 0.36f);
     const float freezeW = Sat((1.5f - s->tempC) / 4.5f);
-    const float synRain = synPrecip * (1.0f - freezeW);
-    const float synSnow = synPrecip * freezeW;
-    const float synFog = Sat(0.12f + morningMist * 0.42f + lowPres * 0.28f + alpineW * 0.18f);
+    const float synRain = (s->rain > 0.05f) ? (synPrecip * (1.0f - freezeW)) : 0.0f;
+    const float synSnow = (s->snow > 0.05f) ? (synPrecip * freezeW) : 0.0f;
+    const float synFog = Sat(0.10f + morningMist * 0.40f + lowPres * 0.26f + alpineW * 0.18f);
 
-    s->rain  = std::max(s->rain,  synRain  * 0.85f);
-    s->snow  = std::max(s->snow,  synSnow  * 0.85f);
+    if (s->rain >= s->snow) {
+        s->snow = 0.0f;
+    } else {
+        s->rain = 0.0f;
+    }
     s->cloud = Sat(std::max(vanCloud, synCloud));
     s->fog   = Sat(vanFog * 0.55f + synFog * 0.45f);
 
@@ -279,6 +294,10 @@ void WeatherOnPresent() {
     if (s.ok) Blend(&s);
     if (s.ok && g_set) { g_set(s.smoothRain, s.smoothSnow, s.smoothCloud, s.smoothFog); ++s.calls; }
     if (s.ok && g_setExt) { g_setExt(s.windX, s.windY, s.lightning, s.gameHour); }
+    if (s.ok) {
+        const float gust01 = std::clamp(std::max(s.smoothRain, s.smoothSnow) + s.lightning * 0.5f, 0.0f, 1.0f);
+        SkeletonPhysicsSetWind(s.windX, s.windY, 0.0f, gust01);
+    }
     g_state = s;
 }
 

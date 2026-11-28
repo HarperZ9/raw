@@ -1,0 +1,143 @@
+// RawSnowEcology.bld: RAW Engine Deterministic Snow Deformation, Radiant Melt, Black-Ice, Shelter AI,
+// Camera Zoom & Astronomical Photoperiod Kernels in BuildLang 1.4.0.
+// Counterparts to RawSnowDeformSim.hlsl, RawSeasonsThermals.hlsli, rt_npc_behavior.cpp, and rt_camera_world_gmst.cpp:
+//   1. snow_rim_displace       - Mass-conserving snow footprint depression & raised annular rim
+//   2. campfire_snow_melt      - Inverse-square radiant campfire snow melt depth (meters)
+//   3. slush_black_ice_frac    - Sub-zero slush-to-black-ice hysteresis freeze/thaw step
+//   4. storm_shelter_prob      - Weather-driven NPC/wildlife storm shelter-seeking probability
+//   5. camera_spring_zoom      - Smooth overshoot-free 3rd-person/dragon camera zoom step
+//   6. seasonal_photoperiod_hr - Exact astronomical daylight duration (hours) from latitude & declination
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn abs_f64(x: f64) -> f64 {
+    if x < 0.0 { -x } else { x }
+}
+
+fn acos_safe(x_raw: f64) -> f64 {
+    let pi: f64 = 3.141592653589793;
+    let x: f64 = clamp_f64(x_raw, -1.0, 1.0);
+    let ax: f64 = abs_f64(x);
+    let poly: f64 = (((-0.0187293 * ax + 0.0742610) * ax - 0.2121144) * ax + 1.5707288);
+    let r: f64 = poly * sqrt(max_f64(1.0 - ax, 0.0));
+    if x < 0.0 { pi - r } else { r }
+}
+
+// 1. Mass-conserving snow footprint bowl depression (r < 1) & raised displaced snow rim (1 <= r <= 1.75).
+// Matches src/d3d12_bridge/shaders/RawSnowDeformSim.hlsl footprint stamp kernel.
+fn snow_rim_displace(r_norm: f64, depth_m: f64, rim_gain: f64) -> f64 {
+    let pi: f64 = 3.141592653589793;
+    let r: f64 = max_f64(r_norm, 0.0);
+    let d: f64 = max_f64(depth_m, 0.0);
+    if r < 1.0 {
+        let u: f64 = 1.0 - r * r;
+        -d * u * u
+    } else if r <= 1.75 {
+        let s: f64 = sin(pi * (r - 1.0) / 0.75);
+        d * clamp_f64(rim_gain, 0.0, 0.65) * s * s
+    } else {
+        0.0
+    }
+}
+
+// 2. Inverse-square radiant campfire / lava snow melt depth delta (meters) over dt_sec.
+// Matches src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli & RawSnowDeformSim.hlsl.
+fn campfire_snow_melt(dist_m: f64, power_kw: f64, air_temp_c: f64, dt_sec: f64) -> f64 {
+    let pi: f64 = 3.141592653589793;
+    let d: f64 = max_f64(dist_m, 0.0);
+    let p_kw: f64 = max_f64(power_kw, 0.0);
+    let dt: f64 = max_f64(dt_sec, 0.0);
+    let q_rad: f64 = p_kw / (4.0 * pi * (d * d + 0.35));
+    let chill_loss: f64 = max_f64(-air_temp_c, 0.0) * 0.012;
+    let q_net: f64 = max_f64(q_rad - chill_loss, 0.0);
+    (q_net * dt) / 100200.0
+}
+
+// 3. Sub-zero slush-to-black-ice hysteresis freeze/thaw state transition in [0..1].
+// Matches src/d3d12_bridge/shaders/RawSeasonsThermals.hlsli & RawWorldEcosystem.cpp.
+fn slush_black_ice_frac(prev_ice: f64, temp_c: f64, slush_m: f64, dt_sec: f64) -> f64 {
+    let ice: f64 = clamp_f64(prev_ice, 0.0, 1.0);
+    let dt: f64 = max_f64(dt_sec, 0.0);
+    if temp_c <= -1.0 && slush_m > 0.001 {
+        let wet_scale: f64 = clamp_f64(slush_m / 0.02, 0.0, 1.0);
+        let rate: f64 = 0.035 * (-temp_c - 1.0) * wet_scale;
+        1.0 - (1.0 - ice) * exp(-rate * dt)
+    } else if temp_c >= 0.5 {
+        let rate: f64 = 0.045 * (temp_c - 0.5);
+        ice * exp(-rate * dt)
+    } else {
+        ice
+    }
+}
+
+// 4. Weather-driven NPC / wildlife storm shelter-seeking probability in [0.02..0.99].
+// Matches src/engine_rt/rt_npc_behavior.cpp & src/worldgen/RawWildlifeBoids.cpp.
+fn storm_shelter_prob(wind_bft: f64, precip01: f64, temp_c: f64, indoor_dist_m: f64) -> f64 {
+    let w_sev: f64 = clamp_f64((wind_bft - 4.0) / 5.0, 0.0, 1.5);
+    let p_sev: f64 = clamp_f64(precip01, 0.0, 1.0);
+    let c_sev: f64 = clamp_f64((2.0 - temp_c) / 18.0, 0.0, 1.2);
+    let dist_pen: f64 = clamp_f64(indoor_dist_m / 120.0, 0.0, 1.0) * 0.45;
+    let score: f64 = 1.6 * w_sev + 1.8 * p_sev + 1.1 * c_sev - dist_pen - 1.5;
+    clamp_f64(1.0 / (1.0 + exp(-2.2 * score)), 0.02, 0.99)
+}
+
+// 5. Overshoot-free exponential spring zoom step for 3rd-person & dragon flight camera.
+// Matches src/engine_rt/rt_camera_world_gmst.cpp camera zoom interpolation.
+fn camera_spring_zoom(cur_dist: f64, target_dist: f64, stiffness: f64, dt_sec: f64) -> f64 {
+    let k: f64 = max_f64(stiffness, 0.0);
+    let dt: f64 = max_f64(dt_sec, 0.0);
+    let alpha: f64 = 1.0 - exp(-k * dt);
+    cur_dist + (target_dist - cur_dist) * alpha
+}
+
+// 6. Exact astronomical daylight photoperiod duration in hours [0..24] for latitude (deg) & solar declination (rad).
+// Matches src/worldgen/RawWeatherSim.cpp orbital insolation & RawSeasonsThermals.hlsli.
+fn seasonal_photoperiod_hr(lat_deg: f64, decl_rad: f64) -> f64 {
+    let pi: f64 = 3.141592653589793;
+    let lat_rad: f64 = clamp_f64(lat_deg, -89.5, 89.5) * (pi / 180.0);
+    let tan_lat: f64 = sin(lat_rad) / max_f64(cos(lat_rad), 1.0e-5);
+    let tan_dec: f64 = sin(decl_rad) / max_f64(cos(decl_rad), 1.0e-5);
+    let cos_h0: f64 = -tan_lat * tan_dec;
+    if cos_h0 >= 1.0 {
+        0.0
+    } else if cos_h0 <= -1.0 {
+        24.0
+    } else {
+        (24.0 / pi) * acos_safe(cos_h0)
+    }
+}
+
+fn main() ~ Console {
+    let dep_ctr: f64 = snow_rim_displace(0.0, 0.16, 0.35);
+    let dep_rim: f64 = snow_rim_displace(1.375, 0.16, 0.35);
+    let melt_near: f64 = campfire_snow_melt(1.0, 25.0, -5.0, 60.0);
+    let melt_far: f64 = campfire_snow_melt(8.0, 25.0, -5.0, 60.0);
+    let ice_frz: f64 = slush_black_ice_frac(0.0, -8.0, 0.025, 10.0);
+    let ice_thw: f64 = slush_black_ice_frac(0.9, 6.0, 0.025, 10.0);
+    let sh_calm: f64 = storm_shelter_prob(2.0, 0.0, 14.0, 30.0);
+    let sh_bliz: f64 = storm_shelter_prob(8.0, 0.9, -12.0, 30.0);
+    let cam_step: f64 = camera_spring_zoom(220.0, 420.0, 6.0, 0.10);
+    let day_sum: f64 = seasonal_photoperiod_hr(60.0, 0.40907108);
+    let day_eq: f64 = seasonal_photoperiod_hr(60.0, 0.0);
+    let day_win: f64 = seasonal_photoperiod_hr(60.0, -0.40907108);
+
+    println!("snow_rim_displace(center) = {} | (rim peak) = {}", dep_ctr, dep_rim);
+    println!("campfire_snow_melt(1m 60s) = {} | (8m 60s) = {}", melt_near, melt_far);
+    println!("slush_black_ice_frac(freeze -8C) = {} | (thaw +6C) = {}", ice_frz, ice_thw);
+    println!("storm_shelter_prob(calm) = {} | (blizzard) = {}", sh_calm, sh_bliz);
+    println!("camera_spring_zoom(220->420, 0.1s) = {}", cam_step);
+    println!("seasonal_photoperiod_hr(60N sum/eq/win) = {} | {} | {}", day_sum, day_eq, day_win);
+}

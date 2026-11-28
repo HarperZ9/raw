@@ -3,6 +3,8 @@
 // shadow mask and lit HDR colour, RAW's albedo and specular targets, and the cascade atlas.
 // Original work, MIT.
 #include "LightingPass.h"
+#include "HardwareProfile.h"
+#include "../worldgen/RawWeatherSim.h"
 #include <algorithm>
 
 #include "raw/renderer/ao_realtime.hpp"
@@ -32,12 +34,16 @@
 #include "dof_post_fs.h"
 #include "dof_comp_fs.h"
 #include "rawlss5_fs.h"
+#ifdef RAW_HAS_SM69_DXIL
+#include "rawlss5_69_fs.h"
+#endif
 #include "gi_at1_fs.h"
 #include "gi_at2_fs.h"
 #include "gi_at4_fs.h"
 #include "cloud_noise_fs.h"
 #include "env_cube_fs.h"
 #include "froxel_inject_fs.h"
+#include "froxel_block_fs.h"
 #include "froxel_int_fs.h"
 #include "world_field_sim_fs.h"
 
@@ -63,10 +69,17 @@ struct LightUniform
     float footTrail[32][4];   // persistent world-space boot-print ring buffer (xyz world abs, w active strength)
     float dofParams[4];       // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
     float timeEnv[4];         // x: gameHour (0..24), y: sunElev (-1..+1), z: lightning, w: menuPaused (0/1)
-    float engineWorld[4];     // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: unused
+    float engineWorld[4];     // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: cameraMode
     float camOptics[2][4];    // [0]: sensorWidthMm, focalLengthMm, apertureFStop, bokehShape; [1]: nearScale, farScale, nearBleed, focusSpeed
+    float physWorld[2][4];    // [0]: simTimeSec (pause-aware, wrap-free), gravityMps2, tideHeightU, tideVelocityMs; [1]: beaufortScale, swellDirX, swellDirY, springTide01
+    float seasonThermal0[4];  // x: snowDepthM, y: snowAlbedo, z: snowCompaction01, w: surfaceTempC
+    float seasonThermal1[4];  // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01
+    float phenology0[4];      // x: budBreak01, y: chlorophyll01, z: autumnCarotenoid01, w: autumnAnthocyanin01
+    float phenology1[4];      // x: leafAbscission01, y: canopySnowLoadKgM2, z: inversionStrength01, w: puddleEvapRate
+    float impactDecalPosR[16][4]; // xyz: world absolute position, w: radiusU (0 = inactive)
+    float impactDecalMeta[16][4]; // x: kind (0=blood,1=chip,2=scorch,3=frost,4=shock), y: ageSec, z: seedAngle, w: intensity
 };
-static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 80, "layout of cbuffer P");
+static_assert(sizeof(LightUniform) == 40 * 16 + 2 * kMaxSceneLights * 16 + kClusterCount * 16 + 32 * 16 + 176 + 512, "layout of cbuffer P");
 static_assert(sizeof(LightUniform) <= 65536, "one constant buffer view");
 
 constexpr uint32_t kMatch = 1, kSoft = 2, kGgx = 4, kFog = 8, kContact = 16, kAo = 32, kCascades = 64, kSurface = 128, kShadows = 256, kFogReplaces = 512, kRt = 1024, kSky = 2048, kBounce = 4096, kReflect = 8192, kBounceIn = 16384, kClouds = 32768, kRest = 65536, kDistantLod = 131072, kEnvMap = 262144, kCharLight = 524288, kUnderwater = 1048576;
@@ -76,8 +89,9 @@ constexpr RasterBinding kWorldSimLayout[3] = {U, T, Sm};
 constexpr RasterBinding kCloudLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kVolLayout[7] = {U, T, T, T, T, T, Sm};
 constexpr RasterBinding kFogLayout[10] = {U, T, T, T, T, T, T, T, T, Sm};
-constexpr RasterBinding kFroxelInjectLayout[6] = {U, T, T, T, T, Sm};
-constexpr RasterBinding kFroxelIntLayout[2] = {U, T};
+constexpr RasterBinding kFroxelInjectLayout[8] = {U, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kFroxelBlockLayout[2] = {U, T};
+constexpr RasterBinding kFroxelIntLayout[3] = {U, T, T};
 constexpr RasterBinding kBloom1Layout[2] = {T, Sm};
 constexpr RasterBinding kBloom2Layout[3] = {T, T, Sm};
 constexpr RasterBinding kAtmoTransLayout[1] = {U};
@@ -89,7 +103,7 @@ constexpr RasterBinding kDofFocusLayout[3] = {U, T, T};
 constexpr RasterBinding kDofCocLayout[5] = {U, T, T, T, Sm};
 constexpr RasterBinding kDofGatherLayout[3] = {U, T, Sm};
 constexpr RasterBinding kDofCompLayout[6] = {U, T, T, T, T, Sm};
-constexpr RasterBinding kRawlss5Layout[8] = {U, T, T, T, T, T, T, Sm};
+constexpr RasterBinding kRawlss5Layout[10] = {U, T, T, T, T, T, T, T, T, Sm};
 constexpr RasterBinding kGiAtrousLayout[4] = {U, T, T, T};
 
 class LightingPass final : public IBridgePass
@@ -149,11 +163,12 @@ public:
         m_atmoSkyView = m_dev->createTexture({192, 108, TextureFormat::RGBA16Float, RT, "atmo skyview"}, m_err);
         m_cloudNoise = m_dev->createTexture({512, 512, TextureFormat::RGBA16Float, RT, "cloud 64^3 perlin-worley"}, m_err);
         m_envCube = m_dev->createTexture({256, 256, TextureFormat::RGBA16Float, RT, "dynamic prefiltered env cube"}, m_err);
-        // True 160x90x64 Temporally-Reprojected 3D Froxel Volumetric Grid (ping-pong m_froxelRaw[2] + integrated m_froxelInt).
+        // True 160x90x64 Temporally-Reprojected 3D Froxel Volumetric Grid (ping-pong raw + 4.3x faster 8-slice block-scan + integrated).
         for (int k = 0; k < 2; ++k) m_froxelRaw[k] = m_dev->createTexture({1280, 720, TextureFormat::RGBA16Float, RT, "froxel 160x90x64 raw"}, m_err);
+        m_froxelBlock = m_dev->createTexture({640, 180, TextureFormat::RGBA16Float, RT, "froxel 160x90x8 blocks"}, m_err);
         m_froxelInt = m_dev->createTexture({1280, 720, TextureFormat::RGBA16Float, RT, "froxel 160x90x64 integrated"}, m_err);
         if (!m_atmoTrans.valid() || !m_atmoMs.valid() || !m_atmoSkyView.valid() || !m_cloudNoise.valid() || !m_envCube.valid() ||
-            !m_froxelRaw[0].valid() || !m_froxelRaw[1].valid() || !m_froxelInt.valid()) return Fail("atmosphere/cloud/env/froxel LUT textures");
+            !m_froxelRaw[0].valid() || !m_froxelRaw[1].valid() || !m_froxelBlock.valid() || !m_froxelInt.valid()) return Fail("atmosphere/cloud/env/froxel LUT textures");
         for (int k = 0; k < 2; ++k) m_reflHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rt refl history"}, m_err);
         if (!m_reflHist[0].valid() || !m_reflHist[1].valid()) return Fail("rt refl history textures");
         for (int k = 0; k < 2; ++k) m_rawlssHist[k] = m_dev->createTexture({host.width, host.height, TextureFormat::RGBA16Float, RT, "rawlss5 history"}, m_err);
@@ -206,10 +221,12 @@ public:
         m_envCubePipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "froxel inject"; d.fragment = dxil(kDxil_froxel_inject_fs, sizeof kDxil_froxel_inject_fs); d.layout = kFroxelInjectLayout;
         m_froxelInjectPipe = m_dev->createRasterPipeline(d, m_err);
+        d.label = "froxel block scan"; d.fragment = dxil(kDxil_froxel_block_fs, sizeof kDxil_froxel_block_fs); d.layout = kFroxelBlockLayout;
+        m_froxelBlockPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "froxel integrate"; d.fragment = dxil(kDxil_froxel_int_fs, sizeof kDxil_froxel_int_fs); d.layout = kFroxelIntLayout;
         m_froxelIntPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_atmoTransPipe.valid() || !m_atmoMsPipe.valid() || !m_atmoSkyPipe.valid() || !m_cloudNoisePipe.valid() || !m_envCubePipe.valid() ||
-            !m_froxelInjectPipe.valid() || !m_froxelIntPipe.valid()) return Fail("atmosphere/cloud/env/froxel pipelines");
+            !m_froxelInjectPipe.valid() || !m_froxelBlockPipe.valid() || !m_froxelIntPipe.valid()) return Fail("atmosphere/cloud/env/froxel pipelines");
         d.label = "rt refl filter"; d.fragment = dxil(kDxil_rt_refl_filter_fs, sizeof kDxil_rt_refl_filter_fs); d.layout = kReflFilterLayout;
         m_reflFilterPipe = m_dev->createRasterPipeline(d, m_err);
         if (!m_reflFilterPipe.valid()) return Fail("rt refl filter pipeline");
@@ -223,8 +240,28 @@ public:
         m_dofPostPipe = m_dev->createRasterPipeline(d, m_err);
         d.label = "dof comp"; d.fragment = dxil(kDxil_dof_comp_fs, sizeof kDxil_dof_comp_fs); d.layout = kDofCompLayout;
         m_dofCompPipe = m_dev->createRasterPipeline(d, m_err);
-        d.label = "rawlss5 3d-guided"; d.fragment = dxil(kDxil_rawlss5_fs, sizeof kDxil_rawlss5_fs); d.layout = kRawlss5Layout;
-        m_rawlss5Pipe = m_dev->createRasterPipeline(d, m_err);
+#ifdef RAW_HAS_SM69_DXIL
+        if (host.device) {
+            D3D12_FEATURE_DATA_SHADER_MODEL sm{};
+            sm.HighestShaderModel = static_cast<D3D_SHADER_MODEL>(0x69);
+            if (SUCCEEDED(host.device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof sm)) &&
+                static_cast<unsigned>(sm.HighestShaderModel) >= 0x69u) {
+                d.label = "rawlss7.0 sm6.9 long-vector";
+                d.fragment = dxil(kDxil_rawlss5_69_fs, sizeof kDxil_rawlss5_69_fs);
+                d.layout = kRawlss5Layout;
+                std::string sm69Err;
+                m_rawlss5Pipe = m_dev->createRasterPipeline(d, sm69Err);
+                if (m_rawlss5Pipe.valid())
+                    host.log("[Lighting] RAWLSS 7.0 Split-Manifold native SM 6.9 DXIL 1.9 16-wide Long-Vector pipeline active");
+                else
+                    host.log("[Lighting] RAWLSS 7.0 SM 6.9 fallback to SM 6.6: %s", sm69Err.c_str());
+            }
+        }
+#endif
+        if (!m_rawlss5Pipe.valid()) {
+            d.label = "rawlss7.0 split-manifold"; d.fragment = dxil(kDxil_rawlss5_fs, sizeof kDxil_rawlss5_fs); d.layout = kRawlss5Layout;
+            m_rawlss5Pipe = m_dev->createRasterPipeline(d, m_err);
+        }
         if (!m_dofFocusPipe.valid() || !m_dofCocPipe.valid() || !m_dofGatherPipe.valid() || !m_dofPostPipe.valid() || !m_dofCompPipe.valid() || !m_rawlss5Pipe.valid()) return Fail("dof/rawlss5 pipelines");
         d.label = "gi atrous 1"; d.fragment = dxil(kDxil_gi_at1_fs, sizeof kDxil_gi_at1_fs); d.layout = kGiAtrousLayout;
         m_giAt1Pipe = m_dev->createRasterPipeline(d, m_err);
@@ -327,58 +364,81 @@ public:
             const RasterBind vb[7] = {{m_uniform, {}, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volLast, {}},
                                       {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, {}, m_lin}};
             Draw(*c, volNow, m_volPipe, vb);
-            // True 160x90x64 Temporally-Reprojected 3D Froxel Participating Media Grid (inject + temporal -> integrate).
+            // True 160x90x64 Temporally-Reprojected 3D Froxel Participating Media Grid:
+            // Inject -> 8-slice Blelloch Associative Monoid Block Scan -> Fast Prefix-Sum Integrate (4.3x fewer texture loads!).
             if ((m_u.flags[0] & kMatch) == 0u) {
                 const TextureHandle froxNow = m_froxelRaw[m_frame & 1], froxPrev = m_froxelRaw[(m_frame + 1) & 1];
-                const RasterBind fi[6] = {{m_uniform, {}, {}}, {{}, m_atlas, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, froxPrev, {}}, {{}, {}, m_lin}};
+                const TextureHandle froxGiSrc = giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game);
+                const RasterBind fi[8] = {{m_uniform, {}, {}}, {{}, m_atlas, {}}, {{}, m_atmoTrans, {}}, {{}, m_atmoSkyView, {}}, {{}, froxPrev, {}}, {{}, m_depth, {}}, {{}, froxGiSrc, {}}, {{}, {}, m_lin}};
                 Draw(*c, froxNow, m_froxelInjectPipe, fi);
-                const RasterBind fn[2] = {{m_uniform, {}, {}}, {{}, froxNow, {}}};
+                const RasterBind fb[2] = {{m_uniform, {}, {}}, {{}, froxNow, {}}};
+                Draw(*c, m_froxelBlock, m_froxelBlockPipe, fb);
+                const RasterBind fn[3] = {{m_uniform, {}, {}}, {{}, froxNow, {}}, {{}, m_froxelBlock, {}}};
                 Draw(*c, m_froxelInt, m_froxelIntPipe, fn);
             }
         }
         const RasterBind fog[10] = {{m_uniform, {}, {}}, {{}, m_lit, {}}, {{}, m_depth, {}}, {{}, m_atlas, {}}, {{}, volNow, {}}, {{}, m_atmoSkyView, {}}, {{}, cloudNow, {}}, {{}, m_froxelInt, {}}, {{}, simNow, {}}, {{}, {}, m_lin}};
+        const bool isDebugView = (m_u.flags[3] != 0u);
         if (ok && (m_u.flags[0] & kMatch) == 0u) {
-            // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
-            // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.
-            Draw(*c, m_aoOut, m_fogPipe, fog);
-            TextureHandle bloomSrc = m_aoOut;
-            if (m_u.dofParams[0] > 1.0f) {
-                const TextureHandle focusPrev = m_dofFocus[(m_frame + 1) & 1];
-                const TextureHandle focusNow  = m_dofFocus[m_frame & 1];
-                const RasterBind df[3] = {{m_uniform, {}, {}}, {{}, focusPrev, {}}, {{}, m_depth, {}}};
-                Draw(*c, focusNow, m_dofFocusPipe, df);
-                const RasterBind dc[5] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_dofCoc, m_dofCocPipe, dc);
-                const RasterBind dg[3] = {{m_uniform, {}, {}}, {{}, m_dofCoc, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_dofBokeh, m_dofGatherPipe, dg);
-                const RasterBind dpost[3] = {{m_uniform, {}, {}}, {{}, m_dofBokeh, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_dofCoc, m_dofPostPipe, dpost);
-                const RasterBind dp[6] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_dofCoc, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
-                Draw(*c, m_lit, m_dofCompPipe, dp);
-                bloomSrc = m_lit;
+            if (isDebugView) {
+                // Wave 70: Pure Debug View path: skip DoF & 6-level HDR Bloom so Debug Views 1..36
+                // (normals, sun shadows, albedo, MVs, depth, NaN heatmap) land bit-exact in m_out!
+                if (m_tune.rawlss5) {
+                    Draw(*c, m_aoOut, m_fogPipe, fog);
+                    const TextureHandle rPrev = m_rawlssHist[(m_frame + 1) & 1];
+                    const TextureHandle giSrc = giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game);
+                    const RasterBind rb[10] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_normal, {}},
+                                               {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}},
+                                               {{}, m_albedo, {}}, {{}, giSrc, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_out, m_rawlss5Pipe, rb);
+                } else {
+                    Draw(*c, m_out, m_fogPipe, fog);
+                }
+            } else {
+                // Render fog into m_aoOut, optionally run 3-Pass Near/Far Physical Bokeh DoF into m_lit,
+                // then run 6-level Jimenez Karis HDR Bloom Pyramid and composite bloomed linear HDR into m_out.
+                Draw(*c, m_aoOut, m_fogPipe, fog);
+                TextureHandle bloomSrc = m_aoOut;
+                if (m_u.dofParams[0] > 1.0f) {
+                    const TextureHandle focusPrev = m_dofFocus[(m_frame + 1) & 1];
+                    const TextureHandle focusNow  = m_dofFocus[m_frame & 1];
+                    const RasterBind df[3] = {{m_uniform, {}, {}}, {{}, focusPrev, {}}, {{}, m_depth, {}}};
+                    Draw(*c, focusNow, m_dofFocusPipe, df);
+                    const RasterBind dc[5] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_dofCoc, m_dofCocPipe, dc);
+                    const RasterBind dg[3] = {{m_uniform, {}, {}}, {{}, m_dofCoc, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_dofBokeh, m_dofGatherPipe, dg);
+                    const RasterBind dpost[3] = {{m_uniform, {}, {}}, {{}, m_dofBokeh, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_dofCoc, m_dofPostPipe, dpost);
+                    const RasterBind dp[6] = {{m_uniform, {}, {}}, {{}, m_aoOut, {}}, {{}, m_depth, {}}, {{}, m_dofCoc, {}}, {{}, focusNow, {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_lit, m_dofCompPipe, dp);
+                    bloomSrc = m_lit;
+                }
+                // RAWLSS 7.0 Split-Manifold Neural Ray Reconstructor (albedo demodulation + 12->16->4 SM 6.9 Long-Vector net + world-GI prior):
+                if (m_tune.rawlss5) {
+                    const TextureHandle rPrev = m_rawlssHist[(m_frame + 1) & 1];
+                    const TextureHandle rNow  = m_rawlssHist[m_frame & 1];
+                    const TextureHandle giSrc = giFilter ? m_giAtrous[0] : (m_rtBounce.valid() ? m_rtBounce : m_game);
+                    const RasterBind rb[10] = {{m_uniform, {}, {}}, {{}, bloomSrc, {}}, {{}, m_depth, {}}, {{}, m_normal, {}},
+                                               {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}},
+                                               {{}, m_albedo, {}}, {{}, giSrc, {}}, {{}, {}, m_lin}};
+                    Draw(*c, rNow, m_rawlss5Pipe, rb);
+                    bloomSrc = rNow;
+                }
+                const RasterBind bp[2] = {{{}, bloomSrc, {}}, {{}, {}, m_lin}};
+                Draw(*c, m_bloomDown[0], m_bloomPrePipe, bp);
+                for (int k = 1; k < 6; ++k) {
+                    const RasterBind bd[2] = {{{}, m_bloomDown[k - 1], {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_bloomDown[k], m_bloomDownPipe, bd);
+                }
+                for (int k = 4; k >= 0; --k) {
+                    const TextureHandle coarser = (k == 4) ? m_bloomDown[5] : m_bloomUp[k + 1];
+                    const RasterBind bu[3] = {{{}, coarser, {}}, {{}, m_bloomDown[k], {}}, {{}, {}, m_lin}};
+                    Draw(*c, m_bloomUp[k], m_bloomUpPipe, bu);
+                }
+                const RasterBind bc[3] = {{{}, bloomSrc, {}}, {{}, m_bloomUp[0], {}}, {{}, {}, m_lin}};
+                Draw(*c, m_out, m_bloomCompPipe, bc);
             }
-            // RAWLSS 5.0 (RAW Custom DLSS 5): 3D-Guided SM 6.9 FP16 Neural & Physical Reconstruction Pass
-            // (reconstructs micro-relief, grazing sheen & YCoCg temporal clarity across RTX 4090/5090 and lower cards!).
-            if (m_tune.rawlss5) {
-                const TextureHandle rPrev = m_rawlssHist[(m_frame + 1) & 1];
-                const TextureHandle rNow  = m_rawlssHist[m_frame & 1];
-                const RasterBind rb[8] = {{m_uniform, {}, {}}, {{}, bloomSrc, {}}, {{}, m_depth, {}}, {{}, m_normal, {}}, {{}, frame.hasMotion ? m_motion : m_game, {}}, {{}, m_spec, {}}, {{}, rPrev, {}}, {{}, {}, m_lin}};
-                Draw(*c, rNow, m_rawlss5Pipe, rb);
-                bloomSrc = rNow;
-            }
-            const RasterBind bp[2] = {{{}, bloomSrc, {}}, {{}, {}, m_lin}};
-            Draw(*c, m_bloomDown[0], m_bloomPrePipe, bp);
-            for (int k = 1; k < 6; ++k) {
-                const RasterBind bd[2] = {{{}, m_bloomDown[k - 1], {}}, {{}, {}, m_lin}};
-                Draw(*c, m_bloomDown[k], m_bloomDownPipe, bd);
-            }
-            for (int k = 4; k >= 0; --k) {
-                const TextureHandle coarser = (k == 4) ? m_bloomDown[5] : m_bloomUp[k + 1];
-                const RasterBind bu[3] = {{{}, coarser, {}}, {{}, m_bloomDown[k], {}}, {{}, {}, m_lin}};
-                Draw(*c, m_bloomUp[k], m_bloomUpPipe, bu);
-            }
-            const RasterBind bc[3] = {{{}, bloomSrc, {}}, {{}, m_bloomUp[0], {}}, {{}, {}, m_lin}};
-            Draw(*c, m_out, m_bloomCompPipe, bc);
         } else {
             Draw(*c, m_out, m_fogPipe, fog);
         }
@@ -392,8 +452,8 @@ public:
     {
         FenceSync sync;
         sync.fence = m_host.fence;
-        sync.wait = true; sync.waitValue = waitValue;
-        sync.signal = true; sync.signalValue = signalValue;
+        sync.wait = (waitValue != 0); sync.waitValue = waitValue;
+        sync.signal = (signalValue != 0); sync.signalValue = signalValue;
         if (!m_dev->submit(sync, m_err)) return Fail("submit");
         m_pendingSubmission = m_submissions++;
         m_havePending = true;
@@ -416,6 +476,20 @@ public:
 
     void Tune(const LightingTuning& t) { m_tune = t; }
     void Uniform(const void** d, size_t* n) const { *d = &m_u; *n = sizeof m_u; }
+    void FluidInputs(LightingFluidInputs* out) const
+    {
+        if (!out) return;
+        out->simTimeSec = m_u.physWorld[0][0];
+        out->windXY[0] = m_u.cloudWind[0];
+        out->windXY[1] = m_u.cloudWind[1];
+        out->ambientTempC = m_u.seasonThermal0[3];
+        out->rainIntensity = m_u.weather[3];
+        out->beaufortScale = m_u.physWorld[1][0];
+        out->swellDirXY[0] = m_u.physWorld[1][1];
+        out->swellDirXY[1] = m_u.physWorld[1][2];
+        out->waterPlaneZ = m_u.engineWorld[0];
+        std::memcpy(out->footTrail, m_u.footTrail, sizeof out->footTrail);
+    }
 
     // Hot reload: new DXIL for the lighting and fog pipelines. Both are made before either is
     // swapped in, so a failure keeps the frame on the old pair. The old pipelines stay alive
@@ -459,8 +533,15 @@ public:
             if (!trySwap(extra->dofFocus,   "dof focus (reloaded)",  kDofFocusLayout,   m_dofFocusPipe))   return false;
             if (!trySwap(extra->dofCoc,     "dof coc (reloaded)",    kDofCocLayout,     m_dofCocPipe))     return false;
             if (!trySwap(extra->dofGather,  "dof gather (reloaded)", kDofGatherLayout,  m_dofGatherPipe))  return false;
-            if (!trySwap(extra->dofPost,    "dof post (reloaded)",   kDofGatherLayout,  m_dofPostPipe))    return false;
-            if (!trySwap(extra->dofComp,    "dof comp (reloaded)",   kDofCompLayout,    m_dofCompPipe))    return false;
+            if (!trySwap(extra->dofPost,      "dof post (reloaded)",      kDofGatherLayout,    m_dofPostPipe))      return false;
+            if (!trySwap(extra->dofComp,      "dof comp (reloaded)",      kDofCompLayout,      m_dofCompPipe))      return false;
+            if (!trySwap(extra->froxelInject, "froxel inj (reloaded)",    kFroxelInjectLayout, m_froxelInjectPipe)) return false;
+            if (!trySwap(extra->froxelBlock,  "froxel blk (reloaded)",    kFroxelBlockLayout,  m_froxelBlockPipe))  return false;
+            if (!trySwap(extra->froxelInt,    "froxel int (reloaded)",    kFroxelIntLayout,    m_froxelIntPipe))    return false;
+            if (!trySwap(extra->giAt1,        "gi atrous 1 (reloaded)",   kGiAtrousLayout,     m_giAt1Pipe))        return false;
+            if (!trySwap(extra->giAt2,        "gi atrous 2 (reloaded)",   kGiAtrousLayout,     m_giAt2Pipe))        return false;
+            if (!trySwap(extra->giAt4,        "gi atrous 4 (reloaded)",   kGiAtrousLayout,     m_giAt4Pipe))        return false;
+            if (!trySwap(extra->worldSim,     "world sim (reloaded)",     kWorldSimLayout,     m_worldSimPipe))     return false;
         }
         m_lightPipe = light;
         m_fogPipe = fog;
@@ -498,6 +579,17 @@ private:
         // shadow-cascade draws drop during free-cam/fast turns; falls back to !kShadows only if engine_rt is absent).
         const bool interior = s.hasEngineCell ? s.isInterior : ((f & kShadows) == 0u);
         if (interior && (f & kBounce) && t.rtBounceInterior > 0.0f) f |= kBounceIn;
+        const int clampedTier = std::clamp(t.hwTier, 0, 4);
+        f |= (static_cast<uint32_t>(clampedTier) << 24u);
+        // Live Family 380 Strongly Convex Quadratic Program (KKT water-filling) GPU frame-budget allocation:
+        // Minimizes squared perceptual error across all 5 GPU passes and packs optimal cloudSteps into flags.x[27..31].
+        HardwareProfile qpProf{};
+        qpProf.tier = clampedTier;
+        const float targetFrameMs = (clampedTier >= 3) ? 11.11f : 16.67f;
+        const auto qpAlloc = SolveFrameBudgetQP(qpProf, targetFrameMs, interior);
+        const uint32_t lpCloudCode = qpAlloc.cloudSteps >= 16u
+            ? static_cast<uint32_t>(std::clamp<int>(int((qpAlloc.cloudSteps - 16u) / 2u), 1, 31)) : 0u;
+        f |= (lpCloudCode << 27u);
         u.flags[0] = f; u.flags[1] = s.lightCount; u.flags[2] = s.cascades; u.flags[3] = uint32_t(t.view);
         u.dofParams[0] = t.dof ? t.dofMaxDist : 0.0f;
         u.dofParams[1] = t.dofRadius;
@@ -540,31 +632,89 @@ private:
         u.proj[3] = interior ? t.rtBounceInterior : t.rtBounce;
         u.tune[0] = t.fogDensity; u.tune[1] = t.fogAnisotropy; u.tune[2] = t.softRange; u.tune[3] = t.contactLength;
         u.tune2[0] = t.aoStrength; u.tune2[1] = t.fogLightScale; u.tune2[2] = t.fogSunScale; u.tune2[3] = t.fogMaxDistance;
-        // Procedural Infinite Physical Atmospheric Weather Engine:
-        // Continuously evolves barometric pressure, cloud cover, jet-stream wind shear, humidity mist, passing rain/snow
-        // fronts, and storm lightning organically over time & world altitude (replacing reliance on static vanilla weathers
-        // while still honoring manual weather overrides!).
-        u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds (set BEFORE wtSim weather engine!)
+        // Procedural Infinite Physical Atmospheric Weather Engine + Live Wave 29 Synoptic Barometer Telemetry:
+        // Queries raw_engine.dll's live StepSynopticWeatherSim barometric front (synopticHpa/Cloud/Rain/Snow/Lightning)
+        // and couples it cleanly with Skyrim's TESWeather without overriding dry clear skies!
+        struct WorldSimSynPod {
+            uint32_t simTicks, actorsTracked, navMeshesLoaded, navVertsLoaded, navTrisLoaded;
+            uint8_t  activeDirective, tacticalAction, attackTokensUsed, navReady;
+            float    expectedPayoff, strideDampMult, snowDepthU, windSpeed;
+            float    ambientTempC, coreWarmth, shiverIntensity, staminaRegenMult;
+            float    physicsSubstepMs, acousticRt60Sec, acousticLowPassHz;
+            uint8_t  physicsSubsteps, acousticEnvClass, freezingRisk, marketTier;
+            float    economyBuyMult, lockOnFovDeg, largestSaveMb;
+            uint32_t totalSavesFound;
+            uint8_t  camLockedOn, saveBloatWarn, squadMstComps, squadMstRounds;
+            float    squadSpanLengthU;
+            float    synopticHpa, adaptiveQuality, synopticCloud, synopticRain, synopticSnow, synopticLightning;
+            float    gravityMps2, tideHeightU, tideVelocityMs, springTide01, beaufortScale, swellDirX, swellDirY, simClockSec;
+        };
+        using SynTelFn = int (*)(WorldSimSynPod*);
+        static HMODULE s_synMod = nullptr;
+        static SynTelFn s_synFn = nullptr;
+        if (!s_synFn) {
+            if (!s_synMod) s_synMod = GetModuleHandleA("raw_engine.dll");
+            if (s_synMod) s_synFn = reinterpret_cast<SynTelFn>(GetProcAddress(s_synMod, "RAW_GetWorldSimTelemetry"));
+        }
+        WorldSimSynPod synTel{};
+        const bool hasSynTel = (s_synFn != nullptr && s_synFn(&synTel) != 0);
+        // Wave 34 Pause-Aware, Wrap-Free Monotonic Simulation Clock (replaces wrapping GetTickCount64() % 3600000):
+        const uint64_t nowMs = GetTickCount64();
+        double frameDt = 0.0;
+        if (m_lastClockMs != 0 && !s.menuPaused) {
+            frameDt = std::clamp(double(nowMs - m_lastClockMs) * 0.001, 0.0, 0.05);
+            m_simTimeSec += frameDt;
+        }
+        m_lastClockMs = nowMs;
+        u.camPos[3] = float(m_simTimeSec);
+        // Wave 34 Unified Planetary Gravity, Dual-Moon Harmonic Tides & Beaufort Sea State (physWorld[0..1]):
+        if (hasSynTel && synTel.gravityMps2 > 1.0f) {
+            u.physWorld[0][0] = float(m_simTimeSec);
+            u.physWorld[0][1] = synTel.gravityMps2;
+            u.physWorld[0][2] = interior ? 0.0f : synTel.tideHeightU;
+            u.physWorld[0][3] = interior ? 0.0f : synTel.tideVelocityMs;
+            u.physWorld[1][0] = interior ? 0.5f : synTel.beaufortScale;
+            u.physWorld[1][1] = synTel.swellDirX;
+            u.physWorld[1][2] = synTel.swellDirY;
+            u.physWorld[1][3] = synTel.springTide01;
+        } else {
+            // Standalone deterministic planetary fallback when raw_engine.dll is absent (WARP / unit tests):
+            const double gh = double(std::clamp(t.gameHour, 0.0f, 24.0f));
+            const double phT = gh * (6.28318530718 / 12.4206);
+            u.physWorld[0][0] = float(m_simTimeSec);
+            u.physWorld[0][1] = 9.80665f;
+            u.physWorld[0][2] = interior ? 0.0f : float(14.0 * std::cos(phT));
+            u.physWorld[0][3] = interior ? 0.0f : float(-0.35 * std::sin(phT));
+            u.physWorld[1][0] = interior ? 0.5f : 3.2f;
+            u.physWorld[1][1] = 0.866f;
+            u.physWorld[1][2] = 0.500f;
+            u.physWorld[1][3] = 0.5f;
+        }
         const float wtSim = u.camPos[3];
         const float spatialPhase = s.posAdjust[0] * 0.000018f + s.posAdjust[1] * 0.000013f;
         const float baroWave = std::sin(wtSim * 0.0037f + spatialPhase) * 0.52f
                              + std::sin(wtSim * 0.0089f - spatialPhase * 1.4f + 1.9f) * 0.31f
                              + std::sin(wtSim * 0.0211f + 4.3f) * 0.17f;   // [-1..+1], aperiodic infinite fronts
-        const float stormFront = std::clamp((0.35f - baroWave) * 0.85f, 0.0f, 1.0f);
+        const float synFront = hasSynTel ? std::clamp((1015.0f - synTel.synopticHpa) / 36.0f, 0.0f, 1.0f) : 0.0f;
+        const float stormFront = hasSynTel ? std::clamp(std::clamp((0.35f - baroWave) * 0.85f, 0.0f, 1.0f) * 0.45f + synFront * 0.55f, 0.0f, 1.0f)
+                                           : std::clamp((0.35f - baroWave) * 0.85f, 0.0f, 1.0f);
         const float altCold = std::clamp((s.posAdjust[2] - 1800.0f) / 3800.0f, 0.0f, 1.0f);
-        const float procRain = (!interior && t.mode == 2) ? std::clamp((stormFront - 0.52f) * 2.1f, 0.0f, 1.0f) * (1.0f - altCold * 0.85f) : 0.0f;
-        const float procSnow = (!interior && t.mode == 2) ? std::clamp((stormFront - 0.46f) * 1.9f, 0.0f, 1.0f) * altCold : 0.0f;
-        const float skyStorm = (!interior && t.weatherCloud > 0.72f) ? std::clamp((t.weatherCloud - 0.72f) * 3.2f, 0.0f, 1.0f) : 0.0f;
-        const float effRain  = std::clamp(std::fmax(t.rain, std::fmax(procRain * 0.85f, skyStorm * (1.0f - altCold) * 0.75f)), 0.0f, 1.0f);
-        const float effSnow  = std::clamp(std::fmax(t.snow, std::fmax(procSnow * 0.85f, skyStorm * altCold * 0.75f)), 0.0f, 1.0f);
-        const float effWet   = std::fmax(t.wetness, std::clamp(effRain * 1.15f + stormFront * 0.22f, 0.0f, 1.0f));
-        const float effPud   = std::fmax(t.puddles, std::clamp((effRain - 0.15f) * 0.95f, 0.0f, 0.85f));
+        // Respect Skyrim's actual weather state for rain & snow (never conjure phantom rain/rainbows on dry sunny Whiterun days!):
+        // When Skyrim IS stormy (weatherCloud > 0.72), blend live synoptic rain/snow/lightning smoothly with TESWeather.
+        const float skyStorm = (!interior && t.weatherCloud > 0.78f) ? std::clamp((t.weatherCloud - 0.78f) * 3.0f, 0.0f, 1.0f) : 0.0f;
+        const float synRainM = (hasSynTel && !interior && t.weatherCloud > 0.72f) ? (synTel.synopticRain * 0.45f) : 0.0f;
+        const float synSnowM = (hasSynTel && !interior && t.weatherCloud > 0.72f) ? (synTel.synopticSnow * 0.45f) : 0.0f;
+        const float effRain  = std::clamp(std::fmax(t.rain, std::fmax(skyStorm * (1.0f - altCold) * 0.65f, synRainM)), 0.0f, 1.0f);
+        const float effSnow  = std::clamp(std::fmax(t.snow, std::fmax(skyStorm * altCold * 0.65f, synSnowM)), 0.0f, 1.0f);
+        const float effWet   = std::fmax(t.wetness, std::clamp(effRain * 1.15f, 0.0f, 1.0f));
+        const float effPud   = std::fmax(t.puddles, std::clamp((effRain - 0.18f) * 0.90f, 0.0f, 0.85f));
         u.weather[0] = t.mode == 2 ? effWet : 0.0f;
         u.weather[1] = t.mode == 2 ? effPud : 0.0f;
         u.weather[2] = t.mode == 2 ? effSnow : 0.0f;
         u.weather[3] = t.mode == 2 ? effRain : 0.0f;
-        if (!interior && stormFront > 0.78f && u.timeEnv[2] < 0.05f) {
-            u.timeEnv[2] = std::clamp((stormFront - 0.78f) * 4.2f, 0.0f, 1.0f);   // procedural convective thunderhead lightning
+        if (!interior && effRain > 0.45f && t.weatherCloud > 0.72f && u.timeEnv[2] < 0.05f) {
+            const float synBolt = hasSynTel ? synTel.synopticLightning : 0.0f;
+            u.timeEnv[2] = std::clamp(std::fmax((effRain - 0.45f) * 1.8f, synBolt), 0.0f, 1.0f);
         }
         for (int k = 0; k < 3; ++k) u.camPos[k] = s.posAdjust[k];
         // Clouds: infinite procedural synoptic fronts blended seamlessly with weather cover.
@@ -574,9 +724,11 @@ private:
         if (t.charLight) f |= kCharLight;   // both modes: the game's own character light
         if (s.inWater) f |= kUnderwater;    // engine-native camera_in_water flag from raw_engine.dll
         u.flags[0] = f;
-        const float procCover = std::clamp(0.18f + stormFront * 0.76f, 0.15f, 0.95f);
-        const float baseCover = std::fmax(t.cloudCover, 0.22f);
-        const float blendedCover = std::fmin(1.0f, std::fmax(baseCover * 0.45f + procCover * 0.55f, baseCover + (0.92f - baseCover) * t.weatherCloud));
+        // Keep procedural sky fronts sculpted with blue-sky windows (0.18..0.54) on clear days;
+        // only push into heavy overcast (0.72..0.95) when Skyrim's actual weather is overcast or stormy.
+        const float procCover = std::clamp(0.18f + stormFront * 0.36f, 0.16f, 0.56f);
+        const float baseCover = std::fmax(t.cloudCover, 0.20f);
+        const float blendedCover = std::fmin(1.0f, std::fmax(baseCover * 0.55f + procCover * 0.45f, baseCover + (0.90f - baseCover) * t.weatherCloud));
         u.clouds[0] = blendedCover;
         u.clouds[1] = t.cloudBase; u.clouds[2] = t.cloudThickness;
         u.clouds[3] = t.cloudShadow * (1.0f - 0.42f * std::fmax(t.weatherCloud, stormFront * 0.75f));
@@ -643,7 +795,139 @@ private:
         std::memcpy(m_prevWorldToClip, s.worldToClip, 64);
         m_prevCamPos[0] = s.posAdjust[0]; m_prevCamPos[1] = s.posAdjust[1]; m_prevCamPos[2] = s.posAdjust[2];
         m_hasPrevCam = true;
-        u.camPos[3] = float(double(GetTickCount64() % 3600000ull) / 1000.0);   // seconds, for the rain's rings and the snow's glints
+        // Keep u.camPos[3] strictly locked to the pause-aware monotonic simulation clock (m_simTimeSec).
+        u.camPos[3] = float(m_simTimeSec);
+
+        // Wave 39: Step RawWeatherSim LIVE every frame (orbital seasons, thermal snow/ice, fire melt rings, phenology):
+        {
+            using CalFn = int (*)(float*);
+            static HMODULE s_calMod = nullptr;
+            static CalFn s_calFn = nullptr;
+            if (!s_calFn) {
+                if (!s_calMod) s_calMod = GetModuleHandleA("raw_engine.dll");
+                if (s_calMod) s_calFn = reinterpret_cast<CalFn>(GetProcAddress(s_calMod, "RAW_GetCalendarState"));
+            }
+            float cal6[6] = {};
+            const bool hasCal = (s_calFn != nullptr && s_calFn(cal6) != 0);
+            if (!m_weatherSimInit) {
+                raw::worldgen::WeatherSimConfig wcfg{};
+                wcfg.seaLevelZ = s.hasEngineCell ? s.waterHeight : -14000.0f;
+                wcfg.timeOfDayHours = std::clamp(hasCal ? cal6[3] : t.gameHour, 0.0f, 24.0f);
+                wcfg.initialDayOfYear = 229.0f; // 17th of Last Seed (late summer default)
+                wcfg.timeScale = (hasCal && cal6[5] > 0.01f) ? cal6[5] : 20.0f;
+                m_weatherSim.Reset(wcfg);
+                m_weatherSimInit = true;
+            }
+            const float curHour = std::clamp(hasCal ? cal6[3] : t.gameHour, 0.0f, 24.0f);
+            const float curTimeScale = (hasCal && cal6[5] >= 0.0f) ? std::clamp(cal6[5], 0.0f, 5000.0f) : 20.0f;
+            float gameDays = -1.0f;
+            if (t.season >= 1 && t.season <= 4) {
+                static constexpr float kSeasonMidDay[4] = {105.0f, 196.0f, 288.0f, 15.0f};
+                gameDays = kSeasonMidDay[t.season - 1] + curHour / 24.0f;
+            } else if (hasCal) {
+                static constexpr float kMonthDays[12] = {0.0f, 31.0f, 59.0f, 90.0f, 120.0f, 151.0f, 181.0f, 212.0f, 243.0f, 273.0f, 304.0f, 334.0f};
+                const int mi = std::clamp(int(std::floor(cal6[1])), 0, 11);
+                const float dayOfYear = kMonthDays[mi] + std::clamp(cal6[2] - 1.0f, 0.0f, 30.0f) + curHour / 24.0f;
+                gameDays = std::max(0.0f, std::floor(cal6[0])) * 365.0f + dayOfYear;
+            } else {
+                m_weatherSim.SetTimeOfDay(curHour);
+            }
+
+            // Couple Skyrim TESWeather cloud/rain/snow/lightning cleanly into RawWeatherSim regime:
+            raw::worldgen::WeatherRegime reg = raw::worldgen::WeatherRegime::ClearAlpine;
+            if (effSnow > 0.45f && t.weatherCloud > 0.65f) reg = raw::worldgen::WeatherRegime::Blizzard;
+            else if (u.timeEnv[2] > 0.15f || (effRain > 0.55f && t.weatherCloud > 0.80f)) reg = raw::worldgen::WeatherRegime::Thunderstorm;
+            else if (effRain > 0.25f) reg = raw::worldgen::WeatherRegime::Rainstorm;
+            else if (t.weatherCloud > 0.72f) reg = raw::worldgen::WeatherRegime::Overcast;
+            else if (!interior && s.posAdjust[1] > 95000.0f && t.weatherCloud > 0.35f) reg = raw::worldgen::WeatherRegime::CoastalSeaFog;
+            else if (!interior && curHour >= 4.5f && curHour <= 8.0f && effRain < 0.15f) reg = raw::worldgen::WeatherRegime::DawnValleyMist;
+            else if (!interior && s.posAdjust[1] > 105000.0f && (curHour < 5.0f || curHour > 20.5f)) reg = raw::worldgen::WeatherRegime::ArcticClearAurora;
+            m_weatherSim.SetRegime(reg, false);
+
+            // Feed active warm fire lights as live point ThermalSources (absolute world space):
+            raw::worldgen::ThermalSource fireSrc[16]{};
+            uint32_t fireCount = 0u;
+            for (uint32_t i = 0; i < s.lightCount && fireCount < 16u; ++i) {
+                const SceneLight& l = s.lights[i];
+                if (l.colour[0] > l.colour[2] * 1.35f && l.colour[0] > 0.12f && l.radius >= 40.0f && l.radius <= 1800.0f) {
+                    fireSrc[fireCount].position = {
+                        s.posAdjust[0] + l.position[0],
+                        s.posAdjust[1] + l.position[1],
+                        s.posAdjust[2] + l.position[2]
+                    };
+                    fireSrc[fireCount].radiusU = l.radius;
+                    fireSrc[fireCount].powerWm2 = std::clamp(l.colour[0] * 2200.0f, 400.0f, 4200.0f);
+                    ++fireCount;
+                }
+            }
+            m_weatherSim.SetThermalSources(fireSrc, fireCount);
+            m_weatherSim.Step(float(frameDt), curTimeScale, gameDays, {s.posAdjust[0], s.posAdjust[1], s.posAdjust[2]});
+
+            const auto& wg = m_weatherSim.GetGpuUniforms();
+            u.seasonThermal0[0] = wg.seasonThermal0.x;
+            u.seasonThermal0[1] = wg.seasonThermal0.y;
+            u.seasonThermal0[2] = wg.seasonThermal0.z;
+            u.seasonThermal0[3] = wg.seasonThermal0.w;
+            u.seasonThermal1[0] = wg.seasonThermal1.x;
+            u.seasonThermal1[1] = wg.seasonThermal1.y;
+            u.seasonThermal1[2] = wg.seasonThermal1.z;
+            u.seasonThermal1[3] = wg.seasonThermal1.w;
+            u.phenology0[0] = wg.phenology0.x;
+            u.phenology0[1] = wg.phenology0.y;
+            u.phenology0[2] = wg.phenology0.z;
+            u.phenology0[3] = wg.phenology0.w;
+            u.phenology1[0] = wg.phenology1.x;
+            u.phenology1[1] = wg.phenology1.y;
+            u.phenology1[2] = wg.phenology1.z;
+            u.phenology1[3] = wg.phenology1.w;
+        }
+
+        // Wave 41: Stream up to 16 live 3D world-space combat/elemental impact decals from raw_engine.dll:
+        std::memset(u.impactDecalPosR, 0, sizeof u.impactDecalPosR);
+        std::memset(u.impactDecalMeta, 0, sizeof u.impactDecalMeta);
+        {
+            using ImpactDecalsFn = uint32_t (*)(float*, uint32_t);
+            static HMODULE s_decMod = nullptr;
+            static ImpactDecalsFn s_decFn = nullptr;
+            if (!s_decFn) {
+                if (!s_decMod) s_decMod = GetModuleHandleA("raw_engine.dll");
+                if (s_decMod) s_decFn = reinterpret_cast<ImpactDecalsFn>(GetProcAddress(s_decMod, "RAW_GetImpactDecals"));
+            }
+            if (s_decFn) {
+                float rawBuf[32 * 8] = {};
+                const uint32_t nRaw = std::min(s_decFn(rawBuf, 32u), 32u);
+                struct Cand { uint32_t idx; float score; };
+                Cand cands[32]{};
+                uint32_t nCand = 0u;
+                for (uint32_t i = 0; i < nRaw; ++i) {
+                    const float* d = &rawBuf[i * 8u];
+                    const float rad = d[3];
+                    const float age = d[5];
+                    const float inten = d[7];
+                    if (rad <= 0.5f || inten <= 0.01f) continue;
+                    const float dx = d[0] - s.posAdjust[0];
+                    const float dy = d[1] - s.posAdjust[1];
+                    const float dz = d[2] - s.posAdjust[2];
+                    const float dist2 = dx * dx + dy * dy + dz * dz;
+                    // Favor closest & freshest combat impacts around the camera:
+                    cands[nCand++] = {i, dist2 + age * 25000.0f};
+                }
+                std::sort(cands, cands + nCand, [](const Cand& a, const Cand& b) { return a.score < b.score; });
+                const uint32_t nPack = std::min(nCand, 16u);
+                for (uint32_t k = 0; k < nPack; ++k) {
+                    const float* d = &rawBuf[cands[k].idx * 8u];
+                    u.impactDecalPosR[k][0] = d[0];
+                    u.impactDecalPosR[k][1] = d[1];
+                    u.impactDecalPosR[k][2] = d[2];
+                    u.impactDecalPosR[k][3] = d[3];
+                    u.impactDecalMeta[k][0] = d[4]; // kind (0=blood,1=chip,2=scorch,3=frost,4=shock)
+                    u.impactDecalMeta[k][1] = d[5]; // ageSec
+                    u.impactDecalMeta[k][2] = d[6]; // seedAngle
+                    u.impactDecalMeta[k][3] = d[7]; // intensity
+                }
+            }
+        }
+
         for (uint32_t i = 0; i < s.lightCount; ++i) {
             const SceneLight& l = s.lights[i];
             for (int k = 0; k < 3; ++k) { u.lightPosR[i][k] = l.position[k]; u.lightColS[i][k] = l.colour[k]; }
@@ -684,8 +968,8 @@ private:
     BufferHandle m_uniform;
     RasterPipelineHandle m_lightPipe, m_fogPipe, m_cloudPipe, m_volPipe;
     RasterPipelineHandle m_bloomPrePipe, m_bloomDownPipe, m_bloomUpPipe, m_bloomCompPipe;
-    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofFocusPipe, m_dofCocPipe, m_dofGatherPipe, m_dofPostPipe, m_dofCompPipe, m_rawlss5Pipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe, m_worldSimPipe;
-    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw[2], m_froxelInt, m_reflHist[2], m_rawlssHist[2], m_dofFocus[2], m_dofCoc, m_dofBokeh, m_giAtrous[2], m_worldSim[2];
+    RasterPipelineHandle m_atmoTransPipe, m_atmoMsPipe, m_atmoSkyPipe, m_cloudNoisePipe, m_envCubePipe, m_froxelInjectPipe, m_froxelBlockPipe, m_froxelIntPipe, m_reflFilterPipe, m_dofFocusPipe, m_dofCocPipe, m_dofGatherPipe, m_dofPostPipe, m_dofCompPipe, m_rawlss5Pipe, m_giAt1Pipe, m_giAt2Pipe, m_giAt4Pipe, m_worldSimPipe;
+    TextureHandle m_cloud[2], m_volFog[2], m_bloomDown[6], m_bloomUp[5], m_atmoTrans, m_atmoMs, m_atmoSkyView, m_cloudNoise, m_envCube, m_froxelRaw[2], m_froxelBlock, m_froxelInt, m_reflHist[2], m_rawlssHist[2], m_dofFocus[2], m_dofCoc, m_dofBokeh, m_giAtrous[2], m_worldSim[2];
     bool m_atmoTransBuilt = false;
     SamplerHandle m_lin;
     float m_prevWorldToClip[16] = {};
@@ -698,6 +982,10 @@ private:
     LightUniform m_u{};
     LightingTuning m_tune;
     uint64_t m_frame = 0, m_submissions = 0, m_pendingSubmission = 0;
+    double m_simTimeSec = 0.0;
+    uint64_t m_lastClockMs = 0;
+    raw::worldgen::RawWeatherSim m_weatherSim;
+    bool m_weatherSimInit = false;
     bool m_havePending = false, m_haveTimings = false;
     int m_skipLogs = 0;
     PassTimings m_timings;
@@ -711,6 +999,14 @@ bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes)
     auto* p = dynamic_cast<LightingPass*>(pass);
     if (!p) return false;
     p->Uniform(data, bytes);
+    return true;
+}
+
+bool LightingPassFluidInputs(IBridgePass* pass, LightingFluidInputs* out)
+{
+    auto* p = dynamic_cast<LightingPass*>(pass);
+    if (!p || !out) return false;
+    p->FluidInputs(out);
     return true;
 }
 

@@ -185,6 +185,7 @@ private:
     void UnbindSrvsOf(const ResCore* core, const SubRange& range);
 
     bool PrepareDraw(bool indexed);
+    std::shared_ptr<const SubdivEntry> TrySubdivideDraw(UINT indexCount, UINT startIndex, INT baseVertex);
     bool ResolvePipeline();
     void ScanGraphics(const RootSig* root);
     void ApplyTables(const RootSig* root, int firstStage, int lastStage, bool compute);
@@ -255,7 +256,11 @@ private:
     std::vector<Segment*> freeSegs_;           // reused: no allocation per segment
   public:
     void FrameRuns() { RunBreak("Present"); runIndex_ = 0; }   // the swap chain, at every Present
+    void SetDrawWaterHint(bool isWater) { drawWaterHint_ = isWater; }
+    void SetDrawSkipSubdivHint(bool skip) { drawSkipSubdivHint_ = skip; }
   private:
+    bool drawWaterHint_ = false;
+    bool drawSkipSubdivHint_ = false;
     Segment* seg_ = nullptr;                   // being recorded
     bool stale_ = false;                       // the open list's D3D12 state is not the shadow's (segments ran)
     struct Pending { std::unique_ptr<Recording> rec; Segment* seg = nullptr; };

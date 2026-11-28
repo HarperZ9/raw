@@ -1,0 +1,120 @@
+// RawRenderOptics.bld: RAW Engine Deterministic PBR & Post-Processing Optics Kernels in BuildLang 1.4.0.
+// Counterparts to StrataBRDF.hlsli, Sss.hlsl, Tonemap.hlsl, and AoComposite.hlsl:
+//   1. fresnel_schlick     - Schlick Fresnel reflectance approximation
+//   2. ggx_ndf             - Trowbridge-Reitz GGX normal distribution function D(n_dot_h, roughness)
+//   3. multi_scatter_boost - Turquin / Kulla-Conty multi-scattering GGX energy compensation
+//   4. burley_diffusion    - Christensen-Burley (Disney 2015) normalized subsurface diffusion profile
+//   5. agx_sigmoid         - 6th-order C2-continuous AgX perceptual filmic sigmoid contrast curve
+//   6. multi_bounce_ao_ch  - Jimenez et al. (SIGGRAPH 2016) cubic multi-bounce colored AO per channel
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn min_f64(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
+}
+
+// 1. Schlick Fresnel reflectance F(f0, cos_theta) = f0 + (1 - f0) * (1 - cos_theta)^5.
+// Matches src/d3d12_bridge/shaders/StrataBRDF.hlsli & Lighting.hlsl.
+fn fresnel_schlick(f0: f64, cos_theta: f64) -> f64 {
+    let f: f64 = clamp_f64(f0, 0.0, 1.0);
+    let m: f64 = 1.0 - clamp_f64(cos_theta, 0.0, 1.0);
+    let m2: f64 = m * m;
+    f + (1.0 - f) * (m2 * m2 * m)
+}
+
+// 2. Trowbridge-Reitz GGX normal distribution function D(n_dot_h, roughness).
+// Matches src/d3d12_bridge/shaders/StrataBRDF.hlsli (L118-L125).
+fn ggx_ndf(n_dot_h: f64, roughness: f64) -> f64 {
+    let pi_val: f64 = 3.14159265358979323846;
+    let nh: f64 = clamp_f64(n_dot_h, 0.0, 1.0);
+    let r: f64 = clamp_f64(roughness, 0.02, 0.98);
+    let a: f64 = r * r;
+    let a2: f64 = max_f64(a * a, 1.0e-5);
+    let d: f64 = (nh * nh) * (a2 - 1.0) + 1.0;
+    a2 / max_f64(pi_val * d * d, 1.0e-8)
+}
+
+// 3. Turquin (2019) / Kulla-Conty Multi-Scattering GGX energy compensation multiplier:
+//    1 + F0 * (1 / E_ss(nv, roughness) - 1), using Karis/Fdez-Aguera analytical directional albedo fit.
+// Matches src/d3d12_bridge/shaders/StrataBRDF.hlsli (L87-L104).
+fn multi_scatter_boost(f0: f64, nv: f64, roughness: f64) -> f64 {
+    let c: f64 = clamp_f64(nv, 0.0, 1.0);
+    let r: f64 = clamp_f64(roughness, 0.02, 0.99);
+    let rvx: f64 = -1.0 * r + 1.0;
+    let rvy: f64 = -0.0275 * r + 0.0425;
+    let rvz: f64 = -0.572 * r + 1.040;
+    let rvw: f64 = 0.022 * r - 0.040;
+    let exp2_term: f64 = pow(2.0, -9.28 * c);
+    let a004: f64 = min_f64(rvx * rvx, exp2_term) * rvx + rvy;
+    let abx: f64 = -1.04 * a004 + rvz;
+    let aby: f64 = 1.04 * a004 + rvw;
+    let ess: f64 = clamp_f64(abx + aby, 0.22, 1.0);
+    let ms_scale: f64 = (1.0 / ess) - 1.0;
+    1.0 + clamp_f64(f0, 0.0, 1.0) * ms_scale
+}
+
+// 4. Christensen-Burley (Disney 2015) normalized subsurface diffusion profile:
+//    R(r, d) = (exp(-r / d) + exp(-r / (3*d))) / (8 * pi * d * r).
+// Matches src/d3d12_bridge/shaders/Sss.hlsl.
+fn burley_diffusion(r: f64, d: f64) -> f64 {
+    let pi_val: f64 = 3.14159265358979323846;
+    let r_safe: f64 = max_f64(r, 1.0e-4);
+    let d_safe: f64 = max_f64(d, 1.0e-4);
+    (exp(-r_safe / d_safe) + exp(-r_safe / (3.0 * d_safe))) / (8.0 * pi_val * d_safe * r_safe)
+}
+
+// 5. 6th-order C2-continuous AgX perceptual filmic sigmoid contrast curve over normalized log2 input [0, 1].
+// Matches src/d3d12_bridge/shaders/Tonemap.hlsl (L46-L48).
+fn agx_sigmoid(x_norm: f64) -> f64 {
+    let x: f64 = clamp_f64(x_norm, 0.0, 1.0);
+    let x2: f64 = x * x;
+    let x4: f64 = x2 * x2;
+    let y: f64 = 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+    clamp_f64(y, 0.0, 1.0)
+}
+
+// 6. Jimenez et al. (SIGGRAPH 2016) cubic multi-bounce colored ambient occlusion per channel:
+//    multiBounceAO(ao, alb) = max(ao, ao * (a*ao^2 + b*ao + c)), exact 0 at ao=0 and exact 1 at ao=1.
+// Matches src/d3d12_bridge/shaders/AoComposite.hlsl (L47-L55).
+fn multi_bounce_ao_ch(ao: f64, albedo_ch: f64) -> f64 {
+    let v: f64 = clamp_f64(ao, 0.0, 1.0);
+    let alb: f64 = clamp_f64(albedo_ch, 0.0, 1.0);
+    let a: f64 = 2.0404 * alb - 0.3324;
+    let b: f64 = -4.7951 * alb + 0.6417;
+    let c: f64 = 2.7552 * alb + 0.6903;
+    let poly: f64 = ((v * a + b) * v + c) * v;
+    clamp_f64(max_f64(v, poly), 0.0, 1.0)
+}
+
+fn main() ~ Console {
+    let f_norm: f64 = fresnel_schlick(0.04, 1.0);
+    let f_graz: f64 = fresnel_schlick(0.04, 0.05);
+    let d_ggx: f64 = ggx_ndf(1.0, 0.35);
+    let ms_iron: f64 = multi_scatter_boost(0.56, 0.20, 0.85);
+    let sss_red: f64 = burley_diffusion(0.50, 1.00);
+    let sss_blue: f64 = burley_diffusion(0.50, 0.22);
+    let agx_mid: f64 = agx_sigmoid(0.60);
+    let agx_hi: f64 = agx_sigmoid(0.95);
+    let ao_snow: f64 = multi_bounce_ao_ch(0.35, 0.88);
+    let ao_dark: f64 = multi_bounce_ao_ch(0.35, 0.08);
+
+    println!("fresnel_schlick(0.04, 1.0) = {} | (0.04, 0.05) = {}", f_norm, f_graz);
+    println!("ggx_ndf(1.0, 0.35) = {}", d_ggx);
+    println!("multi_scatter_boost(iron F0=0.56, nv=0.20, r=0.85) = {}", ms_iron);
+    println!("burley_diffusion(r=0.5, d=1.0 red) = {} | (d=0.22 blue) = {}", sss_red, sss_blue);
+    println!("agx_sigmoid(0.60) = {} | (0.95) = {}", agx_mid, agx_hi);
+    println!("multi_bounce_ao_ch(ao=0.35, snow=0.88) = {} | (dark=0.08) = {}", ao_snow, ao_dark);
+}

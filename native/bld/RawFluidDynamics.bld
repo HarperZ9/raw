@@ -1,0 +1,99 @@
+// RawFluidDynamics.bld: RAW Engine Deterministic Fluid, Volumetric, Acoustic & Shadow Kernels in BuildLang 1.4.0.
+// Counterparts to RawFluidSimHost / Fire & SWE shaders, FroxelPass / RawVolumetricFroxelSim, RawAudioDsp, and PCSS:
+//   1. buoyancy_accel        - Boussinesq thermal plume buoyancy acceleration (m/s^2)
+//   2. swe_wave_celerity     - Shallow-water gravity-wave phase celerity c = sqrt(g * h)
+//   3. cfl_dt_limit          - Courant-Friedrichs-Lewy advection stability timestep limit (seconds)
+//   4. froxel_slice_scatter  - Frostbite analytical volumetric froxel slice scattering integral
+//   5. sabine_rt60_s         - Sabine-Eyring acoustic reverberation time RT60 (seconds)
+//   6. pcss_penumbra_radius  - Fernando PCSS contact-hardening physical penumbra radius
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+// 1. Boussinesq thermal plume buoyancy acceleration (m/s^2):
+//    a_z = alpha_buoy * (T - T_amb) / max(T_amb, 1.0) - beta_smoke * rho_smoke.
+// Matches src/d3d12_bridge/shaders/RawFluidFireForces.hlsl.
+fn buoyancy_accel(temp_k: f64, ambient_k: f64, smoke_density: f64, alpha_buoy: f64, beta_smoke: f64) -> f64 {
+    let t_amb: f64 = max_f64(ambient_k, 1.0);
+    let rho: f64 = max_f64(smoke_density, 0.0);
+    max_f64(alpha_buoy, 0.0) * ((temp_k - t_amb) / t_amb) - max_f64(beta_smoke, 0.0) * rho
+}
+
+// 2. Shallow-water equations (SWE) gravity-wave celerity c = sqrt(g * h) (m/s).
+// Matches src/d3d12_bridge/shaders/RawFluidWaterStep.hlsl.
+fn swe_wave_celerity(gravity_mps2: f64, depth_m: f64) -> f64 {
+    sqrt(max_f64(gravity_mps2, 0.0) * max_f64(depth_m, 0.0))
+}
+
+// 3. Courant-Friedrichs-Lewy (CFL) advection stability timestep limit (seconds):
+//    dt_max = cfl_safety * cell_size_m / max(max_vel_mps, 1e-4).
+// Matches src/d3d12_bridge/RawFluidSimHost.cpp & RawFluidFireAdvect.hlsl.
+fn cfl_dt_limit(cell_size_m: f64, max_vel_mps: f64, cfl_safety: f64) -> f64 {
+    let dx: f64 = max_f64(cell_size_m, 1.0e-4);
+    let v: f64 = max_f64(max_vel_mps, 1.0e-4);
+    let cfl: f64 = clamp_f64(cfl_safety, 0.05, 1.0);
+    (cfl * dx) / v
+}
+
+// 4. Frostbite (SIGGRAPH 2015) analytical froxel slice scattering integral:
+//    L_slice = in_scatter * (1 - exp(-sigma_t * ds)) / sigma_t, with exact Taylor limit as sigma_t -> 0.
+// Matches src/d3d12_bridge/shaders/FroxelPass.hlsl & RawVolumetricFroxelSim.hlsl.
+fn froxel_slice_scatter(in_scatter: f64, sigma_t: f64, slice_thickness_m: f64) -> f64 {
+    let s: f64 = max_f64(in_scatter, 0.0);
+    let ds: f64 = max_f64(slice_thickness_m, 0.0);
+    let ext: f64 = max_f64(sigma_t, 0.0);
+    if ext < 1.0e-6 {
+        s * ds
+    } else {
+        s * (1.0 - exp(-ext * ds)) / ext
+    }
+}
+
+// 5. Sabine-Eyring acoustic reverberation time RT60 (seconds):
+//    RT60 = -0.161 * V / (S * ln(1 - mean_alpha)).
+// Matches src/audio/RawAudioDsp.cpp FDN-8 room decay calibration.
+fn sabine_rt60_s(volume_m3: f64, surface_area_m2: f64, mean_alpha: f64) -> f64 {
+    let vol: f64 = max_f64(volume_m3, 1.0);
+    let area: f64 = max_f64(surface_area_m2, 1.0);
+    let alpha: f64 = clamp_f64(mean_alpha, 0.01, 0.99);
+    let denom: f64 = -area * log(1.0 - alpha);
+    (0.161 * vol) / max_f64(denom, 1.0e-6)
+}
+
+// 6. Fernando (2005) PCSS physical contact-hardening penumbra radius:
+//    w_penumbra = max(receiver_z - blocker_z, 0) * light_size / max(blocker_z, 1e-4).
+// Matches src/d3d12_bridge/shaders/RawShadowPcssSim.hlsl.
+fn pcss_penumbra_radius(receiver_z: f64, blocker_z: f64, light_size: f64) -> f64 {
+    let bz: f64 = max_f64(blocker_z, 1.0e-4);
+    let gap: f64 = max_f64(receiver_z - bz, 0.0);
+    (gap * max_f64(light_size, 0.0)) / bz
+}
+
+fn main() ~ Console {
+    let a_plume: f64 = buoyancy_accel(1800.0, 293.0, 0.15, 9.81, 1.2);
+    let c_river: f64 = swe_wave_celerity(9.81, 1.5);
+    let dt_cfl: f64 = cfl_dt_limit(0.125, 12.0, 0.8);
+    let fx_scat: f64 = froxel_slice_scatter(0.45, 0.08, 2.5);
+    let rt60_crypt: f64 = sabine_rt60_s(1800.0, 960.0, 0.08);
+    let pcss_near: f64 = pcss_penumbra_radius(10.5, 10.0, 0.5);
+    let pcss_far: f64 = pcss_penumbra_radius(18.0, 10.0, 0.5);
+
+    println!("buoyancy_accel(1800K flame) = {}", a_plume);
+    println!("swe_wave_celerity(g=9.81, h=1.5m) = {}", c_river);
+    println!("cfl_dt_limit(dx=0.125m, v=12m/s, cfl=0.8) = {}", dt_cfl);
+    println!("froxel_slice_scatter(S=0.45, ext=0.08, ds=2.5m) = {}", fx_scat);
+    println!("sabine_rt60_s(Nordic crypt V=1800, S=960, a=0.08) = {}", rt60_crypt);
+    println!("pcss_penumbra_radius(near) = {} | (far) = {}", pcss_near, pcss_far);
+}

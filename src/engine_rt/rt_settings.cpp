@@ -1,12 +1,30 @@
 // Engine settings by name and the shadow atlas size at startup (RAW engine runtime). Original work, MIT.
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
+#include "rt_ai_ballistics_gmst.h"
+#include "rt_ai_packages.h"
+#include "rt_alchemy_enchant_gmst.h"
+#include "rt_archery_mount_gmst.h"
+#include "rt_camera_world_gmst.h"
+#include "rt_companion_hazard_gmst.h"
 #include "rt_control.h"
+#include "rt_crafting_inventory_gmst.h"
+#include "rt_crime_mount_gmst.h"
+#include "rt_encounter_balance.h"
+#include "rt_locomotion_melee_gmst.h"
+#include "rt_magic_physics.h"
+#include "rt_physics_camera_gmst.h"
+#include "rt_progression_economy.h"
+#include "rt_shouts_survival_gmst.h"
+#include "rt_spellcraft_gmst.h"
+#include "rt_stealth_social_gmst.h"
 #include "rt_version.h"
+#include "rt_world_rules_gmst.h"
 
 namespace raw::rt {
 
@@ -104,6 +122,10 @@ void* FindSettingPtr(const Image& img, const std::vector<RefTarget>& refs, const
 
 std::string HavokFixInit(const Image& img, const std::vector<RefTarget>& refs) {
     g_havok = {};
+    const auto& prof = ActiveProfile();
+    if (!prof.hasHavok60HzBug || prof.isMultiplayerOnline) {
+        return "havok fix: skipped (not needed on this Creation Engine generation or online client)";
+    }
     g_havok.fMaxTime = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fMaxTime:HAVOK"));
     g_havok.fMaxTimeComplex = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fMaxTimeComplex:HAVOK"));
     g_havok.uMaxSteps = reinterpret_cast<uint32_t*>(FindSettingPtr(img, refs, "uMaxNumPhysicsStepsPerUpdate:HAVOK"));
@@ -111,15 +133,16 @@ std::string HavokFixInit(const Image& img, const std::vector<RefTarget>& refs) {
     g_havok.bLockFps = reinterpret_cast<uint8_t*>(FindSettingPtr(img, refs, "bLockFramerate:Display"));
     if (!g_havok.fMaxTime) return "havok fix: fMaxTime:HAVOK not found in version table";
     if (g_havok.bLockFps) *g_havok.bLockFps = 0;
-    if (g_havok.uMaxSteps && *g_havok.uMaxSteps < 4u) *g_havok.uMaxSteps = 4u;
-    if (g_havok.uMaxStepsComplex && *g_havok.uMaxStepsComplex < 4u) *g_havok.uMaxStepsComplex = 4u;
+    // Raise sub-step ceilings to 6 so 144-360 Hz gameplay stays deterministic with zero clutter/water explosions:
+    if (g_havok.uMaxSteps && *g_havok.uMaxSteps < 6u) *g_havok.uMaxSteps = 6u;
+    if (g_havok.uMaxStepsComplex && *g_havok.uMaxStepsComplex < 6u) *g_havok.uMaxStepsComplex = 6u;
     QueryPerformanceFrequency(&g_havok.freq);
     QueryPerformanceCounter(&g_havok.lastQpc);
     g_havok.emaDt = 1.0f / 60.0f;
     g_havok.enabled = true;
-    char out[192];
-    std::snprintf(out, sizeof out, "havok fix: active (fMaxTime=%p complex=%p lockFps=%p steps=%p)",
-                  g_havok.fMaxTime, g_havok.fMaxTimeComplex, g_havok.bLockFps, g_havok.uMaxSteps);
+    char out[224];
+    std::snprintf(out, sizeof out, "havok fix: active 30-360Hz (%s, fMaxTime=%p complex=%p lockFps=%p steps=%p)",
+                  prof.displayName, g_havok.fMaxTime, g_havok.fMaxTimeComplex, g_havok.bLockFps, g_havok.uMaxSteps);
     return out;
 }
 
@@ -129,18 +152,23 @@ void HavokFixOnPresent() {
     QueryPerformanceCounter(&now);
     const double rawDt = double(now.QuadPart - g_havok.lastQpc.QuadPart) / double(g_havok.freq.QuadPart);
     g_havok.lastQpc = now;
-    if (rawDt <= 0.0005 || rawDt > 0.25) return;  // ignore loading screens / paused spikes
-    const float clampedDt = rawDt < 0.003333 ? 0.003333f : (rawDt > 0.041667 ? 0.041667f : float(rawDt));
+    if (rawDt <= 0.0004 || rawDt > 0.25) return;  // ignore loading screens / paused spikes
+    // Smooth 24 Hz to 360 Hz adaptive Havok step (0.002778s .. 0.041667s) across Skyrim SE & Fallout 4:
+    const float clampedDt = rawDt < 0.002778 ? 0.002778f : (rawDt > 0.041667 ? 0.041667f : float(rawDt));
     g_havok.emaDt = g_havok.emaDt * 0.65f + clampedDt * 0.35f;
-    const float mt = g_havok.emaDt < 0.003333f ? 0.003333f : (g_havok.emaDt > 0.041667f ? 0.041667f : g_havok.emaDt);
+    const float mt = g_havok.emaDt < 0.002778f ? 0.002778f : (g_havok.emaDt > 0.041667f ? 0.041667f : g_havok.emaDt);
     *g_havok.fMaxTime = mt;
     if (g_havok.fMaxTimeComplex) {
         const float mtc = mt * 2.0f;
-        *g_havok.fMaxTimeComplex = mtc < 0.006667f ? 0.006667f : (mtc > 0.066667f ? 0.066667f : mtc);
+        *g_havok.fMaxTimeComplex = mtc < 0.005556f ? 0.005556f : (mtc > 0.066667f ? 0.066667f : mtc);
     }
 }
 
 std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& refs) {
+    const auto& prof = ActiveProfile();
+    if (prof.isMultiplayerOnline || prof.gen != raw::versions::EngineGen::CE1_DX11) {
+        return "engine tuning: Skyrim CE1 table skipped for " + std::string(prof.displayName) + " (handled by CoreFixesApplyEngine)";
+    }
     struct KV { const char* k; const char* v; };
     static const KV kTuning[] = {
         {"fNearDistance:Display", "15.0"},
@@ -187,8 +215,8 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fLODFadeOutMultItems:LOD", "15.0"},
         {"fSpecularLODStartFade:Display", "4000.0"},
         {"fShadowLODStartFade:Display", "2000.0"},
-        {"fMeshLODLevel1FadeDist:Display", "16000.0"},
-        {"fMeshLODLevel2FadeDist:Display", "12000.0"},
+        {"fMeshLODLevel1FadeDist:Display", "8192.0"},
+        {"fMeshLODLevel2FadeDist:Display", "16384.0"},
         {"fGrassStartFadeDistance:Grass", "11000.0"},
         {"fGrassMaxStartFadeDistance:Grass", "14000.0"},
         {"fGrassWindMagnitudeMin:Grass", "0.45"},
@@ -218,16 +246,12 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"bTreesReceiveShadows:Display", "1"},
         {"bDrawLandShadows:Display", "1"},
         {"fDecalLifetime:Display", "900.0"},
-        // Binary-level Havok physics, 120Hz sub-stepped solver, anti-clutter-explosion & realistic ragdoll/IK overhaul:
-        {"fTimePerSubStep:HAVOK", "0.0083333"},
-        {"iMinNumSubSteps:HAVOK", "2"},
-        {"bFindContactPointsOnAdd:HAVOK", "1"},
+        // Safe Havok clutter/explosion impulse damping + IK (NOTE: do NOT override fTimePerSubStep/iMinNumSubSteps/
+        // bUseCharRBExtrapolation/bUseConstraintProjector/bRagdollFeedback: at 144-360 FPS they fight HavokFixOnPresent()
+        // and cause 2.7x substep dilation and ankle-height 1st-person camera sink as seen in 22.59.17.38.mp4!):
         {"fVisibleNavmeshMoveDist:Combat", "16000.0"},
         {"iNumberActorsInCombatPlayer:Combat", "32"},
         {"fActiveEffectConditionUpdateInterval:Gameplay", "0.25"},
-        {"bUseConstraintProjector:HAVOK", "1"},
-        {"bUseCharRBExtrapolation:HAVOK", "1"},
-        {"fInAirFallingCharGravityMult:Havok", "1.15"},
         {"fExplosionMaxImpulse", "240.0"},
         {"fGameplayImpulseMultBiped", "0.62"},
         {"fGameplayImpulseMultClutter", "0.55"},
@@ -250,20 +274,92 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         {"fCombatBlockTimeMax", "1.85"},
         {"fCombatAttackAnimationDrivenDelayTime", "0.08"},
         {"fCombatAttackPlayerAnticipateMult", "1.35"},
-        {"fStaggerDaggerAR", "0.28"},
-        {"fStagger1WeapAR", "0.52"},
-        {"fStagger2WeapAR", "0.85"},
-        {"fStaggerBowAR", "0.42"},
-        {"bPoseMatching:RagdollAnim", "1"},
-        {"bRagdollFeedback:RagdollAnim", "1"},
+        // Binary-verified SkyrimSE 1.7.104.0 weapon stagger AR thresholds (0x28C140; defaults 5/10/15/5):
+        {"fStaggerDaggerAR", "5.5"},
+        {"fStagger1WeapAR", "11.5"},
+        {"fStagger2WeapAR", "17.5"},
+        {"fStaggerBowAR", "6.0"},
+        // Non-spongy lethal difficulty curves (verified 0x20AA578..0x20AA680): both player and enemies stay decisive
+        // on Expert/Master/Legendary instead of vanilla 0.25x bullet-sponge player damage!
+        {"fDiffMultHPToPCVE", "0.50"},
+        {"fDiffMultHPToPCE",  "0.75"},
+        {"fDiffMultHPToPCN",  "1.00"},
+        {"fDiffMultHPToPCH",  "1.35"},
+        {"fDiffMultHPToPCVH", "1.75"},
+        {"fDiffMultHPToPCL",  "2.25"},
+        {"fDiffMultHPByPCVE", "1.50"},
+        {"fDiffMultHPByPCE",  "1.25"},
+        {"fDiffMultHPByPCN",  "1.00"},
+        {"fDiffMultHPByPCH",  "1.15"},
+        {"fDiffMultHPByPCVH", "1.35"},
+        {"fDiffMultHPByPCL",  "1.60"},
         {"f1PArrowTiltUpAngle:Combat", "0.7"},
         {"f3PArrowTiltUpAngle:Combat", "0.7"},
+        {"f1PBoltTiltUpAngle:Combat", "0.7"},
         {"fCollisionRecoverySpeed:Camera", "4.0"},
         {"fCollisionRecoveryMinDist:Camera", "10.0"},
+        // Modern 3rd-person, combat & horse over-the-shoulder camera (leaves 1st-person spring constants untouched!):
+        {"fOverShoulderPosX:Camera", "24.0"},
+        {"fOverShoulderPosZ:Camera", "-4.0"},
+        {"fOverShoulderCombatPosX:Camera", "28.0"},
+        {"fOverShoulderCombatPosZ:Camera", "-2.0"},
+        {"fOverShoulderCombatAddY:Camera", "-20.0"},
+        {"fOverShoulderHorsePosX:Camera", "32.0"},
+        {"fOverShoulderHorsePosZ:Camera", "10.0"},
+        {"fOverShoulderHorseAddY:Camera", "-40.0"},
+        {"fShoulderDollySpeed:Camera", "4.5"},
+        {"fChaseCameraSpeed:Camera", "10.0"},
+        {"fMouseWheelZoomSpeed:Camera", "14.0"},
+        {"fMouseWheelZoomIncrement:Camera", "0.08"},
+        {"fVanityModeMinDist:Camera", "95.0"},
+        {"fVanityModeMaxDist:Camera", "680.0"},
+        {"bDisableAutoVanityMode:Camera", "1"},
+        {"f1st3rdSwitchDelay:Camera", "0.05"},
+        {"fActorFadeOutLimit:Camera", "28.0"},
+        // Realistic light-and-sound stealth detection (replaces RAID / Realistic AI Detection):
+        {"fSneakLightMult", "0.42"},
+        {"fSneakLightExteriorMult", "0.38"},
+        {"fSneakSoundsMult", "1.25"},
+        {"fSneakSoundLosMult", "0.45"},
+        {"fSneakRunningMult", "1.35"},
+        {"fSneakDistanceAttenuationExponent", "1.55"},
+        // Binary-verified 0x41CEE6: xmm10 += inCombat * fSneakCombatMod (default -0.4; negative = harder to re-hide)
+        {"fSneakCombatMod", "-0.55"},
+        // Zero magnetic auto-aim (true ballistic archery, armor mitigation & resource GMSTs applied cleanly
+        // via binary-verified ApplyEncounterBalanceGmsts below — fixes legacy fArrowSpeedMult/fArrowGravityMult units!):
+        {"fAutoAimMaxDegrees", "0.0"},
+        {"fAutoAimMaxDegrees3rdPerson", "0.0"},
+        {"fAutoAimMaxDegreesMelee", "0.0"},
+        // Precision hit-cone, flanking/circling tactical AI & responsive combat pacing (replaces Mortal Enemies / Wildcat):
+        {"fCombatHitConeAngle", "22.0"},
+        {"fMeleeSweepViewAngleMult", "0.65"},
+        {"fCombatFlankingDistanceMin", "130.0"},
+        {"fCombatFlankingDistanceMax", "380.0"},
+        {"fCombatCircleChanceMin", "0.35"},
+        {"fCombatCircleChanceMax", "0.72"},
+        {"fCombatStrafeChanceMin", "0.30"},
+        {"fCombatStrafeChanceMax", "0.65"},
+        {"fCombatFallbackChanceMin", "0.18"},
+        {"fCombatFallbackChanceMax", "0.48"},
+        {"fPowerAttackCoolDownTime", "0.35"},
+        // Binary-verified 0x7F0E08: HitData::Populate clamps percentBlocked vs fPlayerMaxResistance (0x20A9AE8, def 85.0);
+        // legacy fBlockMax (0x20A71A0) has 0 .text readers.
+        {"fPlayerMaxResistance", "85.0"},
+        {"fBlockWeaponBase", "0.32"},
+        // Binary-verified 0x4214C0: sprint drain = dt * (w*mult+base) * fSprintStaminaDrainMult (default 15.0/sec)
+        {"fSprintStaminaDrainMult", "14.5"},
+        // Grounded economy progression & snappy interface transitions (replaces Trade & Barter / Faster Fade):
+        {"fBarterMin", "1.35"},
+        {"fBarterMax", "3.60"},
+        {"fActivatePickRadius:Interface", "12.0"},
+        {"fFadeToBlackFadeSeconds:Interface", "0.35"},
+        {"fMinSecondsForLoadFadeIn:Interface", "0.25"},
         {"fAIInteriorHeadTrackMult", "1.0"},
         {"fAIMaxHeadTrackDistanceFromPC", "1200.0"},
         {"fAIBestHeadTrackDistance", "600.0"},
         {"fDialogueHeadPitchExaggeration:Audio", "1.15"},
+        {"fDialogueHeadRollExaggeration:Audio", "0.85"},
+        {"fDialogueHeadYawExaggeration:Audio", "1.10"},
         {"bUsePrecipitationOcclusion:Display", "1"},
         {"bEnableParallaxOcclusion:Display", "1"},
         {"fUpdateBudgetMS:Papyrus", "2.4"},
@@ -285,10 +381,121 @@ std::string ApplyEngineTuning(const Image& img, const std::vector<RefTarget>& re
         }
         if (SetSetting(img, refs, kv.k, kv.v)) ++applied;
     }
-    char out[160];
-    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe)",
-                  applied, sizeof(kTuning) / sizeof(kTuning[0]));
+    const std::string balMsg  = ApplyEncounterBalanceGmsts(img, refs);
+    const std::string magMsg  = InitMagicPhysics(img, refs);
+    const std::string progMsg = InitProgressionEconomy(img, refs);
+    const std::string aiMsg   = InitAiPackages(img, refs);
+    const std::string wrMsg   = InitWorldRulesGmst(img, refs);
+    const std::string pcMsg   = InitPhysicsCameraGmst(img, refs);
+    const std::string ssMsg   = InitStealthSocialGmst(img, refs);
+    const std::string lmMsg   = InitLocomotionMeleeGmst(img, refs);
+    const std::string aeMsg   = InitAlchemyEnchantGmst(img, refs);
+    const std::string chMsg   = InitCompanionHazardGmst(img, refs);
+    const std::string amMsg   = InitArcheryMountGmst(img, refs);
+    const std::string ssvMsg  = InitShoutsSurvivalGmst(img, refs);
+    const std::string cmMsg   = InitCrimeMountGmst(img, refs);
+    const std::string ciMsg   = InitCraftingInventoryGmst(img, refs);
+    const std::string scMsg   = InitSpellcraftGmst(img, refs);
+    const std::string cwMsg   = InitCameraWorldGmst(img, refs);
+    const std::string abMsg   = InitAiBallisticsGmst(img, refs);
+    char out[4224];
+    std::snprintf(out, sizeof out, "engine tuning: %zu of %zu safe architectural fixes applied (save-safe) | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s",
+                  applied, sizeof(kTuning) / sizeof(kTuning[0]), balMsg.c_str(), magMsg.c_str(), progMsg.c_str(), aiMsg.c_str(), wrMsg.c_str(), pcMsg.c_str(), ssMsg.c_str(), lmMsg.c_str(), aeMsg.c_str(), chMsg.c_str(), amMsg.c_str(), ssvMsg.c_str(), cmMsg.c_str(), ciMsg.c_str(), scMsg.c_str(), cwMsg.c_str(), abMsg.c_str());
     return out;
+}
+
+namespace {
+struct DynamicGmstBindings {
+    bool bound = false;
+    float* fBarterMin = nullptr;
+    float* fBarterMax = nullptr;
+    float* fSprintStaminaDrainMult = nullptr;
+    float* fArrowGravityMult = nullptr;
+    float* fJumpFallHeightMult = nullptr;
+    float baseBarterMin = 1.35f;
+    float baseBarterMax = 3.60f;
+    float baseSprintDrain = 14.5f;
+    float baseArrowGravity = 0.0016f;
+    float baseJumpFall = 0.085f;
+} g_dynGmsts;
+}  // namespace
+
+std::string WorldSimBindDynamicSettings(const Image& img, const std::vector<RefTarget>& refs) {
+    g_dynGmsts = {};
+    const auto& prof = ActiveProfile();
+    if (prof.isMultiplayerOnline || prof.gen != raw::versions::EngineGen::CE1_DX11) {
+        return "worldsim gmst feedback: skipped (non-CE1 or online profile)";
+    }
+    g_dynGmsts.fBarterMin = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fBarterMin"));
+    g_dynGmsts.fBarterMax = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fBarterMax"));
+    g_dynGmsts.fSprintStaminaDrainMult = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fSprintStaminaDrainMult"));
+    g_dynGmsts.fArrowGravityMult = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fArrowGravityMult"));
+    g_dynGmsts.fJumpFallHeightMult = reinterpret_cast<float*>(FindSettingPtr(img, refs, "fJumpFallHeightMult"));
+    if (g_dynGmsts.fBarterMin) g_dynGmsts.baseBarterMin = *g_dynGmsts.fBarterMin;
+    if (g_dynGmsts.fBarterMax) g_dynGmsts.baseBarterMax = *g_dynGmsts.fBarterMax;
+    if (g_dynGmsts.fSprintStaminaDrainMult) g_dynGmsts.baseSprintDrain = *g_dynGmsts.fSprintStaminaDrainMult;
+    if (g_dynGmsts.fArrowGravityMult) g_dynGmsts.baseArrowGravity = *g_dynGmsts.fArrowGravityMult;
+    if (g_dynGmsts.fJumpFallHeightMult) g_dynGmsts.baseJumpFall = *g_dynGmsts.fJumpFallHeightMult;
+    g_dynGmsts.bound = (g_dynGmsts.fBarterMin || g_dynGmsts.fBarterMax ||
+                        g_dynGmsts.fSprintStaminaDrainMult || g_dynGmsts.fArrowGravityMult || g_dynGmsts.fJumpFallHeightMult);
+    char out[224];
+    std::snprintf(out, sizeof out, "worldsim gmst feedback: bound=%d (barterMin=%p barterMax=%p sprint=%p arrowGrav=%p)",
+                  g_dynGmsts.bound ? 1 : 0, g_dynGmsts.fBarterMin, g_dynGmsts.fBarterMax,
+                  g_dynGmsts.fSprintStaminaDrainMult, g_dynGmsts.fArrowGravityMult);
+    return out;
+}
+
+void WorldSimApplyLiveGmsts(float barterMin, float barterMax, float sprintStaminaDrainMult) {
+    if (!g_dynGmsts.bound) return;
+    if (g_dynGmsts.fBarterMin && std::fabs(*g_dynGmsts.fBarterMin - barterMin) > 0.005f) {
+        *g_dynGmsts.fBarterMin = barterMin;
+    }
+    if (g_dynGmsts.fBarterMax && std::fabs(*g_dynGmsts.fBarterMax - barterMax) > 0.005f) {
+        *g_dynGmsts.fBarterMax = barterMax;
+    }
+    if (g_dynGmsts.fSprintStaminaDrainMult && std::fabs(*g_dynGmsts.fSprintStaminaDrainMult - sprintStaminaDrainMult) > 0.005f) {
+        *g_dynGmsts.fSprintStaminaDrainMult = sprintStaminaDrainMult;
+    }
+}
+
+void WorldSimApplyLivePlanetaryGravity(float gravityMps2) {
+    if (!g_dynGmsts.bound || !std::isfinite(gravityMps2)) return;
+    const float gRatio = std::clamp(gravityMps2 / 9.80665f, 0.75f, 1.25f);
+    if (g_dynGmsts.fArrowGravityMult) {
+        const float target = g_dynGmsts.baseArrowGravity * gRatio;
+        if (std::fabs(*g_dynGmsts.fArrowGravityMult - target) > 0.002f) *g_dynGmsts.fArrowGravityMult = target;
+    }
+    if (g_dynGmsts.fJumpFallHeightMult) {
+        const float target = g_dynGmsts.baseJumpFall * gRatio;
+        if (std::fabs(*g_dynGmsts.fJumpFallHeightMult - target) > 0.002f) *g_dynGmsts.fJumpFallHeightMult = target;
+    }
+}
+
+void WorldSimRestoreDynamicSettings() {
+    ShutdownAiBallisticsGmst();
+    ShutdownCameraWorldGmst();
+    ShutdownSpellcraftGmst();
+    ShutdownCraftingInventoryGmst();
+    ShutdownCrimeMountGmst();
+    ShutdownShoutsSurvivalGmst();
+    ShutdownArcheryMountGmst();
+    ShutdownCompanionHazardGmst();
+    ShutdownAlchemyEnchantGmst();
+    ShutdownLocomotionMeleeGmst();
+    ShutdownStealthSocialGmst();
+    ShutdownPhysicsCameraGmst();
+    ShutdownWorldRulesGmst();
+    ShutdownAiPackages();
+    ShutdownProgressionEconomy();
+    ShutdownMagicPhysics();
+    RestoreEncounterBalanceGmsts();
+    if (!g_dynGmsts.bound) return;
+    if (g_dynGmsts.fBarterMin) *g_dynGmsts.fBarterMin = g_dynGmsts.baseBarterMin;
+    if (g_dynGmsts.fBarterMax) *g_dynGmsts.fBarterMax = g_dynGmsts.baseBarterMax;
+    if (g_dynGmsts.fSprintStaminaDrainMult) *g_dynGmsts.fSprintStaminaDrainMult = g_dynGmsts.baseSprintDrain;
+    if (g_dynGmsts.fArrowGravityMult) *g_dynGmsts.fArrowGravityMult = g_dynGmsts.baseArrowGravity;
+    if (g_dynGmsts.fJumpFallHeightMult) *g_dynGmsts.fJumpFallHeightMult = g_dynGmsts.baseJumpFall;
+    g_dynGmsts.bound = false;
 }
 
 }  // namespace raw::rt

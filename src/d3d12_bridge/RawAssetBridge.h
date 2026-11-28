@@ -26,16 +26,30 @@ struct RawMeshletDesc {
     float    normalCone[4];    // xyz axis, w cutoff cos(halfAngle + pi/2)
 };
 
+struct RawPbrMaterial {
+    std::string          name;
+    float                baseColorFactor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float                metallicFactor     = 0.0f;
+    float                roughnessFactor    = 0.65f;
+    float                emissiveFactor[3]  = {0.0f, 0.0f, 0.0f};
+    std::vector<uint8_t> embeddedBaseColorImage;   // raw PNG/JPEG bytes extracted from glTF .glb bufferView when present
+    std::string          embeddedBaseColorMime;
+};
+
 struct RawMeshAsset {
     std::string                 name;
     std::vector<RawMeshVertex>  vertices;
     std::vector<uint32_t>       indices;
     std::vector<RawMeshletDesc> meshlets;
+    std::vector<RawPbrMaterial> materials;
     bool                        fromGlb = false;
 };
 
-// Loads a standard Wavefront .obj or Blender glTF 2.0 binary (.glb) mesh and builds RAW-MESH meshlets.
+// Loads a standard Wavefront .obj or Blender glTF 2.0 binary (.glb) mesh (full bufferView/accessor/index/PBR support)
+// and builds 64-vert / 64-tri RAW-MESH meshlets.
 bool LoadModernMeshAsset(const std::string& path, RawMeshAsset* outAsset, std::string* outErr = nullptr);
+bool LoadModernMeshAssetFromGlbBytes(const uint8_t* bytes, size_t size, const std::string& label,
+                                     RawMeshAsset* outAsset, std::string* outErr = nullptr, bool yUpToZUp = true);
 
 // Partitions any indexed triangle mesh into 64-vert / 64-tri RAW-MESH meshlets with exact spheres & normal cones.
 void BuildRawMeshlets(const std::vector<RawMeshVertex>& srcVerts, const std::vector<uint32_t>& srcIndices,

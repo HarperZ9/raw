@@ -8,6 +8,7 @@
 //=============================================================================
 
 #include "RmlD3D11.h"
+#include "../vendor/stb_image.h"
 #include <RmlUi/Core.h>
 #include <SKSE/SKSE.h>
 #include <d3dcompiler.h>
@@ -546,9 +547,22 @@ void D3D11RenderInterface::ReleaseGeometry(Rml::CompiledGeometryHandle geometry)
 Rml::TextureHandle D3D11RenderInterface::LoadTexture(Rml::Vector2i& dims,
                                                       const Rml::String& source)
 {
-    // For now, return 0 (no file-based textures)
-    // TODO: implement stb_image loading
-    return 0;
+    dims = {0, 0};
+    if (source.empty()) return 0;
+    int w = 0, h = 0, channels = 0;
+    unsigned char* pixels = stbi_load(source.c_str(), &w, &h, &channels, 4);
+    if (!pixels || w <= 0 || h <= 0) {
+        if (pixels) stbi_image_free(pixels);
+        SKSE::log::warn("RmlD3D11: LoadTexture failed for '{}'", source);
+        return 0;
+    }
+    dims = {w, h};
+    const size_t byteCount = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
+    const Rml::Span<const Rml::byte> span(reinterpret_cast<const Rml::byte*>(pixels), byteCount);
+    const Rml::TextureHandle handle = GenerateTexture(span, dims);
+    stbi_image_free(pixels);
+    if (!handle) dims = {0, 0};
+    return handle;
 }
 
 Rml::TextureHandle D3D11RenderInterface::GenerateTexture(

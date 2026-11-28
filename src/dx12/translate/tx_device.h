@@ -1,6 +1,7 @@
 // The translated device: ID3D11Device on a D3D12 device and direct queue.
 #pragma once
 #include "tx_objects.h"
+#include "tx_subdiv.h"
 #include <deque>
 #include <shared_mutex>
 #include <string>
@@ -148,7 +149,23 @@ public:
     StreamPool* pool = nullptr;   // translation workers (tx_stream.h), when CreateParams::workers
 
     // ---- counters ----
-    std::atomic<uint64_t> nDebugErrors{0}, nPso{0}, nRootSig{0}, nSubmit{0}, nBarriers{0}, nDraws{0}, nUnsupported{0};
+    std::atomic<uint64_t> nDebugErrors{0}, nPso{0}, nRootSig{0}, nSubmit{0}, nBarriers{0}, nDraws{0}, nUnsupported{0}, nSubdivDraws{0};
+    bool geometrySubdiv = false;
+    SubdivCache subdiv;
+    std::atomic<float>    subdivCurvature{0.62f};
+    std::atomic<float>    subdivSnowDepth{0.0f};
+    std::atomic<float>    subdivDisplace{0.0f};
+    std::atomic<uint32_t> subdivEpoch{0};
+    std::atomic<uint64_t> frameSeq{1};
+    // Wave 35: Live 3D geometric water wave & Nirn dual-moon tidal parameters (updated every frame):
+    std::atomic<float>    waterTimeSec{0.0f};
+    std::atomic<float>    waterGravity{9.80665f};
+    std::atomic<float>    waterTideU{0.0f};
+    std::atomic<float>    waterBeaufort{2.0f};
+    std::atomic<float>    waterSwellX{0.866f};
+    std::atomic<float>    waterSwellY{0.500f};
+    std::atomic<uint64_t> waterStateGen{1};
+    const SubdivLayoutInfo* GetSubdivLayout(uint32_t layoutId);
     void DrainInfoQueue();
 
     // ---- allocators ----
@@ -253,7 +270,9 @@ private:
     std::unordered_map<uint64_t, uint32_t> layoutIds_;
     std::unordered_map<uint64_t, std::unique_ptr<RootSig>> rootSigs_;
     std::unordered_map<uint64_t, D3D12_GPU_DESCRIPTOR_HANDLE> sampTables_;
+    uint32_t sampSlotIds_[2048]{};
     uint32_t sampUsed_ = 0;
+    bool sampExhaustedLogged_ = false;
     std::unordered_map<uint32_t, D3D12_CPU_DESCRIPTOR_HANDLE> nullSrv_, nullUav_;
     std::unordered_map<uint32_t, uint32_t> planes_;
 

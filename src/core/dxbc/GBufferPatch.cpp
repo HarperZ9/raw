@@ -50,7 +50,8 @@ void ShadowOutputs(Code& code, size_t body, const Regs& r)
 void MaterialOutputs(const Analysis& a, const Regs& r, const PatchOptions& opt, const T& alpha, Code* e)
 {
     const bool lit = a.info.kind == ShaderKind::Lighting || a.info.kind == ShaderKind::DistantLod;
-    const float cls = float(a.info.materialClass | opt.classFlags) / 255.0f;
+    const uint8_t resolvedClass = material::ResolveMaterialClass(a.info.materialClass, opt.classOverride, opt.classFlags);
+    const float cls = material::EncodeMaterialClassUnorm(resolvedClass);
     if (lit && a.info.vertexColour) {
         e->push_back(Make(op::Mul, {Tmp(r.scratch, XYZ), Rd(r.albedo), a.vcolOperand}));
         e->push_back(Make(op::Mov, {Out(kAlbedoTarget, XYZ), Rd(r.scratch)}));

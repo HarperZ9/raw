@@ -196,6 +196,7 @@ STDMETHODIMP SwapChain::Present(UINT sync, UINT flags)
     HRESULT hr = sc_->Present(sync, flags);
     if (flags & DXGI_PRESENT_TEST) return hr;
     const uint64_t frame = presents_++;
+    dev_->frameSeq.fetch_add(1, std::memory_order_relaxed);
     frameSerial_[frame % 8] = serial;
     if (presents_ % 600 == 0) { MapStatsLog(600); ctx->StreamStatsLog(600); ctx->TableStatsLog(600); dev_->SavePsoCache(); }
     dev_->Reclaim();

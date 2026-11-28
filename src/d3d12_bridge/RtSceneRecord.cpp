@@ -281,8 +281,9 @@ void RtScene::RecordTrace(ID3D12GraphicsCommandList4* cl, uint32_t slot, bool sk
     cl->SetComputeRootShaderResourceView(13, m_alpha.MaterialsAddress());
     // b2: the camera's place, the finest cell, the table size, what runs (1 materials, 2 cache), the
     // debug view, the frame.
+    const uint32_t hwBits = static_cast<uint32_t>(m_tune.hwTier < 0 ? 0 : (m_tune.hwTier > 4 ? 4 : m_tune.hwTier)) << 8u;
     const uint32_t giFlags = (m_tune.materials ? 1u : 0u) | (cache ? 2u : 0u) | (m_tune.rest && m_skyReady ? 4u : 0u) |
-                             (m_tune.restReuse && m_skyReady ? 8u : 0u) | (m_tune.farLod ? 16u : 0u);
+                             (m_tune.restReuse && m_skyReady ? 8u : 0u) | (m_tune.farLod ? 16u : 0u) | hwBits;
     uint32_t gc[12];
     std::memcpy(gc, m_tune.cameraPos, 12);
     std::memcpy(gc + 3, &m_tune.cacheCell, 4);

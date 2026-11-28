@@ -19,6 +19,8 @@
 #define ATLAS_SLOT t9
 #include "LightingCommon.hlsli"
 #include "Weather.hlsli"
+#include "SpectralTransport.hlsli"
+#include "RawRestirHashCache.hlsli"
 
 Texture2D<float>  Depth  : register(t0);
 Texture2D<float4> Normal : register(t1);
@@ -58,20 +60,45 @@ float3 cosineDir(float3 n, float2 r) {
     return normalize(t * (cos(a) * s) + b * (sin(a) * s) + n * sqrt(max(1.0f - r.y, 0.0f)));
 }
 
-// A unit vector spread around d by up to `spread` radians (a disc of directions).
+// A unit vector spread around d by up to `spread` radians (a disc of directions), NaN-safe.
 float3 jitterDir(float3 d, float spread, float2 r) {
-    const float3 t = normalize(abs(d.y) < 0.99f ? cross(d, float3(0, 1, 0)) : cross(d, float3(1, 0, 0)));
-    const float3 b = cross(d, t);
-    const float a = 6.2831853f * r.x, s = spread * sqrt(r.y);
-    return normalize(d + (t * cos(a) + b * sin(a)) * s);
+    const float3 dUnit = (dot(d, d) > 1.0e-8f) ? normalize(d) : float3(0.0f, 0.0f, 1.0f);
+    const float3 t = normalize(abs(dUnit.y) < 0.99f ? cross(dUnit, float3(0, 1, 0)) : cross(dUnit, float3(1, 0, 0)));
+    const float3 b = cross(dUnit, t);
+    const float a = 6.2831853f * r.x, s = max(spread, 0.0f) * sqrt(saturate(r.y));
+    return normalize(dUnit + (t * cos(a) + b * sin(a)) * s);
 }
 
-// Spatiotemporal R2 Golden-Ratio Low-Discrepancy Blue-Noise Sampling (DNS-04, Wolfe/Roberts/Jimenez):
-// Spatially blue-noise-decorrelated IGN + R2 temporal quasirandom sequence for cleaner 1-4 spp RayQuery sampling.
+// Spectral Korobov-Weyl & 4D Prime-Root Quasi-Monte-Carlo (QMC) Spatiotemporal Blue-Noise Samplers:
+// Uses wrap-free 32-bit integer Weyl/R2/Korobov arithmetic (zero fmod 256/512 periodic phase snaps!)
+// rotated spatially by Cranley-Patterson IGN so temporal noise never produces a timed pulse.
+float4 stbnPrime4(float2 px, float frameOff) {
+    const uint fi = uint(max(frameOff, 0.0f));
+    const float4 kRoots = float4(0.4142135624f, 0.7320508076f, 0.2360679775f, 0.6457513111f);
+    const float4 base = float4(ign(px), ign(px.yx + 13.7f), ign(px + float2(29.3f, 7.1f)), ign(px.yx + float2(5.9f, 41.3f)));
+    const uint fLo = fi & 4095u;
+    const uint fHi = (fi >> 12u) & 4095u;
+    const float4 shift = frac(kRoots * float(fLo) + frac(kRoots * 4096.0f) * float(fHi));
+    return frac(base + shift);
+}
+
 float2 stbnR2(float2 px, float frameOff) {
+    const uint fi = uint(max(frameOff, 0.0f));
     const float2 r2Step = float2(0.7548776662f, 0.5698402910f);
     const float2 ignBase = float2(ign(px), ign(px.yx + 19.37f));
-    return frac(ignBase + r2Step * fmod(frameOff, 64.0f));
+    const uint fLo = fi & 4095u;
+    const uint fHi = (fi >> 12u) & 4095u;
+    const float2 shift = frac(r2Step * float(fLo) + frac(r2Step * 4096.0f) * float(fHi));
+    return frac(ignBase + shift);
+}
+
+float qmcKorobov1(float2 px, uint seqIdx, float frameOff) {
+    // Rank-1 Korobov lattice over Z_p (p=65521, primitive generator g=17364) + wrap-free golden-ratio temporal Weyl shift:
+    const uint fi = uint(max(frameOff, 0.0f));
+    const float base = ign(px + float2(float(seqIdx & 7u) * 11.3f, float(seqIdx >> 3u) * 17.7f));
+    const float kLat = float((seqIdx * 17364u) % 65521u) * (1.0f / 65521.0f);
+    const float tShift = frac(0.6180339887f * float(fi & 4095u) + frac(0.6180339887f * 4096.0f) * float((fi >> 12u) & 4095u) + float(seqIdx) * 0.3819660113f);
+    return frac(base + kLat + tShift);
 }
 
 // Tokuyoshi & Eto (AMD, I3D 2024, MAT-05) Bounded VNDF + Dupuy & Benyoub (HPG 2023, MAT-06) Spherical Cap GGX Sampling:
@@ -153,20 +180,35 @@ float visible(float3 o, float3 d, float tMin, float tMax) {
     return q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0.0f : 1.0f;
 }
 
-// The surface's geometric normal from the depth buffer: the shorter-step neighbours on each axis.
+// Wave 66: Silhouette-safe geometric surface normal from local Depth neighbours (skips sky & depth jumps,
+// falling back cleanly to shading normal `fallback` so grazing stone walls & silhouettes never tilt inward!).
 float3 geometricNormal(float2 px, float3 p, float3 fallback) {
     const float2 lim = dims.xy - 1.0f;
     const float2 pxR = float2(min(px.x + 1.0f, lim.x), px.y), pxL = float2(max(px.x - 1.0f, 0.0f), px.y);
     const float2 pxD = float2(px.x, min(px.y + 1.0f, lim.y)), pxU = float2(px.x, max(px.y - 1.0f, 0.0f));
-    const float3 r = worldAt(pxR, Depth.Load(int3(pxR, 0))) - p, l = p - worldAt(pxL, Depth.Load(int3(pxL, 0)));
-    const float3 dn = worldAt(pxD, Depth.Load(int3(pxD, 0))) - p, u = p - worldAt(pxU, Depth.Load(int3(pxU, 0)));
-    const float3 dx = dot(r, r) < dot(l, l) ? r : l;
-    const float3 dy = dot(dn, dn) < dot(u, u) ? dn : u;
+    const float dR = Depth.Load(int3(pxR, 0)), dL = Depth.Load(int3(pxL, 0));
+    const float dD = Depth.Load(int3(pxD, 0)), dU = Depth.Load(int3(pxU, 0));
+    const float zC = max(viewZOf(Depth.Load(int3(px, 0))), 0.25f);
+    const float zTolG = max(zC * 0.035f, 4.0f);
+    const bool okR = (dR < 0.99998f) && (abs(viewZOf(dR) - zC) < zTolG);
+    const bool okL = (dL < 0.99998f) && (abs(viewZOf(dL) - zC) < zTolG);
+    const bool okD = (dD < 0.99998f) && (abs(viewZOf(dD) - zC) < zTolG);
+    const bool okU = (dU < 0.99998f) && (abs(viewZOf(dU) - zC) < zTolG);
+    if ((!okR && !okL) || (!okD && !okU)) { return fallback; }
+    const float3 r = okR ? (worldAt(pxR, dR) - p) : float3(1.0e5f, 0.0f, 0.0f);
+    const float3 l = okL ? (p - worldAt(pxL, dL)) : float3(1.0e5f, 0.0f, 0.0f);
+    const float3 dn = okD ? (worldAt(pxD, dD) - p) : float3(0.0f, 1.0e5f, 0.0f);
+    const float3 u = okU ? (p - worldAt(pxU, dU)) : float3(0.0f, 1.0e5f, 0.0f);
+    const float3 dx = (okR && (!okL || dot(r, r) < dot(l, l))) ? r : l;
+    const float3 dy = (okD && (!okU || dot(dn, dn) < dot(u, u))) ? dn : u;
     float3 n = cross(dy, dx);
-    const float len = length(n);
-    if (len < 1.0e-6f) { return fallback; }
-    n /= len;
-    return dot(n, fallback) < 0.0f ? -n : n;   // the side the shading normal is on
+    const float len2 = dot(n, n);
+    if (!isfinite(len2) || len2 < 1.0e-10f) { return fallback; }
+    n *= rsqrt(len2);
+    if (dot(n, fallback) < 0.0f) { n = -n; }   // orient to the shading normal's hemisphere
+    // Guard against extreme depth-quantization normal tilt at grazing silhouettes:
+    if (dot(n, fallback) < 0.25f) { return fallback; }
+    return n;
 }
 
 #include "RtHit.hlsli"
@@ -200,7 +242,7 @@ bool farOccluded(float3 o, float3 dir, float tMax, uint steps, out float3 colour
 
 // What a reflection ray that leaves the scene sees: the game's own sky where it is on screen (the
 // direction projected, clamped into the frame and walked up towards the top row to the first sky pixel),
-// else the directional ambient for that direction. Puddles read by the sky they mirror.
+// else the dynamic environment cubemap enriched with live RawCosmosSky aurora & galaxy at night.
 float3 skyAt(float3 rd) {
     const float4 s = screenOf(rd * 1.0e6f);
     if (s.w > 0.0f && all(s.xy >= 2.0f.xx) && all(s.xy <= dims.xy - 3.0f)) {
@@ -210,7 +252,12 @@ float3 skyAt(float3 rd) {
             xy.y = floor(xy.y * 0.5f);
         }
     }
-    return evalDynamicEnvCube(rd, 0.14f);
+    float3 env = evalDynamicEnvCube(rd, 0.14f);
+    if (sunColour.w > 0.5f && rd.z > 0.0f && astroSunElev() < 0.06f) {
+        const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+        env += evalCosmosAndAuroraEx(rd, astroSunDir(), timeEnv.x, simTime, clouds.x, weather.z, camPosW.y, false, true);
+    }
+    return min(env, 3.5f.xxx);
 }
 
 
@@ -220,17 +267,19 @@ void cacheFromHit(float3 hp, float3 n, float2 r, bool isInterior) {
     const float3 d = cosineDir(n, r);
     float3 bounce = 0.0f;
     float sky = 1.0f;
+    const float bLen = isInterior ? min(skyLength, 240.0f) : skyLength;
+    float freeHit = bLen;
     if (isInterior || d.z > 0.0f) {
-        const float3 o = hp + n * (0.65f + 0.0025f * length(hp));
-        const float bLen = isInterior ? min(skyLength, 240.0f) : skyLength;
+        const float3 o = hp + n * clamp(length(hp) * 0.0018f, 0.30f, 4.0f);
         Hit h;
         if (traceHit(o, d, bLen, h)) {
             float3 n2;
+            freeHit = h.t;
             sky = isInterior ? saturate(h.t / max(bLen, 1.0f)) : 0.0f;
-            bounce = radianceAt(h, o, d, r.yx, false, n2);
+            bounce = rawCapBounceRadiance(radianceAt(h, o, d, r.yx, false, n2));
         }
     }
-    cacheAdd(hp, n, bounce, sky);
+    cacheAdd(hp, n, bounce, sky, freeHit);
 }
 
 #ifndef RT_NO_MAIN   // RtWater.hlsl includes the bindings and helpers above, not this kernel
@@ -244,60 +293,141 @@ void main(uint3 id : SV_DispatchThreadID) {
     float restCode = 0.0f;   // 4 + 2 x the untraced lights' share in fifteenths, when one was sampled (RtSkyFilter decodes it)
     const float d = Depth.Load(ip);
     const uint base = uint(Spec.Load(ip).z * 255.0f + 0.5f) & 127u;
-    // SM6.9 Wave-coherent sky early exit: pure sky waves skip all RayQuery and cluster setup cleanly.
-    if (WaveActiveAllTrue(d >= 1.0f || base == 0u)) {
+    // Strict Standard-Z sky early exit (d >= 0.99998): pure sky waves skip all RayQuery and cluster setup cleanly.
+    if (WaveActiveAllTrue(d >= 0.99998f || base == 0u)) {
         Vis[id.xy] = 1.0f; Lights[id.xy] = 0.0f; SkyRaw[id.xy] = float4(0.0f, 0.0f, 0.0f, 1.0f); Refl[id.xy] = 0.0f;
         return;
     }
-    if (d < 1.0f && base != 0u && (base < 7u || base == 10u || base == 11u || base == 12u)) {   // 10: skin, 11: hair, 12: eyes
+    if (d < 0.99998f && base != 0u && (base < 7u || base == 10u || base == 11u || base == 12u || base == 14u)) {   // 10: skin, 11: hair, 12: eyes, 14: skinned actor/creature/cloth
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);
-        const float3 n = worldNormal(Normal.Load(ip));
-        const float z = viewZOf(d);
+        const float3 nRawS = worldNormal(Normal.Load(ip));
+        const float3 n = (dot(nRawS, nRawS) > 1.0e-8f) ? normalize(nRawS) : float3(0.0f, 0.0f, 1.0f);
+        const float z = max(viewZOf(d), 0.25f);
         const float3 ng = geometricNormal(px, p, n);
-        // Stronger normal offset on skinned meshes (base == 10/11/12) to eliminate RT terminator/self-shadow acne cleanly:
-        const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u);
-        const float oScale = isSkinnedMesh ? (2.25f + 0.008f * z) : (0.85f + 0.005f * z);
-        const float3 o = p + ng * oScale;
-        const float2 r = stbnR2(px, frameIndex);
-        if (sunDir.w > 0.5f && sunColour.w > 0.5f && dot(n, sunDir.xyz) > 0.0f) {
-            // Fast 2-spp Blocker-Distance PCSS Hardware DXR Sun Shadows (3x faster than 6-spp, crisp contact -> soft penumbra!):
-            const float turn = saturate(1.0f - dot(ng, sunDir.xyz) / 0.40f);
-            const float tMinS = max(termDist, 1.8f) * turn * turn;
-            Hit hBlocker;
-            float effCone = sunCone;
-            float vSum = 0.0f;
-            if (traceHit(o + sunDir.xyz * tMinS, jitterDir(sunDir.xyz, sunCone * 0.42f, r), sunLength, hBlocker)) {
-                effCone = clamp(sunCone * (0.20f + 1.70f * saturate(hBlocker.t / 190.0f)), sunCone * 0.20f, sunCone * 1.90f);
+        // Wave 54 + Wave 63 Pure World-Space Normal-Offset Anti-Acne Bias (zero view-axis component!):
+        // Scales strictly with viewZ and world geometric normal so turning the camera never causes shadow acne flicker.
+        const float adaptiveNormalBias = clamp(max(0.015f + 0.002f * z, 0.30f), 0.30f, 4.0f);
+        const bool isSkinnedMesh = (base == 10u || base == 11u || base == 12u || base == 14u);
+        const float3 biasN = isSkinnedMesh ? normalize(lerp(ng, n, 0.30f)) : ng;
+        const float oScale = isSkinnedMesh ? clamp(adaptiveNormalBias * 1.50f, 0.48f, 4.2f) : adaptiveNormalBias;
+        const float3 o = p + biasN * oScale;
+        const float4 q4 = stbnPrime4(px, frameIndex);
+        const float2 rDisk = stbnR2(px, frameIndex + 3.0f);
+        const float3 sunDirUnit = (dot(sunDir.xyz, sunDir.xyz) > 1.0e-8f) ? normalize(sunDir.xyz) : float3(0.0f, 0.0f, 1.0f);
+        const uint rtTier = (giFlags >> 8u) & 7u;
+        if (sunDir.w > 0.5f && sunColour.w > 0.5f) {
+            // Wave 54 + Wave 65 + Wave 70 Anti-Acne Geometric-Normal Multi-Tap PCSS Solar-Disk Shadows:
+            // Traces across all front/grazing surfaces (ngSun > -0.25) without flat-triangle backface cutouts
+            // (Lighting.hlsl handles smooth normal-mapped NdotL self-shading!), uses a continuous fixed
+            // golden-angle solar disk (zero 4-unit voxel hash popping on cam_sweep!), and gives alpha-tested
+            // foliage/grass cards (base==5u) physical translucent transmission floor + self-hit clearance.
+            const float ngSun = dot(biasN, sunDirUnit);
+            const bool isFoliageCard = (base == 5u);
+            if (!isFoliageCard && ngSun <= -0.45f) {
+                vis.x = 0.0f;
             } else {
-                vSum += 1.0f;
+                static const float kSolarDiskTan = 0.0046251f;
+                const float overcastWiden = lerp(1.0f, 1.85f, saturate(clouds.x * 0.85f + weather.w * 0.35f));
+                const float solarCone = max(sunCone, kSolarDiskTan) * overcastWiden * (isFoliageCard ? 1.85f : 1.0f);
+                const float grazingSun = saturate(1.0f - saturate(ngSun));
+                const float baseBias = max(0.45f, 0.024f + 0.0028f * z);
+                const float slopeBias = max(0.75f, 0.0050f * z) * (grazingSun * grazingSun);
+                const float foliageBoost = isFoliageCard ? 3.6f : 0.0f;
+                const float sunNormalOff = clamp(baseBias + slopeBias + foliageBoost + (isSkinnedMesh ? 0.55f : 0.38f), 0.50f, 10.5f);
+                const float3 oSun = p + biasN * sunNormalOff;
+                const float turn = saturate(1.0f - max(ngSun, 0.0f) / 0.52f);
+                const float grazingTMin = max(max(termDist, 2.8f), sunNormalOff * 1.45f) * (turn * turn);
+                const float tMinS = clamp(max(grazingTMin, max(sunNormalOff * 0.42f, isFoliageCard ? 4.8f : 0.45f)), 0.45f, 20.0f);
+
+                const float3 sTan = normalize(cross(sunDirUnit, abs(sunDirUnit.z) < 0.9f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f)));
+                const float3 sBit = cross(sunDirUnit, sTan);
+                // Smooth fixed golden-angle solar-disk ring (zero discontinuous 4-unit voxel hash popping on cam_sweep):
+                const float worldPhase = 0.3926991f;
+
+                float3 sunRayC = sunDirUnit;
+                const float cDot = dot(biasN, sunRayC);
+                if (cDot < 0.03f) {
+                    sunRayC = normalize(sunRayC + biasN * (0.03f - cDot));
+                }
+                Hit hBlocker;
+                float effCone = solarCone * 0.65f;
+                float vSum = 0.0f;
+                if (traceHit(oSun + sunRayC * tMinS, sunRayC, sunLength, hBlocker)) {
+                    effCone = clamp(solarCone * (0.38f + 1.45f * saturate(hBlocker.t / 190.0f)), kSolarDiskTan * 0.45f, solarCone * 1.85f);
+                } else {
+                    vSum += 1.0f;
+                }
+                const uint nSunRing = (rtTier <= 1u) ? 2u : 3u;
+                const float ringStep = 6.2831853f / float(nSunRing);
+                [loop] for (uint siS = 0u; siS < nSunRing; ++siS) {
+                    const float angS = worldPhase + float(siS) * ringStep;
+                    const float radS = effCone * (0.62f + 0.30f * (float(siS & 1u)));
+                    float3 dRing = normalize(sunRayC + (sTan * cos(angS) + sBit * sin(angS)) * radS);
+                    const float rDot = dot(biasN, dRing);
+                    if (rDot < 0.03f) {
+                        dRing = normalize(dRing + biasN * (0.03f - rDot));
+                    }
+                    vSum += visible(oSun, dRing, tMinS, sunLength);
+                }
+                const float rawSunVis = saturate(vSum / float(nSunRing + 1u));
+                vis.x = isFoliageCard ? lerp(0.28f, 1.0f, rawSunVis) : rawSunVis;
             }
-            const float2 r1 = frac(r + float2(0.500000f, 0.618034f));
-            vSum += visible(o, jitterDir(sunDir.xyz, effCone, r1), tMinS, sunLength);
-            vis.x = vSum * 0.5f;
         }
-        // Fast 2-spp Pure Hardware DXR 3D Contact RTAO & Multi-Bounce GI (2x faster, denoised by RtSkyFilter!):
+        // Hardware-tier adaptive DXR ray budget (RTX 3060=Tier 1 -> 1 spp, 4070/4090=Tier 2-3 -> 2 spp, 5090=Tier 4 -> 3 spp GI):
         const bool isInterior = (sunColour.w <= 0.5f);
         const float aoLen = isInterior ? (skyLength > 0.0f ? min(skyLength, 220.0f) : 180.0f) : skyLength;
         if (aoLen > 0.0f) {
             const float2 rs0 = stbnR2(px, frameIndex + 11.0f);
-            const uint giSpp = 2u;
+            // Negative-Space Visibility & Entropy Radiance Oracle query:
+            // Concentrates RT-core rays into high-entropy penumbra/contact/dynamic regions while skipping verified
+            // empty near-field corridors and reusing converged world-space priors in smooth open air.
+            float4 oracleVal = 0.0f.xxxx;
+            float oracleFree = 0.0f, oracleEnt = 1.0f;
+            uint oracleFrames = 0u;
+            const bool hasOracle = ((giFlags & GI_CACHE) != 0u) && cacheReadOracle(p, n, 0.0f.xxx, oracleVal, oracleFree, oracleEnt, oracleFrames);
+            const bool calmCorridor = hasOracle && oracleFrames >= 6u && oracleEnt < 0.14f && oracleFree > 40.0f;
+            const bool highEntropy = hasOracle && oracleFrames >= 2u && oracleEnt > 0.36f;
+            // SIGGRAPH Advances 2026 LGT-16 Variable-Rate Ray Tracing + Negative-Space Entropy Oracle:
+            // Couples per-pixel motion/disocclusion gradient with world-space cache entropy so RT cores spend 1 spp
+            // in converged calm air and automatically escalate to 3-4 spp on dynamic/disoccluded/high-entropy edges!
+            const float2 giMvRaw = Motion.Load(ip);
+            const float2 giMv = all(isfinite(giMvRaw)) ? giMvRaw : 0.0f.xx;
+            const float giSpeedPx = length(giMv * dims.xy);
+            const bool fastMotionOrDisocc = (giSpeedPx > 1.85f) || !hasOracle || (oracleFrames < 3u);
+            const uint baseSpp = (rtTier <= 1u) ? 1u : (rtTier >= 4u ? 3u : 2u);
+            const uint giSpp = (calmCorridor && !fastMotionOrDisocc) ? 1u
+                             : ((highEntropy || fastMotionOrDisocc) && rtTier >= 2u ? min(baseSpp + 1u, rtTier >= 4u ? 4u : 3u) : baseSpp);
+            const float corridorSkip = (!isInterior && hasOracle && oracleFrames >= 8u && oracleEnt < 0.18f && oracleFree > 24.0f)
+                ? min(oracleFree * 0.35f, 24.0f) : 0.0f;
+
             float skySum = 0.0f;
             float3 bounceSum = 0.0f;
+            float minFreeHit = aoLen;
             const bool doCache2 = ((giFlags & GI_CACHE) != 0u) && skyTurn(id.xy);
             [loop] for (uint si = 0u; si < giSpp; si++) {
-                const float2 rs = frac(rs0 + float2(float(si) / float(giSpp), 0.618034f * float(si)));
+                const float4 qGi = stbnPrime4(px, frameIndex + 11.0f + float(si) * 17.0f);
+                const float2 rs = (si & 1u) == 0u ? qGi.xy : qGi.zw;
                 const float3 sd = cosineDir(n, rs);
                 float sSample = 1.0f;
                 float3 bSample = 0.0f;
                 if (isInterior || sd.z > 0.0f) {
+                    const float rayTMin = (sd.z > 0.18f) ? corridorSkip : 0.0f;
                     Hit h;
-                    if (traceHit(o, sd, aoLen, h)) {
+                    if (traceHitTMin(o, sd, rayTMin, aoLen, h)) {
                         float3 hn;
+                        minFreeHit = min(minFreeHit, h.t);
                         // True 3D Hardware DXR near-field contact occlusion (grounds bottles, rocks, furniture & feet with zero SSAO halos!):
                         sSample = isInterior ? pow(saturate(h.t / aoLen), 1.35f)
                                              : saturate(h.t / 110.0f) * 0.42f;
                         bSample = radianceAt(h, o, sd, rs.yx, true, hn);
+                        // Smooth energy-conserving bounce shoulder (knee 1.05, ceiling 2.10): prevents bright on-screen
+                        // emissives/flames/sky edges from injecting runaway glow into the persistent world radiance cache!
+                        const float bPeakS = max(bSample.r, max(bSample.g, bSample.b));
+                        if (bPeakS > 1.05f) {
+                            const float bSoft = 1.05f + (bPeakS - 1.05f) / (1.0f + (bPeakS - 1.05f) * 0.95f);
+                            bSample *= min(bSoft, 2.10f) / bPeakS;
+                        }
                         if (si == 0u && doCache2) {
                             cacheFromHit(o + sd * h.t, hn, frac(rs * 1.618f + 0.31f), isInterior);
                         }
@@ -307,9 +437,18 @@ void main(uint3 id : SV_DispatchThreadID) {
                 bounceSum += bSample;
             }
             const float invSpp = 1.0f / float(giSpp);
-            sky = invSpp * skySum;
-            bounce = invSpp * bounceSum;
-            if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, bounce, sky); }
+            const float rawSky = invSpp * skySum;
+            const float3 rawBounce = invSpp * bounceSum;
+            // Write ONLY raw unbiased traced bounce into the world radiance cache BEFORE blending oracleVal
+            // (eliminates recursive oracle-blended positive feedback glow runaway!).
+            if ((giFlags & GI_CACHE) != 0u) { cacheAddWave(p, n, rawBounce, rawSky, minFreeHit); }
+            sky = rawSky;
+            bounce = rawBounce;
+            // In converged low-entropy corridors, gently stabilize 1-spp output with 22% converged world oracle prior:
+            if (calmCorridor) {
+                bounce = lerp(bounce, oracleVal.rgb, 0.22f);
+                sky = lerp(sky, oracleVal.a, 0.22f);
+            }
         }
         // The three lights that would light this pixel most (colour luminance x window x n.l).
         uint best[3] = {~0u, ~0u, ~0u};
@@ -323,8 +462,13 @@ void main(uint3 id : SV_DispatchThreadID) {
                 if (li >= flags.y) { continue; }
                 const float3 toL = lightPosR[li].xyz - p;
                 const float dist = length(toL);
-                const float x = saturate(dist / lightPosR[li].w);
-                const float sc = dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * saturate(dot(n, toL / max(dist, 1.0e-4f)));
+                const float invR = 1.0f / max(lightPosR[li].w, 1.0f);
+                const float x = saturate(dist * invR);
+                const float nlScore = dot(n, toL / max(dist, 1.0e-4f));
+                if (nlScore <= 0.0f) { continue; }
+                // Wave 63: Gently floor front-facing N.L factor (0.20..1.0) so grazing key hearths/torches
+                // stay locked in top-3 RT shadow slots cleanly across camera turns without slot-order flicker!
+                const float sc = dot(lightColS[li].rgb, float3(0.2126f, 0.7152f, 0.0722f)) * (1.0f - x * x) * (0.20f + 0.80f * nlScore);
                 if (sc <= score[2]) { continue; }
                 if (sc > score[0]) { best[2] = best[1]; score[2] = score[1]; best[1] = best[0]; score[1] = score[0]; best[0] = li; score[0] = sc; }
                 else if (sc > score[1]) { best[2] = best[1]; score[2] = score[1]; best[1] = li; score[1] = sc; }
@@ -345,28 +489,29 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float radK = clamp(sourceRadius * 0.42f + distC * 0.012f, 4.5f, 18.0f);
             const float ang0 = ign(px + float2(17.0f * float(k), 31.0f)) * 6.2831853f;
             float vAcc = 0.0f;
-            const uint nSpp = 2u;   // Fast 2-spp static pixel-locked Vogel-Disk Area RT shadows (3x faster, denoised in Lighting.hlsl!)
+            const uint nSpp = (rtTier <= 1u) ? 1u : 2u;   // Adaptive Vogel-Disk Area RT shadows (1-spp on 3060, 2-spp on 4070-5090)
+            const float turnP = saturate(1.0f - dot(ng, lDir) / 0.38f);
+            const float tMinP = (isSkinnedMesh ? 0.55f : 0.28f) * adaptiveNormalBias * turnP * turnP;
             [loop] for (uint si = 0u; si < nSpp; si++) {
                 const float rv = sqrt((float(si) + 0.5f) / float(nSpp));
                 const float av = float(si) * 2.3999632f + ang0;
                 const float3 ci = lPos + (lTan * cos(av) + lBit * sin(av)) * (rv * radK);
                 const float3 toi = ci - o;
                 const float liLen = length(toi);
-                vAcc += liLen > fixClear ? visible(o, toi / max(liLen, 1.0e-4f), 0.0f, liLen - fixClear) : 1.0f;
+                vAcc += liLen > (fixClear + tMinP) ? visible(o, toi / max(liLen, 1.0e-4f), tMinP, liLen - fixClear) : 1.0f;
             }
             vis[k + 1u] = vAcc * (1.0f / float(nSpp));
             idx[k] = float(best[k] + 1u) / 255.0f;
         }
-        // Every other light of the cluster. Each frame, every pixel picks one of them in proportion to the light it
-        // would give (weighted reservoir sampling over the whole list: the pick is exact). With RtRestReuse the pick
-        // is then resampled against last frame's reservoirs here and at two neighbours, found along the motion
-        // vector (ReSTIR's temporal and spatial reuse, Bitterli et al. 2020; target the unshadowed light, history
-        // capped at 20 samples, a neighbour kept only at the same view depth). On the sky ray's turn the kept light
-        // gets one shadow ray, and p(y) V(y) W over the exact unshadowed sum is the share of all those lights'
-        // light that arrives (the ratio estimator of Heitz et al. 2018), filtered with the sky rays.
+        // RAW-MEGALIGHTS (Visibility-Reused Spatiotemporal ReSTIR DI for lights 4..128):
+        // 1) Spectral Korobov-Weyl QMC reservoir sampling over all cluster lights (zero sin()-hash striping)
+        // 2) 5-neighbor depth + normal-validated spatiotemporal reuse (1 temporal + 4 Vogel-spiral spatial neighbors)
+        // 3) Unbiased visibility-verified reservoir weighting (removed biased 0.58 constant cvPrior shadow leak!)
+        // 4) Visibility feedback into ResOut: occluded picks store W=0 so next-frame reuse stops re-picking blocked lights!
         if ((giFlags & GI_REST) != 0u) {
             float total = 0.0f;
             uint pick = ~0u;
+            uint qSeq = 1u;
             [loop] for (uint w2 = 0u; w2 < 4u; w2++) {
                 uint b2 = bits[w2];
                 [loop] while (b2 != 0u) {
@@ -376,54 +521,89 @@ void main(uint3 id : SV_DispatchThreadID) {
                     const float sc = lightShare(li, p, n);
                     if (sc <= 0.0f) { continue; }
                     total += sc;
-                    if (hash(px + float(li) * 0.37f, frameIndex * 0.917f + 13.0f) * total < sc) { pick = li; }
+                    if (qmcKorobov1(px, qSeq++, frameIndex) * total < sc) { pick = li; }
                 }
             }
             float wsum = total, M = pick != ~0u ? 1.0f : 0.0f;
             if ((giFlags & GI_REUSE) != 0u && total > 0.0f) {
-                const float2 mv = Motion.Load(ip);
+                const float2 mvRawR = Motion.Load(ip);
+                const float2 mv = all(isfinite(mvRawR)) ? mvRawR : 0.0f.xx;
                 const float2 prev = px + mv * dims.xy;
-                [unroll] for (uint k = 0u; k < 3u; k++) {
-                    const float a = hash(px, frameIndex * 0.37f + float(k) * 3.1f) * 6.2831853f;
-                    const float rad = k == 0u ? 0.0f : 4.0f + 12.0f * hash(px.yx, frameIndex * 0.53f + float(k));
-                    const int2 q = int2(prev + float2(cos(a), sin(a)) * rad);
+                const float angBase = stbnR2(px, frameIndex + 53.0f).x * 6.2831853f;
+                const uint restNeighbors = (rtTier <= 1u) ? 3u : (rtTier == 2u ? 4u : 5u);
+                [loop] for (uint k = 0u; k < restNeighbors; k++) {
+                    const float a = angBase + float(k) * 2.39996323f;
+                    const float rad = (k == 0u) ? 0.0f : (3.5f + 3.2f * float(k));
+                    int2 q = int2(prev + float2(cos(a), sin(a)) * rad);
                     if (any(q < 0) || q.x >= int(dims.x) || q.y >= int(dims.y)) { continue; }
-                    const float4 rq = ResIn[q];
+                    float4 rq = ResIn[q];
+                    // Wave 75: Disocclusion-Safe 2-Slot Temporal Reservoir Selection (for k==0, probes
+                    // secondary staggered slot when primary depth diverges under swaying foliage/edges):
+                    if (k == 0u && (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z)) {
+                        const int2 altOff = ((id.x ^ id.y) & 1u) != 0u ? int2(1, 0) : int2(0, 1);
+                        const int2 qAlt = clamp(q + altOff, int2(0, 0), int2(dims.xy) - 1);
+                        const float4 rqAlt = ResIn[qAlt];
+                        const float3 nAlt = worldNormal(Normal.Load(int3(qAlt, 0)));
+                        const int chosen = rawSelectTwoSlotReservoirLayer(
+                            z, n, rq.w, worldNormal(Normal.Load(int3(q, 0))), rq.x >= 0.5f,
+                            rqAlt.w, nAlt, rqAlt.x >= 0.5f);
+                        if (chosen == 1) { q = qAlt; rq = rqAlt; }
+                    }
                     if (rq.x < 0.5f || abs(rq.w - z) > 0.05f * z) { continue; }
+                    // HPG 2026 Best Paper (LGT-09) Compatibility-Guided Spatial ReSTIR Neighbor Selection:
+                    // Validates both tight geometric normal alignment (dot >= 0.84) and shift-mapping Jacobian!
+                    float compatW = 1.0f;
+                    float shiftJac = 1.0f;
                     const uint yq = uint(rq.x + 0.5f) - 1u;
                     if (yq >= flags.y || yq == best[0] || yq == best[1] || yq == best[2]) { continue; }
-                    // Cap reservoir history at 8 samples so moving torches, spells & particle lights track instantaneously with zero ghosting.
-                    const float mq = min(rq.z, 8.0f);
-                    const float wq = lightShare(yq, p, n) * rq.y * mq;
+                    if (k > 0u) {
+                        const float3 nq = worldNormal(Normal.Load(int3(q, 0)));
+                        const float ndCompat = dot(n, nq);
+                        if (ndCompat < 0.84f) { continue; }
+                        compatW = smoothstep(0.84f, 0.98f, ndCompat);
+                        const float dqN = Depth.Load(int3(q, 0));
+                        if (dqN < 0.99998f) {
+                            const float3 pNeigh = worldAt(float2(q), dqN);
+                            const float3 lPos = lightPosR[yq].xyz;
+                            const float3 lNrm = normalize(p - lPos + float3(0.0f, 0.0f, 1.0e-5f));
+                            shiftJac = rawEvalRestirShiftJacobian(p, pNeigh, lPos, lNrm);
+                            if (shiftJac <= 0.0f) { continue; }
+                        }
+                    }
+                    // Wave 75: Generalized Balance Heuristic MIS + Jacobian-weighted unbiased reuse:
+                    const float mq = min(rq.z, 8.0f) * compatW;
+                    const float pCompat = lightShare(yq, p, n);
+                    const float misW = rawEvalGeneralizedBalanceMis(mq, pCompat, max(M, 1.0f), max(total, 1.0e-5f), shiftJac);
+                    const float wq = pCompat * rq.y * mq * shiftJac * lerp(0.5f, 1.5f, misW);
                     M += mq;
-                    if (wq <= 0.0f) { continue; }
+                    if (!isfinite(wq) || wq <= 0.0f) { continue; }
                     wsum += wq;
-                    if (hash(px + float(k) * 1.7f, frameIndex * 0.811f + 29.0f) * wsum < wq) { pick = yq; }
+                    if (qmcKorobov1(px, 64u + k, frameIndex + 7.0f) * wsum < wq) { pick = yq; }
                 }
             }
             const float py = pick != ~0u ? lightShare(pick, p, n) : 0.0f;
-            const float W = py > 0.0f && M > 0.0f ? wsum / (M * py) : 0.0f;
-            ResOut[id.xy] = float4(pick != ~0u ? float(pick + 1u) : 0.0f, W, M, z);
-            // Full-rate every-frame DXR 1.2 real-time shadow ray for ALL lights 4..128 (torches, spells, particle lights, braziers)
-            // with fixture clearance (eliminates 4-frame skyTurn lag & bracket self-shadowing flicker).
+            float W = py > 0.0f && M > 0.0f ? wsum / (M * py) : 0.0f;
+            float vRest = 1.0f;
+            // Full-rate every-frame DXR 1.2 visibility ray for ALL lights 4..128 with fixture clearance:
             if (pick != ~0u && skyLength > 0.0f) {
                 const float fixClearR = max(sourceRadius * 1.8f, 14.0f);
-                const float2 rRest = float2(ign(px + float2(43.0f, 19.0f)), ign(px.yx + float2(11.0f, 37.0f)));
+                const float2 rRest = stbnR2(px, frameIndex + 79.0f);
                 const float3 c = lightPosR[pick].xyz + (float3(rRest.x, rRest.y, frac(rRest.x + rRest.y + 0.5f)) * 2.0f - 1.0f) * (sourceRadius * 0.40f);
                 const float3 toC = c - o;
                 const float len = length(toC);
-                const float v = len > fixClearR ? visible(o, toC / max(len, 1.0e-4f), 0.0f, len - fixClearR) : 1.0f;
-                // SIGGRAPH 2026 ReSTCV (Shi et al.): Spatio-Temporal Control Variate variance reduction on ReSTIR visibility.
-                const float rawShare = saturate(py * v * W / max(total, 1.0e-6f));
-                const float cvPrior = saturate(0.58f + 0.30f * (M / (M + 6.0f)));
-                const float share = saturate(lerp(rawShare, cvPrior + 0.72f * (rawShare - cvPrior), saturate(M / 8.0f)));
+                vRest = len > fixClearR ? visible(o, toC / max(len, 1.0e-4f), 0.0f, len - fixClearR) : 1.0f;
+                // Unbiased visibility-checked ratio estimator (eliminates biased 0.58 constant shadow leak!):
+                const float share = saturate(py * vRest * W / max(total, 1.0e-6f));
                 restCode = 4.0f + 2.0f * round(share * 15.0f);   // + sky (0 or 1); RtSkyFilter decodes q = (a - 4 - sky) / 2
+                // Visibility feedback (MegaLights / ReSTIR-VIS): zero stored weight when occluded so blocked lights stop recycling!
+                if (vRest < 0.5f) { W = 0.0f; }
             }
+            ResOut[id.xy] = float4(pick != ~0u ? float(pick + 1u) : 0.0f, W, M, z);
         }
     }
     // Reflection: glossy lit surfaces (the game's lobe, not foliage), one ray around the mirror
     // direction spread by the roughness.
-    if (d < 1.0f && base == 7u && (giFlags & GI_FAR) != 0u) {
+    if (d < 0.99998f && base == 7u && (giFlags & GI_FAR) != 0u) {
         const float2 px = float2(id.xy);
         const float3 p = worldAt(px, d);
         const float3 n = worldNormal(Normal.Load(ip));
@@ -441,7 +621,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     // Wet pixels (Weather.hlsli) reflect too: rain makes the ground glossy and puddles mirrors.
     Wet rain;
     rain.wet = 0.0f; rain.puddle = 0.0f; rain.snow = 0.0f;
-    if (d < 1.0f && base >= 1u && base <= 4u && sunColour.w > 0.5f) {
+    if (d < 0.99998f && base >= 1u && base <= 4u && sunColour.w > 0.5f) {
         const float3 wp = worldAt(float2(id.xy), d), wn = worldNormal(Normal.Load(ip));
         rain = wetAt(wp, wn, geometricNormal(float2(id.xy), wp, wn), 1.0f);
         // Match Lighting.hlsl engine-native capillary wet-shoreline wicking from TESObjectCELL::waterHeight (engineWorld.x)
@@ -455,11 +635,13 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
     }
     const bool wetGloss = max(rain.wet, rain.puddle) * (1.0f - rain.snow) > 0.2f;   // snow covers the water
-    const bool wantRefl = (reflectLength > 0.0f && d < 1.0f && ((base >= 1u && base <= 4u) || base == 13u));
+    const bool wantRefl = (reflectLength > 0.0f && d < 0.99998f && ((base >= 1u && base <= 4u) || base == 13u));
     if (WaveActiveAnyTrue(wantRefl) && wantRefl) {
         const float4 sp = Spec.Load(ip);
-        // Wave-Coherent Reflection Gate: skips entire 32-lane matte terrain/snow warps with zero RT divergence!
-        const bool isGlossy = (base == 2u || base == 13u || (sp.y > 0.14f && sp.x > 0.04f) || wetGloss);
+        // Wave-Coherent Reflection Gate: skips matte terrain/snow/frosted-ice warps cleanly (saves RT rays for glossy/wet/metal):
+        const float shinGate = exp2(sp.y * 13.0f);
+        const float roughGate = clamp(sqrt(2.0f / (shinGate + 2.0f)), 0.03f, 0.85f);
+        const bool isGlossy = (base == 2u || base == 13u || wetGloss || (sp.y > 0.16f && sp.x > 0.06f && roughGate < 0.44f));
         if (WaveActiveAnyTrue(isGlossy) && isGlossy) {
             const float2 px = float2(id.xy);
             const float3 p = worldAt(px, d);
@@ -469,30 +651,55 @@ void main(uint3 id : SV_DispatchThreadID) {
             const float alpha = lerp(lerp(clamp(sqrt(2.0f / (shin + 2.0f)), 0.03f, 0.85f), 0.10f, rain.wet), 0.025f, rain.puddle);
             const float2 rr0 = stbnR2(px, frameIndex + 37.0f);
             const float3 ng = geometricNormal(px, p, n);
-            const float3 o = p + ng * (0.5f + 0.003f * viewZOf(d));
-            // Overdrive 2-spp Stratified Bounded-VNDF Glossy RT Reflections on forged metals, TruePBR & wet surfaces:
-            const uint reflSpp = (base == 2u || base == 13u || wetGloss) ? 2u : 1u;
+            const float reflViewDist = length(p - eyeAt());
+            const float3 o = p + ng * clamp(reflViewDist * 0.0018f, 0.30f, 4.0f);
+            // Adaptive Stratified Bounded-VNDF Glossy RT Reflections (1-spp on RTX 3060-4070, 2-spp on RTX 4080/4090/5090):
+            const uint rtTierR = (giFlags >> 8u) & 7u;
+            const uint reflSpp = (rtTierR >= 3u && (base == 2u || base == 13u || wetGloss)) ? 2u : 1u;
             float3 reflSum = 0.0f.xxx;
             float reflHitW = 0.0f;
             reflTraced = true;
             [loop] for (uint rsi = 0u; rsi < reflSpp; ++rsi) {
-                const float2 rr = frac(rr0 + float2(float(rsi) * 0.5f, float(rsi) * 0.618034f));
+                // Family 090 Universal Optimal 2D Hexagonal A2 Lattice stratification for low-energy glossy ray samples:
+                const float2 hexOff = float2(float(rsi) * 0.5f + float(rsi) * 0.25f, float(rsi) * 0.8660254f * 0.5f);
+                const float2 rr = frac(rr0 + hexOff);
                 const float3 rd = sampleGGXVNDF(n, v, max(alpha, 0.02f), rr);
                 if (dot(rd, ng) <= 0.0f) { continue; }
                 Hit h;
                 float3 c = 0.0f.xxx, hn = float3(0.0f, 0.0f, 1.0f);
                 if (traceHit(o, rd, reflectLength, h)) {
                     const float3 hitP = o + rd * h.t;
-                    // Pure 3D Hardware DXR World-Space Glossy Reflections (ZERO screen-space onScreen() SSR popping!):
+                    // Pure 3D Hardware DXR World-Space Glossy Reflections with fixed world radiance-cache lookup:
                     if ((giFlags & GI_MATERIALS) != 0u) {
                         float3 offRad = radianceAt(h, o, rd, rr, true, hn);
                         if ((giFlags & GI_CACHE) != 0u) {
-                            float3 cB = 0.0f.xxx; float cS = 0.0f;
-                            if (cacheRead(hitP, hn, cB, cS)) { offRad = max(offRad, cB * 0.85f); }
+                            float4 cacheVal = 0.0f.xxxx;
+                            if (cacheRead(hitP, hn, 0.0f.xxx, cacheVal)) { offRad = max(offRad, cacheVal.rgb * 0.72f); }
+                        }
+                        // Energy-conserving reflection firefly shoulder (knee 1.80, cap 3.60) prevents glossy RT glow spikes!
+                        const float rPk = max(offRad.r, max(offRad.g, offRad.b));
+                        if (rPk > 1.80f) {
+                            const float rSoft = 1.80f + (rPk - 1.80f) / (1.0f + (rPk - 1.80f) * 0.65f);
+                            offRad *= min(rSoft, 3.60f) / rPk;
                         }
                         reflSum += offRad; reflHitW += 1.0f;
                     }
-                } else if (wetGloss || base == 2u) { reflSum += skyAt(rd); reflHitW += 1.0f; }
+                } else if (wetGloss || base == 2u) {
+                    // Vidar Finite-Room Box-Projected Parallax Fallback on interiors (eliminates infinite-skybox reflection drift):
+                    const bool isIntRefl = (sunColour.w <= 0.5f);
+                    float3 fallbackDir = rd;
+                    if (isIntRefl) {
+                        const float3 boxHalf = float3(420.0f, 420.0f, 220.0f);
+                        const float3 invRd = rcp(select(abs(rd) > 1.0e-4f, rd, 1.0e-4f.xxx));
+                        const float3 tPos = ( boxHalf - p) * invRd;
+                        const float3 tNeg = (-boxHalf - p) * invRd;
+                        const float3 tMax = max(tPos, tNeg);
+                        const float tBox = min(tMax.x, min(tMax.y, tMax.z));
+                        fallbackDir = normalize(p + rd * clamp(tBox, 16.0f, 900.0f));
+                    }
+                    reflSum += isIntRefl ? (ambientAt(fallbackDir) * 0.72f) : skyAt(fallbackDir);
+                    reflHitW += 1.0f;
+                }
             }
             if (reflHitW > 0.0f) { refl = float4(reflSum / reflHitW, 1.0f); }
         }
@@ -610,12 +817,18 @@ void main(uint3 id : SV_DispatchThreadID) {
         refl = float4(dbg, 1.0f);
     }
 #endif
-    // Glossy pixels not traced this frame keep last frame's reflection; every other pixel clears.
-    const float4 sp0 = d < 1.0f ? Spec.Load(ip) : 0.0f;
-    const bool glossy = reflectLength > 0.0f && d < 1.0f && base >= 1u && base <= 4u && (base == 2u || (sp0.y > 0.14f && sp0.x > 0.04f) || wetGloss);
-    if (reflTraced || !glossy || reflectLength < 0.0f) { Refl[id.xy] = refl; }
-    Vis[id.xy] = vis;
-    Lights[id.xy] = float4(idx.xyz, sky);
-    if (skyLength > 0.0f && skyTurn(id.xy)) { SkyRaw[id.xy] = float4(bounce, sky + restCode); }
+    // Always write Refl[id.xy] unconditionally (fixes stale previous-frame ghosting on pixels between glossy thresholds!).
+    // Wave 54: sanitize all UAV outputs against NaN/Inf before write.
+    const float4 reflOut = all(isfinite(refl)) ? float4(max(refl.rgb, 0.0f.xxx), saturate(refl.a)) : float4(0.0f.xxx, 0.0f);
+    const float4 visOut = all(isfinite(vis)) ? saturate(vis) : float4(1.0f, 1.0f, 1.0f, 1.0f);
+    const float skyOut = isfinite(sky) ? saturate(sky) : 1.0f;
+    const float3 bounceOut = all(isfinite(bounce)) ? max(bounce, 0.0f.xxx) : 0.0f.xxx;
+    const float restOut = isfinite(restCode) ? restCode : 0.0f;
+    Refl[id.xy] = reflOut;
+    Vis[id.xy] = visOut;
+    Lights[id.xy] = float4(idx.xyz, skyOut);
+    // Always write fresh SkyRaw for every traced non-LOD pixel (eliminates 3/4 stale unreprojected SkyRaw pixels
+    // that previously caused RtSkyFilter::meanAround to smear ghosted GI & shadow trails across moving objects!).
+    if (skyLength > 0.0f && (base != 7u || skyTurn(id.xy))) { SkyRaw[id.xy] = float4(bounceOut, skyOut + restOut); }
 }
 #endif

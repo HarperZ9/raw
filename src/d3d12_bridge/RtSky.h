@@ -27,7 +27,8 @@ class RtSky
 {
 public:
     // raw, A, B | raw, B, A (two parities) | bounce A, B, out | B, A, out | motion | the game's colour
-    static constexpr uint32_t Descriptors() { return 20; }   // + reservoirs: (A, B, motion) and (B, A, motion)
+    // + reservoirs: (A, B, motion) and (B, A, motion) | sun shadow history: (A, B) and (B, A)
+    static constexpr uint32_t Descriptors() { return 24; }
     // base: the first of this pass's descriptors in the shader-visible heap; the heap's descriptors 0
     // (depth) and 4 (the light-index output, as a UAV) are the shadow trace's.
     bool Create(ID3D12Device5* dev, ID3D12DescriptorHeap* heap, uint32_t base, UINT width, UINT height, std::string& err);
@@ -49,7 +50,7 @@ private:
     uint32_t m_base = 0, m_inc = 0;
     UINT m_w = 0, m_h = 0;
     bool m_reset = true;
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_raw, m_hist[2], m_bhist[2], m_bounce, m_res[2];
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_raw, m_hist[2], m_bhist[2], m_bounce, m_res[2], m_sunHist[2];
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_root;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_pso;
 };

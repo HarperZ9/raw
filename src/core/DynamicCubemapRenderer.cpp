@@ -170,6 +170,7 @@ struct alignas(16) CubemapCaptureCBData
     uint32_t screenHeight;
     uint32_t pad[2];
 };
+static_assert(sizeof(CubemapCaptureCBData) == 288u && alignof(CubemapCaptureCBData) == 16u, "CubemapCaptureCBData must be 288 bytes");
 
 struct alignas(16) MipGenCBData
 {
@@ -178,6 +179,7 @@ struct alignas(16) MipGenCBData
     uint32_t faceIndex;
     uint32_t pad;
 };
+static_assert(sizeof(MipGenCBData) == 16u && alignof(MipGenCBData) == 16u, "MipGenCBData must be 16 bytes");
 
 
 // ── Cubemap face view matrices (world-space) ─────────────────────────────

@@ -1,6 +1,7 @@
 // The game version and its address table (RAW engine runtime). Original work, MIT. See rt_version.h; the reader is
 // the shared src/common/raw_versions.h.
 #include "rt_version.h"
+#include "rt_zydis_offsets.h"
 
 #include <algorithm>
 #include <cstring>
@@ -15,8 +16,11 @@ namespace {
 
 raw::versions::Table g_table;
 uint32_t g_packed = 0;
+raw::versions::EngineProfile g_profile{};
 std::set<std::string> g_missing;
 std::mutex g_missingM;
+bool g_offsetsVerified = false;
+StartupOffsetVerification g_lastVerify{};
 
 struct SecRange { uint32_t begin = 0, end = 0; };
 
@@ -58,6 +62,7 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
         {".?AVBSCullingProcess@@",                 "vtable:BSCullingProcess"},
         {".?AVBSBatchRenderer@@",                  "vtable:BSBatchRenderer"},
         {".?AVBSShadowDirectionalLight@@",         "vtable:BSShadowDirectionalLight"},
+        {".?AVShadowSceneNode@@",                  "vtable:ShadowSceneNode"},
         {".?AVGridCellArray@@",                    "vtable:GridCellArray"},
         {".?AV?$SettingT@VINISettingCollection@@@@",     "__setting_ini"},
         {".?AV?$SettingT@VINIPrefSettingCollection@@@@", "__setting_prefs"},
@@ -149,20 +154,18 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
         }
     }
 
-    // 3. Stable structure offsets across SE/AE/GOG (1.5.97 through 1.7.x).
-    t.entries["off:TES::gridCells"] = {"offset", "runtime-stable", 0x78};
-    t.entries["off:TESObjectCELL::worldSpace"] = {"offset", "runtime-stable", 0x128};
-    t.entries["off:UI::menuMap"] = {"offset", "runtime-stable", 0x128};
-    t.entries["off:SkyrimVM::impl"] = {"offset", "runtime-stable", (exe.major > 1 || exe.minor >= 7) ? 0x210u : 0x200u};
+    // 3. Per-title ABI offsets from the detected Creation Engine profile (never assumes Skyrim offsets on FO4/Starfield).
+    if (exe.profile.offTesGridCells)   t.entries["off:TES::gridCells"]          = {"offset", "runtime-profile", exe.profile.offTesGridCells};
+    if (exe.profile.offCellWorldSpace) t.entries["off:TESObjectCELL::worldSpace"] = {"offset", "runtime-profile", exe.profile.offCellWorldSpace};
+    if (exe.profile.offUiMenuMap)      t.entries["off:UI::menuMap"]             = {"offset", "runtime-profile", exe.profile.offUiMenuMap};
+    if (exe.profile.offVmImpl)         t.entries["off:SkyrimVM::impl"]          = {"offset", "runtime-profile", exe.profile.offVmImpl};
 
-    // 4. Universal Address Library runtime loader (format 2 for 1.6.x AE/GOG, format 5 for 1.7.99+):
-    // Reads Data\SKSE\Plugins\versionlib-<major>-<minor>-<build>-<sub>.bin when present to resolve
-    // ALL engine singletons (Sky, TES, PlayerCamera, PlayerCharacter, UI, Calendar, BSGraphics,
-    // BSShaderManager, ProcessLists, Decal/Grass/ImageSpace/Water managers) on ANY AE/GOG version!
+    // 4. Universal Address Library runtime loader (SKSE for Skyrim SE/AE, F4SE for Fallout 4, SFSE for Starfield):
     uint32_t alCount = 0;
-    {
-        char alName[128];
-        std::snprintf(alName, sizeof alName, "Data\\SKSE\\Plugins\\versionlib-%u-%u-%u-%u.bin",
+    if (exe.profile.addrLibRelDir && exe.profile.addrLibRelDir[0] && exe.profile.gen == raw::versions::EngineGen::CE1_DX11) {
+        char alName[160];
+        std::snprintf(alName, sizeof alName, "%s%s%u-%u-%u-%u.bin",
+                      exe.profile.addrLibRelDir, exe.profile.addrLibPrefix,
                       exe.major, exe.minor, exe.build, exe.sub);
         std::ifstream f(gameDir + alName, std::ios::binary);
         if (f) {
@@ -197,11 +200,15 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
             size_t p = 0;
             int32_t fmt = 0;
             if (rd(p, fmt)) {
-                if (fmt == 5 && buf.size() >= 0x60) {
+                constexpr size_t kAddrLibFmt5CountOffset = 0x5Cu;
+                constexpr size_t kAddrLibFmt5TableOffset = 0x60u;
+                static_assert(kAddrLibFmt5TableOffset == kAddrLibFmt5CountOffset + sizeof(uint32_t),
+                              "Address Library v5 binary header count/table offset guard");
+                if (fmt == 5 && buf.size() >= kAddrLibFmt5TableOffset) {
                     uint32_t count = 0;
-                    std::memcpy(&count, buf.data() + 0x5C, sizeof(count));
-                    if (0x60ull + uint64_t(count) * 4ull <= buf.size()) {
-                        const uint32_t* offs = reinterpret_cast<const uint32_t*>(buf.data() + 0x60);
+                    std::memcpy(&count, buf.data() + kAddrLibFmt5CountOffset, sizeof(count));
+                    if (kAddrLibFmt5TableOffset + uint64_t(count) * 4ull <= buf.size()) {
+                        const uint32_t* offs = reinterpret_cast<const uint32_t*>(buf.data() + kAddrLibFmt5TableOffset);
                         for (const auto& [id, meta] : idMap) {
                             if (id < count && offs[id] != 0) {
                                 t.entries[meta.first] = {meta.second, "runtime-addrlib", offs[id]};
@@ -251,9 +258,10 @@ bool BuildUniversalRuntimeTable(const Image& img, const std::string& gameDir, co
     if (vtCount == 0 && settingCount == 0 && alCount == 0) return false;
     if (why) {
         char buf[256];
+        const char* hostName = exe.exeName.empty() ? "CreationEngine.exe" : exe.exeName.c_str();
         std::snprintf(buf, sizeof buf,
-                      "SkyrimSE.exe %s (universal runtime scan: %u vtables, %u settings, %u addrlib singletons resolved)",
-                      exe.Version().c_str(), vtCount, settingCount, alCount);
+                      "%s %s [%s] (universal runtime scan: %u vtables, %u settings, %u addrlib singletons resolved)",
+                      hostName, exe.Version().c_str(), exe.profile.displayName, vtCount, settingCount, alCount);
         *why = buf;
     }
     *out = std::move(t);
@@ -278,6 +286,7 @@ RunningExe ReadRunningExe(const Image&) {
 
 bool LoadVersionTable(const Image& img, const std::string& gameDir, std::string* why) {
     const auto exe = raw::versions::ReadRunningExe();
+    g_profile = exe.profile;
     if (raw::versions::FindTable(gameDir + "raw_versions", exe, &g_table, why)) {
         g_packed = exe.Packed();
         return true;
@@ -291,6 +300,7 @@ bool LoadVersionTable(const Image& img, const std::string& gameDir, std::string*
 
 const std::string& TableVersion() { return g_table.version; }
 uint32_t RuntimeVersion() { return g_packed; }
+const raw::versions::EngineProfile& ActiveProfile() { return g_profile; }
 
 uint32_t Addr(const char* name) {
     if (const uint32_t v = g_table.Get(name)) return v;
@@ -347,15 +357,28 @@ uint32_t ResolveDeferredSingletons(const Image& img) {
         {".?AVBGSGrassManager@@",   "BGSGrassManager::GetSingleton"},
         {".?AVImageSpaceManager@@", "ImageSpaceManager::GetSingleton"},
         {".?AVTESWaterSystem@@",    "TESWaterSystem::GetSingleton"},
+        {".?AVShadowSceneNode@@",   "ShadowSceneNode::Singleton"},
+    };
+    // Also map vtables needed for live pointer-graph structural offset discovery (eliminates hardcoded offsets across CE1/CE1.5/CE2):
+    static const std::pair<const char*, const char*> kProbeVtables[] = {
+        {".?AVGridCellArray@@",            "vt_GridCellArray"},
+        {".?AVShadowSceneNode@@",          "vt_ShadowSceneNode"},
+        {".?AVBSShadowDirectionalLight@@", "vt_BSShadowDirLight"},
+        {".?AVNiDirectionalLight@@",       "vt_NiDirLight"},
+        {".?AVTESWorldSpace@@",            "vt_TESWorldSpace"},
+        {".?AVTESObjectCELL@@",            "vt_TESObjectCELL"},
     };
     std::unordered_map<std::string, const char*> needed;
     for (const auto& kv : kSingletonClasses) {
         if (g_table.Get(kv.second) == 0) needed[kv.first] = kv.second;
     }
-    if (needed.empty()) return 0;
+    std::unordered_map<std::string, const char*> probeWanted;
+    for (const auto& kv : kProbeVtables) probeWanted[kv.first] = kv.second;
+    if (needed.empty() && probeWanted.empty()) return 0;
 
-    // 1. Find primary vtable VAs for the missing singleton classes in .rdata.
+    // 1. Find primary vtable VAs for missing singletons and structural probe targets in .rdata.
     std::unordered_map<uint64_t, const char*> vtVaToKey;
+    std::unordered_map<std::string, uint64_t> probeVtVa;
     for (uint32_t rva = (rdata.begin + 7u) & ~7u; rva + 16u <= rdata.end; rva += 8u) {
         const uint64_t colVa = *reinterpret_cast<const uint64_t*>(img.base + rva);
         if (colVa < baseAddr + rdata.begin || colVa + 24u > baseAddr + rdata.end) continue;
@@ -374,26 +397,163 @@ uint32_t ResolveDeferredSingletons(const Image& img) {
             nameBuf[len] = mangled[len];
             ++len;
         }
-        const auto it = needed.find(nameBuf);
-        if (it != needed.end()) vtVaToKey[baseAddr + rva + 8u] = it->second;
+        const uint64_t vtVa = baseAddr + rva + 8u;
+        if (const auto it = needed.find(nameBuf); it != needed.end()) vtVaToKey[vtVa] = it->second;
+        if (const auto pt = probeWanted.find(nameBuf); pt != probeWanted.end()) probeVtVa[pt->second] = vtVa;
     }
-    if (vtVaToKey.empty()) return 0;
 
     // 2. Scan .data for global pointers pointing to a live heap instance whose first QWORD is that vtable VA.
     uint32_t resolved = 0;
-    for (uint32_t rva = (data.begin + 7u) & ~7u; rva + 8u <= data.end; rva += 8u) {
-        const uint64_t ptr = *reinterpret_cast<const uint64_t*>(img.base + rva);
-        if (ptr < 0x10000ull || ptr > 0x00007FFFFFFFFFFFull || (ptr & 7ull) != 0) continue;
-        if (ptr >= baseAddr && ptr < baseAddr + img.sizeOfImage) continue;   // skip intra-image pointers
-        uint64_t firstQw = 0;
-        if (!SafeReadU64(static_cast<uintptr_t>(ptr), firstQw)) continue;
-        const auto it = vtVaToKey.find(firstQw);
-        if (it != vtVaToKey.end() && g_table.Get(it->second) == 0) {
-            g_table.entries[it->second] = {"global", "runtime-deferred-rtti", rva};
-            ++resolved;
+    if (!vtVaToKey.empty()) {
+        for (uint32_t rva = (data.begin + 7u) & ~7u; rva + 8u <= data.end; rva += 8u) {
+            const uint64_t ptr = *reinterpret_cast<const uint64_t*>(img.base + rva);
+            if (ptr < 0x10000ull || ptr > 0x00007FFFFFFFFFFFull || (ptr & 7ull) != 0) continue;
+            if (ptr >= baseAddr && ptr < baseAddr + img.sizeOfImage) continue;   // skip intra-image pointers
+            uint64_t firstQw = 0;
+            if (!SafeReadU64(static_cast<uintptr_t>(ptr), firstQw)) continue;
+            const auto it = vtVaToKey.find(firstQw);
+            if (it != vtVaToKey.end() && g_table.Get(it->second) == 0) {
+                g_table.entries[it->second] = {"global", "runtime-deferred-rtti", rva};
+                ++resolved;
+            }
+        }
+    }
+
+    // 3. Zero-hardcode live pointer-graph structural offset discovery:
+    // Probes live heap instances for member pointers whose target vtable matches a known RTTI class.
+    auto probeFieldOffset = [&](uint64_t objAddr, uint32_t maxBytes, uint64_t wantVtVa, const char* offKey) -> uint64_t {
+        if (!objAddr || !wantVtVa) return 0;
+        for (uint32_t off = 0; off + 8u <= maxBytes; off += 8u) {
+            uint64_t child = 0, childVt = 0;
+            if (!SafeReadU64(static_cast<uintptr_t>(objAddr + off), child)) break;
+            if (child < 0x10000ull || child > 0x00007FFFFFFFFFFFull || (child & 7ull) != 0) continue;
+            if (!SafeReadU64(static_cast<uintptr_t>(child), childVt)) continue;
+            if (childVt == wantVtVa) {
+                g_table.entries[offKey] = {"offset", "runtime-rtti-probe", off};
+                ++resolved;
+                return child;
+            }
+        }
+        return 0;
+    };
+
+    if (const uint32_t tesRva = g_table.Get("TES::Singleton"); tesRva != 0) {
+        uint64_t tesObj = 0;
+        if (SafeReadU64(baseAddr + tesRva, tesObj) && tesObj > 0x10000ull) {
+            probeFieldOffset(tesObj, 0x280u, probeVtVa["vt_GridCellArray"], "off:TES::gridCells");
+            if (const uint64_t cellObj = probeFieldOffset(tesObj, 0x280u, probeVtVa["vt_TESObjectCELL"], "off:TES::interiorCell")) {
+                probeFieldOffset(cellObj, 0x200u, probeVtVa["vt_TESWorldSpace"], "off:TESObjectCELL::worldSpace");
+            }
+        }
+    }
+    if (const uint32_t ssnRva = g_table.Get("ShadowSceneNode::Singleton"); ssnRva != 0) {
+        uint64_t ssnObj = 0;
+        if (SafeReadU64(baseAddr + ssnRva, ssnObj) && ssnObj > 0x10000ull) {
+            probeFieldOffset(ssnObj, 0x380u, probeVtVa["vt_BSShadowDirLight"], "off:ShadowSceneNode::shadowDirLight");
+            probeFieldOffset(ssnObj, 0x380u, probeVtVa["vt_NiDirLight"],      "off:ShadowSceneNode::sunLight");
+        }
+    }
+
+    // 4. Zydis virtual-getter scalar offset scan on RTTI-discovered vtables (records decoded scalar slots):
+    if (const uint64_t cellVt = probeVtVa["vt_TESObjectCELL"]; cellVt > baseAddr) {
+        std::vector<std::pair<uint32_t, DecodedFieldOffset>> getters;
+        const uint32_t cellVtRva = static_cast<uint32_t>(cellVt - baseAddr);
+        ScanVtableGetters(img, cellVtRva, 96u, &getters);
+        for (const auto& [slot, dec] : getters) {
+            char key[64];
+            std::snprintf(key, sizeof key, "zydis:TESObjectCELL::slot_%u", slot);
+            if (g_table.Get(key) == 0 && dec.offset > 0) {
+                g_table.entries[key] = {"offset", "runtime-zydis-getter", dec.offset};
+                ++resolved;
+            }
         }
     }
     return resolved;
+}
+
+bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut) {
+    // Build verification rules strictly from loaded table entries so every struct offset is cross-checked
+    // against real x86-64 machine code in the running executable before any live memory read/write.
+    const OffsetVerifyRule kRules[] = {
+        {"TESObjectCELL::cellFlags",          Addr("fn:TESObjectCELL::GetExteriorWaterHeight"), Off("off:TESObjectCELL::cellFlags"),          2, false},
+        {"TESObjectCELL::waterHeight",        Addr("fn:TESObjectCELL::GetExteriorWaterHeight"), Off("off:TESObjectCELL::waterHeight"),        4, true},
+        {"TESObjectCELL::worldSpace",         Addr("fn:TESObjectCELL::GetExteriorWaterHeight"), Off("off:TESObjectCELL::worldSpace"),         8, false},
+        {"TESObjectCELL::exteriorData",       Addr("fn:TESObjectCELL::GetGridX"),               Off("off:TESObjectCELL::exteriorData"),       8, false},
+        {"TESWorldSpace::parentWorld",        Addr("fn:TESWorldSpace::GetDefaultLandHeight"),   Off("off:TESWorldSpace::parentWorld"),        8, false},
+        {"TESWorldSpace::parentUseFlags",     Addr("fn:TESWorldSpace::GetDefaultLandHeight"),   Off("off:TESWorldSpace::parentUseFlags"),     1, false},
+        {"TESWorldSpace::defaultLandHeight",  Addr("fn:TESWorldSpace::GetDefaultLandHeight"),   Off("off:TESWorldSpace::defaultLandHeight"),  4, true},
+        {"TESWorldSpace::defaultWaterHeight", Addr("fn:TESWorldSpace::GetDefaultWaterHeight"),  Off("off:TESWorldSpace::defaultWaterHeight"), 4, true},
+        {"TESObjectLAND::loadedData",         Addr("fn:TESObjectLAND::GetWorldX"),              Off("off:TESObjectLAND::loadedData"),         8, false},
+        {"LoadedLandData::cellX",             Addr("fn:TESObjectLAND::GetWorldX"),              Off("off:LoadedLandData::cellX"),             4, false},
+        {"LoadedLandData::cellY",             Addr("fn:TESObjectLAND::GetWorldY"),              Off("off:LoadedLandData::cellY"),             4, false},
+        {"LoadedLandData::heights",           Addr("fn:TESObjectLAND::GetHeight"),              Off("off:LoadedLandData::heights"),           4, true},
+        {"LoadedLandData::baseHeight",        Addr("fn:TESObjectLAND::GetHeight"),              Off("off:LoadedLandData::baseHeight"),        4, true},
+        {"LoadedLandData::minHeight",         Addr("fn:TESObjectLAND::GetMinMaxHeight"),        Off("off:LoadedLandData::minHeight"),         4, true},
+        {"LoadedLandData::maxHeight",         Addr("fn:TESObjectLAND::GetMinMaxHeight"),        Off("off:LoadedLandData::maxHeight"),         4, true},
+        {"GridCellArray::length",             Addr("fn:GridArray::DetachAll"),                  Off("off:GridCellArray::length"),             4, false},
+        {"NiCamera::frustumNear",             Addr("fn:NiCamera::UpdateWorldData"),             Off("off:NiCamera::frustumNear"),             4, true},
+        {"NiCamera::frustumFar",              Addr("fn:NiCamera::UpdateWorldData"),             Off("off:NiCamera::frustumFar"),              4, true},
+        {"ScrapHeap::baseAddress",            Addr("fn:ScrapHeap::ContainsBlock"),              Off("off:ScrapHeap::baseAddress"),            8, false},
+        {"ScrapHeap::endAddress",             Addr("fn:ScrapHeap::ContainsBlock"),              Off("off:ScrapHeap::endAddress"),             8, false},
+        {"TES::interiorCell",                 Addr("fn:BGSTerrainManager::Update"),             Off("off:TES::interiorCell"),                 8, false},
+        {"PlayerCamera::freeState",           Addr("fn:BGSTerrainManager::Update"),             Off("off:PlayerCamera::freeState"),           8, false},
+        {"PlayerCamera::currentState",        Addr("fn:BGSTerrainManager::Update"),             Off("off:PlayerCamera::currentState"),        8, false},
+        {"BGSTerrainChunk::landMesh",         Addr("fn:BGSTerrainChunk::Hide"),                 Off("off:BGSTerrainChunk::landMesh"),         8, false},
+        {"BGSTerrainChunk::waterMesh",        Addr("fn:BGSTerrainChunk::Hide"),                 Off("off:BGSTerrainChunk::waterMesh"),        8, false},
+        {"Calendar::gameYear",                Addr("fn:Calendar::GetYear"),                     Off("off:Calendar::gameYear"),                8, false},
+        {"Calendar::gameMonth",               Addr("fn:Calendar::GetMonth"),                    Off("off:Calendar::gameMonth"),               8, false},
+        {"Calendar::gameDay",                 Addr("fn:Calendar::GetDay"),                      Off("off:Calendar::gameDay"),                 8, false},
+        {"Calendar::gameHour",                Addr("fn:Calendar::GetHour"),                     Off("off:Calendar::gameHour"),                8, false},
+        {"Calendar::gameDaysPassed",          Addr("fn:Calendar::GetDaysPassed"),               Off("off:Calendar::gameDaysPassed"),          8, false},
+        {"Calendar::timeScale",               Addr("fn:Calendar::GetTimeScale"),                Off("off:Calendar::timeScale"),               8, false},
+        {"TESGlobal::value",                  Addr("fn:Calendar::GetHour"),                     Off("off:TESGlobal::value"),                  4, true},
+        {"HitData::weapon",                   Addr("fn:HitData::Populate"),                     Off("off:HitData::weapon"),                   8, false},
+        {"HitData::totalDamage",              Addr("fn:HitData::Populate"),                     Off("off:HitData::totalDamage"),              4, true},
+        {"HitData::flags",                    Addr("fn:HitData::PopulateMelee"),                Off("off:HitData::flags"),                    4, false},
+        {"TESObjectREFR::loadedData",         Addr("fn:TESObjectREFR::Get3D2"),                 Off("off:TESObjectREFR::loadedData"),         8, false},
+        {"Actor::actorStateFlags",            Addr("fn:SneakDetectionCalc"),                    Off("off:Actor::actorStateFlags"),            4, false},
+        {"BSTimer::delta",                    Addr("fn:BSTimer::SetGlobalTimeMultiplier"),      Off("off:BSTimer::delta"),                    4, true},
+        {"BSTimer::useGlobalTimeTarget",      Addr("fn:BSTimer::SetGlobalTimeMultiplier"),      Off("off:BSTimer::useGlobalTimeTarget"),      1, false},
+        {"PlayerCamera::worldFOV",            Addr("fn:PlayerCamera::Ctor"),                    Off("off:PlayerCamera::worldFOV"),            4, true},
+        {"PlayerCamera::firstPersonFOV",      Addr("fn:PlayerCamera::Ctor"),                    Off("off:PlayerCamera::firstPersonFOV"),      4, true},
+    };
+    g_lastVerify = VerifyCriticalOffsets(img, kRules, sizeof(kRules) / sizeof(kRules[0]));
+    // Fail-closed: if ANY rule failed, lock out all struct mutations!
+    g_offsetsVerified = !g_lastVerify.failClosed && (g_lastVerify.checked == 0 || g_lastVerify.passed == g_lastVerify.checked);
+
+    if (reportOut) {
+        char buf[320];
+        std::snprintf(buf, sizeof buf,
+                      "zydis-verify: %u/%u binary struct offsets verified (%s)",
+                      g_lastVerify.passed, g_lastVerify.checked,
+                      g_lastVerify.failClosed ? "FAIL-CLOSED: WRITES LOCKED" : "OK");
+        std::string s(buf);
+        if (g_lastVerify.failClosed) {
+            s += " [mismatches:";
+            for (const auto& r : g_lastVerify.results) {
+                if (!r.matched) {
+                    char m[128];
+                    std::snprintf(m, sizeof m, " %s@fn=0x%X(want+0x%X)", r.name.c_str(), r.fnRva, r.expectedOffset);
+                    s += m;
+                }
+            }
+            s += "]";
+        }
+        *reportOut = std::move(s);
+    }
+    return g_offsetsVerified;
+}
+
+bool AreBinaryOffsetsVerified() { return g_offsetsVerified; }
+
+std::string BinaryOffsetVerificationJson() {
+    char buf[256];
+    std::snprintf(buf, sizeof buf,
+                  "{\"cmd\":\"verify_offsets\",\"checked\":%u,\"passed\":%u,\"failed\":%u,\"fail_closed\":%s,\"writes_allowed\":%s}",
+                  g_lastVerify.checked, g_lastVerify.passed, g_lastVerify.failed,
+                  g_lastVerify.failClosed ? "true" : "false",
+                  g_offsetsVerified ? "true" : "false");
+    return buf;
 }
 
 }  // namespace raw::rt

@@ -1,4 +1,6 @@
 #include "ContextHooksShared.h"
+#include "../dx12/translate/Translate.h"
+#include "../core/dxbc/GBufferPatch.h"
 
 namespace SB::Proxy
 {
@@ -122,6 +124,32 @@ void STDMETHODCALLTYPE WrappedContext::CSSetShader(ID3D11ComputeShader* pShader,
 //  Draw calls (HOOKED)
 // ============================================================================
 
+void WrappedContext::RecordLiveDrawClassification(uint32_t indexOrVertexCount, bool indexed, bool transformedActive)
+{
+    if (indexOrVertexCount <= 6u) return; // fullscreen quad / UI strip
+    const bool triTopo = (m_drawBindState.topology == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST ||
+                          m_drawBindState.topology == D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP ||
+                          m_drawBindState.topology == D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED);
+    if (!triTopo) return;
+
+    raw::dxbc::material::DrawClassifyInput in{};
+    in.materialBase   = indexed ? raw::dxbc::material::Lit : raw::dxbc::material::Landscape;
+    in.primitiveCount = indexOrVertexCount / 3u;
+    in.vbStride       = m_drawBindState.vb0Stride;
+    in.srvSignature   = m_drawBindState.psSrvHash ^ reinterpret_cast<uintptr_t>(m_currentPS);
+    in.hasSkinning    = (m_drawBindState.vb0Stride >= 52u);
+    const auto cls    = raw::dxbc::material::ClassifyLiveDraw14(in);
+    const uint8_t id  = static_cast<uint8_t>(cls);
+    if (id <= raw::dxbc::material::kAssetClass14Count) {
+        ++m_classDrawHistogram[id];
+    }
+    if (transformedActive && id != 0u) {
+        ++m_transformedDrawCalls;
+    } else {
+        ++m_vanillaDrawCalls;
+    }
+}
+
 void STDMETHODCALLTYPE WrappedContext::Draw(UINT VertexCount, UINT StartVertexLocation)
 {
     if (PG_IsSafeMode()) { m_real->Draw(VertexCount, StartVertexLocation); return; }
@@ -129,6 +157,7 @@ void STDMETHODCALLTYPE WrappedContext::Draw(UINT VertexCount, UINT StartVertexLo
     if (g_frameLedgerArmed) FrameLedgerHooks::OnDraw(m_real, "Draw", VertexCount, 1);
 
     ++m_drawCalls;
+    RecordLiveDrawClassification(VertexCount, false, g_gbufferActive);
     RenderPhaseDetector::Get().OnDraw(VertexCount, false);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(VertexCount, 1);
@@ -149,6 +178,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
     if (g_frameLedgerArmed) FrameLedgerHooks::OnDraw(m_real, "DrawIndexed", IndexCount, 1);
 
     ++m_drawCalls;
+    RecordLiveDrawClassification(IndexCount, true, g_gbufferActive);
     RenderPhaseDetector::Get().OnDraw(IndexCount, true);
     for (auto& cb : g_drawCallbacks)
         if (cb) cb(IndexCount, 1);
@@ -162,6 +192,7 @@ void STDMETHODCALLTYPE WrappedContext::DrawIndexed(UINT IndexCount, UINT StartIn
     if (g_sceneLightsActive) GameComposite_BeforeDraw(m_real, IndexCount);
     if (IndexCount <= 6) Tonemap_BeforeDraw(m_real);   // a full-screen quad at most
     m_real->DrawIndexed(IndexCount, StartIndexLocation, BaseVertexLocation);
+    if (g_gbufferActive) raw::tx::SetDrawWaterHint(m_real, false);
     if (g_sceneLightsActive) GameComposite_AfterDraw(m_real);
     Tonemap_AfterDraw(m_real);
 }

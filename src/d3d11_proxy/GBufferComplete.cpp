@@ -2,6 +2,7 @@
 // header. Original work, MIT.
 #include "GBufferState.h"
 #include "ProxyLog.h"
+#include "../dx12/translate/Translate.h"
 
 #include <cstring>
 #include <string>
@@ -146,6 +147,8 @@ bool GBuffer_OnTargets(ID3D11DeviceContext* real, UINT n, ID3D11RenderTargetView
     s.span = Classify(s, real, n, rtvs, dsv);
     s.dirty = true;
     if (s.span == Span::None) {
+        if (s.lastDrawWater) { s.lastDrawWater = false; raw::tx::SetDrawWaterHint(real, false); }
+        if (s.lastDrawSkipSubdiv) { s.lastDrawSkipSubdiv = false; raw::tx::SetDrawSkipSubdivHint(real, false); }
         if (wasOpen && s.substituted) {
             // Back to the game's own shader and blend state.
             real->PSSetShader(s.gamePs, nullptr, 0);

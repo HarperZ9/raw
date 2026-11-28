@@ -41,6 +41,7 @@ struct CreateParams {
     uint32_t segmentDraws = 256;   // draws a worker's segment takes
     uint32_t segmentMin = 64;      // a shorter run between other calls stays on the application's thread
     bool predictRuns = true;       // a run short in the last frame goes straight to the list (off: every run is recorded)
+    bool geometrySubdiv = false;   // live format-preserving 1->4 curved PN-Triangle GPU uplift for static 3D meshes
 };
 
 struct Stats {
@@ -51,6 +52,8 @@ struct Stats {
     uint64_t barriers = 0;
     uint64_t draws = 0;
     uint64_t unsupportedCalls = 0; // calls answered E_NOTIMPL or ignored
+    uint64_t subdivMeshes = 0;     // unique static meshes uplifted 4x via curved PN-Triangles
+    uint64_t subdivDraws = 0;      // total draw calls rendered with 4x subdivided geometry
 };
 
 HRESULT CreateDevice(const CreateParams& params, ID3D11Device** device,
@@ -103,5 +106,21 @@ void HoldView(ID3D11ShaderResourceView* view, int delta);
 // The D3D12 device and direct queue, for a renderer that adopts them
 // (superframe native/raw/rhi/host.hpp, HostDevice). No reference is added.
 void GetNative(ID3D11Device* device, void** d3d12Device, void** d3d12Queue);
+
+// Live runtime control of TxSubdiv curved PN-Triangle curvature, 3D volumetric snowpack buildup, and micro-relief.
+void SetSubdivParams(ID3D11Device* device, float curvatureGain, float snowDepthU, float displaceAmp);
+
+// Wave 35: Live runtime planetary ocean wave & dual-moon tidal state for 3D geometric water vertex displacement inside raw::tx.
+void SetWaterWaveState(ID3D11Device* device, float simTimeSec, float gravityMps2, float tideHeightU,
+                       float beaufort, float swellDirX, float swellDirY);
+// Marks whether the next DrawIndexed on this raw::tx context is a Water surface draw (triggers 1->16/1->4 live 3D wave displacement).
+void SetDrawWaterHint(ID3D11DeviceContext* context, bool isWater);
+// Marks whether the next DrawIndexed must skip TxSubdiv (structurally excludes Landscape & DistantLod terrain chunks).
+void SetDrawSkipSubdivHint(ID3D11DeviceContext* context, bool skip);
+
+// Looks up the cached 4x curved/snowpack-lifted D3D12 buffers for the currently bound draw so DXR 1.2 BLAS
+// builds match the subdivided on-screen silhouette. Adds a COM reference to outVb and outIb when returning true.
+bool PeekSubdivMesh(ID3D11DeviceContext* context, UINT indexCount, UINT startIndex, INT baseVertex,
+                    ID3D12Resource** outVb, ID3D12Resource** outIb, UINT* outIndexCount, UINT* outVertCount);
 
 }  // namespace raw::tx

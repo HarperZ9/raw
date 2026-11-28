@@ -95,6 +95,12 @@ bool ReadLight(const uint8_t* bsl, uint32_t flags, EngineLight* L, std::string* 
     if (!bsl) return false;
     const uint8_t* ni = At<const uint8_t*>(bsl, 0x48);
     if (!ni) return false;
+    constexpr uintptr_t kNiLightWorldTransOffset  = 0xA0u;
+    constexpr uintptr_t kNiLightDiffuseOffset     = 0x11Cu;
+    constexpr uintptr_t kNiLightRadiusOffset      = 0x128u;
+    constexpr uintptr_t kNiLightFadeOffset        = 0x134u;
+    static_assert(kNiLightDiffuseOffset < kNiLightRadiusOffset && kNiLightRadiusOffset < kNiLightFadeOffset,
+                  "NiLight field offset ordering guard");
     if (flags & 4) {
         // NiDirectionalLight: world.rotate (+0x7C) column 0 is light travel direction; negate for vector toward sun/moon.
         const float dx = -At<float>(ni, 0x7C + 0);
@@ -105,13 +111,13 @@ bool ReadLight(const uint8_t* bsl, uint32_t flags, EngineLight* L, std::string* 
         else { L->pos[0] = L->pos[1] = L->pos[2] = 0.0f; }
     } else {
         // the NiLight's world translation (NiAVObject world transform +0x7C, translation +0x24); BSLight +0x50 read zero
-        std::memcpy(L->pos, ni + 0xA0, 12);
+        std::memcpy(L->pos, ni + kNiLightWorldTransOffset, 12);
     }
-    const float fade = At<float>(ni, 0x134);
+    const float fade = At<float>(ni, kNiLightFadeOffset);
     float diffuse[3];
-    std::memcpy(diffuse, ni + 0x11C, 12);
+    std::memcpy(diffuse, ni + kNiLightDiffuseOffset, 12);
     for (int i = 0; i < 3; ++i) L->color[i] = diffuse[i] * fade;
-    L->radius = At<float>(ni, 0x128);
+    L->radius = At<float>(ni, kNiLightRadiusOffset);
     L->fade = fade;
     L->flags = flags | (bsl[0x44] ? 1u : 0u);
     L->pad = 0;
@@ -159,15 +165,23 @@ void AddEmitters(Snapshot* s) {
 }
 
 bool Read(Snapshot* s) {
+    constexpr uintptr_t kShaderStateTimersOffset       = 0x20u;
+    constexpr uintptr_t kShaderStateGridOffset         = 0xB0u;
+    constexpr uintptr_t kShaderStateAmbientSpecOffset  = 0xFCu;
+    constexpr uintptr_t kShaderStateCharLightOffset    = 0x10Cu;
+    constexpr uintptr_t kSsnActiveLightsArrayOffset    = 0x130u;
+    constexpr uintptr_t kSsnShadowCastersArrayOffset   = 0x230u;
+    static_assert(kShaderStateCharLightOffset == kShaderStateAmbientSpecOffset + 16u,
+                  "BSGraphics::RendererShadowState charLight follows ambientSpec");
     __try {
         if (!kShaderState || !kGraphicsState) return false;
         const uint8_t* st = g_base + kShaderState;
-        std::memcpy(s->timers, st + 0x20, sizeof s->timers);
+        std::memcpy(s->timers, st + kShaderStateTimersOffset, sizeof s->timers);
         s->interior = st[0x44] != 0;
-        std::memcpy(s->grid, st + 0xB0, 8);
+        std::memcpy(s->grid, st + kShaderStateGridOffset, 8);
         s->technique = At<uint32_t>(st, 0xBC);
-        std::memcpy(s->ambientSpec, st + 0xFC, 16);
-        std::memcpy(s->charLight, st + 0x10C, 16);
+        std::memcpy(s->ambientSpec, st + kShaderStateAmbientSpecOffset, 16);
+        std::memcpy(s->charLight, st + kShaderStateCharLightOffset, 16);
         s->inWater = At<uint32_t>(st, 0x128);
         s->waterIntersect = At<float>(st, 0x144);
         s->insideFrame = (g_base + kGraphicsState)[0x50] != 0;
@@ -177,7 +191,7 @@ bool Read(Snapshot* s) {
         if (ssn) {
             EngineLight sun{};
             if (ReadLight(At<const uint8_t*>(ssn, 0x200), 4, &sun)) { sun.pad = s->inWater; Push(s, sun, nullptr, "sun"); }
-            s->active = ReadArray(ssn + 0x130, 0, s);
+            s->active = ReadArray(ssn + kSsnActiveLightsArrayOffset, 0, s);
             // Engine-level dynamic shadowcaster & physical blackbody flame-flicker ownership:
             // 1) Promote every active point/torch/spell light in ShadowSceneNode to shadow-casting status (flag 2).
             // 2) Smooth Skyrim's harsh 2011 linear triangle flicker on fire/torch lights (kLightFire) via per-light
@@ -206,8 +220,8 @@ bool Read(Snapshot* s) {
                 }
             }
             // shadow casters are also in the active list: mark them there, add any that are not
-            const auto* data = At<const uint8_t* const*>(ssn + 0x230, 0x00);
-            const uint32_t n = std::min<uint32_t>(At<uint32_t>(ssn + 0x230, 0x10), 128);
+            const auto* data = At<const uint8_t* const*>(ssn + kSsnShadowCastersArrayOffset, 0x00);
+            const uint32_t n = std::min<uint32_t>(At<uint32_t>(ssn + kSsnShadowCastersArrayOffset, 0x10), 128);
             s->casters = data ? n : 0;
             for (uint32_t i = 0; data && i < n; ++i) {
                 EngineLight L{};

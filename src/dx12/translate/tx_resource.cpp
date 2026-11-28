@@ -22,7 +22,10 @@ void DestroyCore(Device* dev, ResCore& core)
     Retire r;
     if (core.store == Store::Renamed && core.chunk.res) r.chunks.push_back(core.chunk);
     if (core.mapChunk.res) r.chunks.push_back(core.mapChunk);
-    if (core.tr) r.keep.push_back(std::move(core.tr));
+    if (core.tr) {
+        if (dev->geometrySubdiv && core.IsBuffer()) dev->subdiv.InvalidateSource(core.tr.get(), r);
+        r.keep.push_back(std::move(core.tr));
+    }
     dev->RetireLater(std::move(r));
 }
 

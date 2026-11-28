@@ -3,6 +3,10 @@
 #include "RtSceneDetail.h"
 #include "rt_shadow.h"   // kDxil_rt_shadow (dxc, cs_6_6)
 #include "rt_shadow_debug.h"   // kDxil_rt_shadow_debug: the same with the debug views (RtDebug)
+#ifdef RAW_HAS_SM69_DXIL
+#include "rt_shadow_69.h"        // kDxil_rt_shadow_69 (dxc 1.9+, native cs_6_9 DXIL 1.9)
+#include "rt_shadow_debug_69.h"  // kDxil_rt_shadow_debug_69 (dxc 1.9+, native cs_6_9)
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -20,7 +24,10 @@ RtScene::~RtScene()
         WaitForSingleObject(e, 5000);
         CloseHandle(e);
     }
-    for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
+    for (Mesh& m : m_meshes) {
+        if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release();
+        if (m.subdivVb) m.subdivVb->Release(); if (m.subdivIb) m.subdivIb->Release();
+    }
     for (RtDraw& d : m_draws) ReleaseRtDraw(d);
 }
 
@@ -82,15 +89,52 @@ bool RtScene::Pipeline(std::string& err)
     p[13].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; p[13].Descriptor = {6, 0};
     p[14].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; p[14].Constants = {2, 0, 12};
     p[15].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; p[15].DescriptorTable = {2, resv};
-    D3D12_ROOT_SIGNATURE_DESC rs{16, p, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_FEATURE_DATA_D3D12_OPTIONS o0{};
+    const bool tier3 = SUCCEEDED(m_dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o0, sizeof o0)) &&
+                       o0.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3;
+    D3D12_ROOT_SIGNATURE_DESC rs{16, p, 0, nullptr,
+                                 tier3 ? D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED
+                                       : D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ComPtr<ID3DBlob> blob, errs;
     if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
-        err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";
-        return false;
+        rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+        blob.Reset(); errs.Reset();
+        if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs))) {
+            err = errs ? static_cast<const char*>(errs->GetBufferPointer()) : "root signature";
+            return false;
+        }
     }
-    if (FAILED(m_dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) { err = "CreateRootSignature"; return false; }
+    if (FAILED(m_dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) {
+        if (rs.Flags != D3D12_ROOT_SIGNATURE_FLAG_NONE) {
+            rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+            blob.Reset(); errs.Reset();
+            if (FAILED(D3D12SerializeRootSignature(&rs, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errs)) ||
+                FAILED(m_dev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&m_root)))) {
+                err = "CreateRootSignature"; return false;
+            }
+        } else { err = "CreateRootSignature"; return false; }
+    }
+    if (m_log && (rs.Flags & D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED))
+        m_log("[RT] SM 6.6+ ResourceDescriptorHeap[] direct bindless heap indexing enabled on trace root signature");
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
     pd.pRootSignature = m_root.Get();
+#ifdef RAW_HAS_SM69_DXIL
+    if (m_useSm69) {
+        pd.CS = {kDxil_rt_shadow_69, sizeof kDxil_rt_shadow_69};
+        ComPtr<ID3D12PipelineState> pso69, psoDbg69;
+        if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso69)))) {
+            pd.CS = {kDxil_rt_shadow_debug_69, sizeof kDxil_rt_shadow_debug_69};
+            if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&psoDbg69)))) {
+                m_pso = pso69;
+                m_psoDebug = psoDbg69;
+                if (m_log) m_log("[RT] native SM 6.9 DXIL 1.9 trace pipeline active (RtShadow cs_6_9)");
+                return true;
+            }
+        }
+        m_useSm69 = false;
+        if (m_log) m_log("[RT] SM 6.9 trace pipeline refused by runtime; falling back to SM 6.6");
+    }
+#endif
     pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
     if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&m_pso)))) { err = "CreateComputePipelineState (rt_shadow)"; return false; }
     pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
@@ -127,6 +171,9 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
               int(sm.HighestShaderModel) & 15, int(o5.RaytracingTier) / 10, int(o5.RaytracingTier) % 10, int(o7.MeshShaderTier), int(o7.SamplerFeedbackTier));
     if (o5.RaytracingTier < D3D12_RAYTRACING_TIER_1_1) { err = "DXR tier 1.1 (inline ray queries) not supported"; return false; }
     if (sm.HighestShaderModel < D3D_SHADER_MODEL_6_6) { err = "shader model 6.6 not supported"; return false; }
+#ifdef RAW_HAS_SM69_DXIL
+    m_useSm69 = (static_cast<unsigned>(sm.HighestShaderModel) >= 0x69u);
+#endif
     const auto AS = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, UA = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     bool ok = Buffer(m_blasHeap, kBlasHeap, D3D12_HEAP_TYPE_DEFAULT, AS, true, L"rt blas heap") &&
               Buffer(m_scratch, kScratch, D3D12_HEAP_TYPE_DEFAULT, UA, true, L"rt scratch") &&
@@ -187,27 +234,33 @@ bool RtScene::Create(ID3D12Device* dev, UINT width, UINT height, LogFn log, std:
     m_skinReady = m_skin.Create(m_dev.Get(), m_heap.Get(), skinAt, skinErr);
     if (!m_skinReady && m_log) m_log("[RT] skinned actors off: %s", skinErr.c_str());
 #ifdef RAW_HAS_OMM
-    // Opacity micromaps: DXR 1.2, and a trace pipeline that lets its ray queries use them (the shader is
-    // below shader model 6.9, so the pipeline flag does it). Either missing: the candidate loop alone.
+    // Opacity micromaps: DXR 1.2. Native SM 6.9 shaders support OMM directly without the PRE_SM69 flag;
+    // SM 6.6 shaders require D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS.
     if (o5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_2) {
         std::string ommErr;
-        const UINT flags = D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS;
-        D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-        pd.pRootSignature = m_root.Get();
-        pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
-        pd.Flags = D3D12_PIPELINE_STATE_FLAGS(flags);
-        ComPtr<ID3D12PipelineState> pso;
         if (!m_omm.Create(m_dev.Get(), m_heap.Get(), 5 + RtAlpha::Descriptors() + RtSky::Descriptors() + 1, 5, 6, ommErr)) {
             if (m_log) m_log("[RT] opacity micromaps off: %s", ommErr.c_str());
-        } else if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) {
-            if (m_log) m_log("[RT] opacity micromaps off: the runtime refused the pipeline flag (the system runtime, not the Agility SDK?)");
-        } else {
-            m_pso = pso;
-            pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
-            if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) m_psoDebug = pso;
-            m_psoFlags = flags;
+        } else if (m_useSm69) {
+            m_psoFlags = 0;
             m_ommOn = true;
-            if (m_log) m_log("[RT] opacity micromaps on: level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
+            if (m_log) m_log("[RT] opacity micromaps on (native SM 6.9 DXR 1.2): level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
+        } else {
+            const UINT flags = D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS;
+            D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
+            pd.pRootSignature = m_root.Get();
+            pd.CS = {kDxil_rt_shadow, sizeof kDxil_rt_shadow};
+            pd.Flags = D3D12_PIPELINE_STATE_FLAGS(flags);
+            ComPtr<ID3D12PipelineState> pso;
+            if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) {
+                if (m_log) m_log("[RT] opacity micromaps off: the runtime refused the pipeline flag (the system runtime, not the Agility SDK?)");
+            } else {
+                m_pso = pso;
+                pd.CS = {kDxil_rt_shadow_debug, sizeof kDxil_rt_shadow_debug};
+                if (SUCCEEDED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) m_psoDebug = pso;
+                m_psoFlags = flags;
+                m_ommOn = true;
+                if (m_log) m_log("[RT] opacity micromaps on: level %u, 4-state, baked from the alpha masks", RtOmm::kLevel);
+            }
         }
     }
 #endif
@@ -228,7 +281,10 @@ void RtScene::Evict()
         WaitForSingleObject(e, 2000);
         CloseHandle(e);
     }
-    for (Mesh& m : m_meshes) { if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release(); }
+    for (Mesh& m : m_meshes) {
+        if (m.vb) m.vb->Release(); if (m.ib) m.ib->Release();
+        if (m.subdivVb) m.subdivVb->Release(); if (m.subdivIb) m.subdivIb->Release();
+    }
     m_meshes.clear(); m_meshOf.clear(); m_skinRecOf.clear(); m_build.clear(); m_lastKeys.clear(); m_lastMesh.clear();
     m_persistInst.clear();
     m_blasUsed = 0;
@@ -296,8 +352,11 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
     for (size_t di = 0; di < m_draws.size(); ++di) {
         RtDraw& d = m_draws[di];
         if (d.skinned) continue;   // RtSkin's, rebuilt every frame
-        const Key k{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
-                    uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
+        const bool useSubdiv = (d.subdivVb != nullptr && d.subdivIb != nullptr && d.subdivIndexCount >= 3u && d.subdivVertCount > 0u && !d.alphaKind);
+        const Key k = useSubdiv
+            ? Key{uintptr_t(d.subdivVb), uintptr_t(d.subdivIb), uint64_t(d.subdivVertCount) << 32 | d.stride, uint64_t(d.subdivIndexCount)}
+            : Key{uintptr_t(d.vb), uintptr_t(d.ib), uint64_t(d.vbOffset) << 32 | d.ibOffset,
+                  uint64_t(d.startIndex) << 32 | uint32_t(d.baseVertex) ^ uint64_t(d.indexCount) << 12};
         keys[di] = k;
         if (m_tune.incremental && di < m_lastKeys.size() && m_lastKeys[di] == k && m_lastMesh[di] < m_meshes.size()) {
             // The same draw at the same place in the list as last frame: its mesh without a lookup.
@@ -310,27 +369,30 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
         if (m_build.size() >= m_tune.maxNewPerFrame || (wantMat && !m_alpha.Room())) { ++m_stats.skipped; continue; }
         D3D11_BUFFER_DESC vd{}, id{};
         d.vb->GetDesc(&vd); d.ib->GetDesc(&id);
-        ID3D12Resource* v12 = native(d.vb);
-        ID3D12Resource* i12 = native(d.ib);
-        const uint64_t vStart = uint64_t(d.vbOffset) + int64_t(d.baseVertex) * d.stride;
-        const uint32_t isz = d.ibFormat == DXGI_FORMAT_R16_UINT ? 2 : 4;
-        const uint64_t iStart = uint64_t(d.ibOffset) + uint64_t(d.startIndex) * isz;
-        const bool usable = v12 && i12 && vd.Usage != D3D11_USAGE_DYNAMIC && id.Usage != D3D11_USAGE_DYNAMIC && d.stride &&
-                            vStart < vd.ByteWidth && iStart + uint64_t(d.indexCount) * isz <= id.ByteWidth && d.indexCount >= 3;
+        ID3D12Resource* v12 = useSubdiv ? d.subdivVb : native(d.vb);
+        ID3D12Resource* i12 = useSubdiv ? d.subdivIb : native(d.ib);
+        const uint64_t vStart = useSubdiv ? 0ull : (uint64_t(d.vbOffset) + int64_t(d.baseVertex) * d.stride);
+        const uint32_t isz = useSubdiv ? 4u : (d.ibFormat == DXGI_FORMAT_R16_UINT ? 2u : 4u);
+        const uint64_t iStart = useSubdiv ? 0ull : (uint64_t(d.ibOffset) + uint64_t(d.startIndex) * isz);
+        const bool usable = useSubdiv
+            ? (v12 && i12 && d.stride && d.subdivIndexCount >= 3u)
+            : (v12 && i12 && vd.Usage != D3D11_USAGE_DYNAMIC && id.Usage != D3D11_USAGE_DYNAMIC && d.stride &&
+               vStart < vd.ByteWidth && iStart + uint64_t(d.indexCount) * isz <= id.ByteWidth && d.indexCount >= 3);
         Mesh m;
         m.seen = m_frame;
         if (!usable) { m.failed = true; ++m_stats.skipped; }
         else {
             m.vb = d.vb; m.ib = d.ib; m.vb->AddRef(); m.ib->AddRef();
+            if (useSubdiv) { m.subdivVb = d.subdivVb; m.subdivIb = d.subdivIb; m.subdivVb->AddRef(); m.subdivIb->AddRef(); }
             D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC& t = m.tri;
             t.VertexFormat = d.posFormat == DXGI_FORMAT_R16G16B16A16_FLOAT ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
             t.VertexBuffer.StartAddress = v12->GetGPUVirtualAddress() + vStart + d.posOffset;
             t.VertexBuffer.StrideInBytes = d.stride;
-            t.VertexCount = UINT((vd.ByteWidth - vStart) / d.stride);
-            t.IndexFormat = d.ibFormat;
+            t.VertexCount = useSubdiv ? d.subdivVertCount : UINT((vd.ByteWidth - vStart) / d.stride);
+            t.IndexFormat = useSubdiv ? DXGI_FORMAT_R32_UINT : d.ibFormat;
             t.IndexBuffer = i12->GetGPUVirtualAddress() + iStart;
-            t.IndexCount = d.indexCount / 3 * 3;
-            if (!d.alphaKind && wantMat) {
+            t.IndexCount = (useSubdiv ? d.subdivIndexCount : d.indexCount) / 3 * 3;
+            if (!d.alphaKind && wantMat && !useSubdiv) {
                 // Opaque: its coordinates, normals and colour copy, for hits off screen; without them it
                 // still joins (record 0: shaded grey off screen).
                 m.alphaRecord = m_alpha.AddMesh(d, v12, i12, vStart, iStart, t.IndexCount / 3, false, toHand, native);
@@ -348,7 +410,7 @@ void RtScene::SetDrawsInner(std::vector<RtDraw>&& draws, std::vector<ID3D11Resou
                 }
 #endif
             }
-            if (!m.failed) { toHand.push_back(d.vb); toHand.push_back(d.ib); }
+            if (!m.failed && !useSubdiv) { toHand.push_back(d.vb); toHand.push_back(d.ib); }
         }
         m_drawMesh[di] = uint32_t(m_meshes.size());
         m_meshOf.emplace(k, uint32_t(m_meshes.size()));
@@ -454,7 +516,16 @@ bool RtScene::Reload(const std::vector<uint8_t>& shadow, const std::vector<uint8
         pd.pRootSignature = m_root.Get();
         pd.CS = {shadow.data(), shadow.size()};
         pd.Flags = D3D12_PIPELINE_STATE_FLAGS(m_psoFlags);
-        if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
+        if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) {
+#ifdef RAW_HAS_OMM
+            if (m_ommOn) {
+                pd.Flags = m_psoFlags ? D3D12_PIPELINE_STATE_FLAG_NONE
+                                      : D3D12_PIPELINE_STATE_FLAGS(D3D12_PIPELINE_STATE_FLAG_RAYQUERY_ALLOW_OPACITY_MICROMAPS_ON_PRE_SM69_SHADERS);
+                if (FAILED(m_dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)))) { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
+            } else
+#endif
+            { err = "the device refused the reloaded RtShadow.hlsl"; return false; }
+        }
     }
     if (m_fence->GetCompletedValue() < m_fenceValue) {
         HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr);

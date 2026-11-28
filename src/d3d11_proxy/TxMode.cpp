@@ -3,6 +3,7 @@
 #include "ProxyAPI.h"
 #include "ProxyLog.h"
 #include "Translate.h"
+#include "../d3d12_bridge/HardwareProfile.h"
 
 #include <psapi.h>
 #include <string>
@@ -19,7 +20,7 @@ using PFN_CreateDevSc = HRESULT(WINAPI*)(IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE
 
 struct TxConfig {
     int mode = -1;
-    bool debugLayer = false, wrap = false, renameRing = true, ringWriteBack = false;
+    bool debugLayer = false, wrap = false, renameRing = true, ringWriteBack = false, geometrySubdiv = false;
     char agilityPath[MAX_PATH] = {};
     UINT agilityVersion = 0;
     UINT workers = 0, segmentDraws = 256, segmentMin = 64;
@@ -44,13 +45,16 @@ void Load()
     // [Translate] RenameRing (default 1) and RingWriteBack (default 0): how buffer renames get their memory.
     C().renameRing = GetPrivateProfileIntA("Translate", "RenameRing", 1, ini.c_str()) != 0;
     C().ringWriteBack = GetPrivateProfileIntA("Translate", "RingWriteBack", 0, ini.c_str()) != 0;
-    // [Translate] Workers (default 0): threads that turn the game's draws into D3D12 command lists in parallel;
-    // SegmentDraws (default 256): the draws each worker's list takes.
-    C().workers = GetPrivateProfileIntA("Translate", "Workers", 0, ini.c_str());
+    // [Translate] Workers (0=single-threaded, -1=auto from CPU core count, >0=explicit worker threads).
+    const int rawWorkers = GetPrivateProfileIntA("Translate", "Workers", 0, ini.c_str());
+    C().workers = (rawWorkers < 0) ? raw::bridge::RecommendTxWorkers() : static_cast<UINT>(rawWorkers);
     C().segmentDraws = GetPrivateProfileIntA("Translate", "SegmentDraws", 256, ini.c_str());
     C().segmentMin = GetPrivateProfileIntA("Translate", "SegmentMin", 64, ini.c_str());   // shorter runs stay on the game's thread
-    if (C().mode) Log("[Tx] translate mode %s%s", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
-                      C().debugLayer ? ", D3D12 debug layer on" : "");
+    // Wave 32 Paired Depth-Prepass + Color-Pass 4x Curved PN-Triangle GPU Subdivision (default ON):
+    // Layout-independent SubdivKey + lastDepthFrame lockstep guarantees bit-exact DEPTH_EQUAL matching with ZERO holes!
+    C().geometrySubdiv = GetPrivateProfileIntA("Translate", "GeometrySubdiv", 1, ini.c_str()) != 0;
+    if (C().mode) Log("[Tx] translate mode %s%s (workers=%u%s, subdiv=%d)", C().mode == 1 ? "on: the game runs on raw::tx (D3D12)" : "native: system D3D11 behind the harness wrapper",
+                      C().debugLayer ? ", D3D12 debug layer on" : "", C().workers, rawWorkers < 0 ? " auto" : "", int(C().geometrySubdiv));
 }
 
 void TxLog(const char* line) { Log("[tx] %s", line); }
@@ -121,6 +125,7 @@ HRESULT MakeTx(IDXGIAdapter* adapter, ID3D11Device** dev, ID3D11DeviceContext** 
     p.workers = C().workers;
     p.segmentDraws = C().segmentDraws;
     p.segmentMin = C().segmentMin;
+    p.geometrySubdiv = C().geometrySubdiv;
     DXGI_ADAPTER_DESC ad{};
     if (adapter && SUCCEEDED(adapter->GetDesc(&ad))) p.adapter = &ad.AdapterLuid;
     ID3D11Device* d = nullptr;

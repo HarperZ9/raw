@@ -33,6 +33,7 @@ struct DebugVertex
     float    x, y, z;   // World position
     uint32_t color;     // ABGR packed color
 };
+static_assert(sizeof(DebugVertex) == 16u, "DebugVertex GPU vertex stride must be 16 bytes");
 
 
 // ---- DebugRenderer ----------------------------------------------------------

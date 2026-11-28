@@ -145,12 +145,13 @@ void WaterCase(Bench& b)
     if (patched.empty() || !b.Draw(code, o) || !b.Draw(patched, p)) { Check(false, "draws"); return; }
     Check(memcmp(&o[0], &p[0], sizeof(Pixel)) == 0, "output 0 is bit-identical to the original's");
     // World normal (0.2, 0, 1) normalised; view (x, z, y) = (0.196, 0.981, 0); encoded n.xy / sqrt(8) + 0.5.
+    // ShaderKind::Water writes hardware tag Layer.a = 2.0f in RGBA32F (commit 0f9dba3).
     const float len = std::sqrt(0.2f * 0.2f + 1.0f), nx = 0.2f / len, ny = 1.0f / len, s = std::sqrt(8.0f);
-    Check(Near(p[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 1.0f, 1e-4f), "layer: depth and the view-space normal, encoded");
+    Check(Near(p[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 2.0f, 1e-4f), "layer: depth, view-space normal encoded, water tag 2.0");
     Check(Near(p[5], 0, 0, float(material::Water) / 255.0f, 1.0f), "class water");
     SetView(b, true);
     b.Draw(patched, q);
-    Check(!Near(q[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 1.0f, 1e-2f), "control: a view matrix with two rows swapped fails");
+    Check(!Near(q[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 2.0f, 1e-2f), "control: a view matrix with two rows swapped fails");
     Show("layer", p[7]);
     // The second form: wave normal 1 * (0.2, 0, 0) + (0, 0, 1), the same normal as above.
     const std::vector<uint8_t> code2 = Bench::Compile((std::string(kCommon) + kWaterLight).c_str(), "ps_5_0");
@@ -159,7 +160,7 @@ void WaterCase(Bench& b)
     SetView(b, false);
     Check(info2.kind == ShaderKind::Water, "a water light pass with no fixed direction is found by its wave normal");
     if (patched2.empty() || !b.Draw(patched2, q)) { Check(false, "draws"); return; }
-    Check(Near(q[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 1.0f, 1e-4f), "its layer carries the same normal, with buffer 12 declared by the patch");
+    Check(Near(q[7], kDepth, nx / s + 0.5f, ny / s + 0.5f, 2.0f, 1e-4f), "its layer carries the same normal and water tag 2.0, with buffer 12 declared by the patch");
 }
 
 void EffectCase(Bench& b)

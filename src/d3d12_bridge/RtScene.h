@@ -66,13 +66,19 @@ public:
                      ID3D12Resource* preWater = nullptr);
     bool SubmitWater(ID3D12CommandQueue* q);
     bool ReloadWater(const std::vector<uint8_t>& water, const std::vector<uint8_t>& sss, std::string& err);   // hot reload
-    static constexpr UINT kWaterDescriptors = 36;   // 8 + 4 a frame in flight
+    // Binds live GPU 256x256 Shallow-Water simulation textures (WaterState, WaterNormal) for RtWater.hlsl.
+    // Pass nullptrs or worldSpanU <= 0 to disable cleanly (safe WARP/fallback path).
+    void SetFluidWaterResources(ID3D12Resource* waterState, ID3D12Resource* waterNormal,
+                                float originX, float originY, float worldSpanU);
+    static constexpr UINT kWaterDescriptors = 42;   // (10 water + 4 sss) * 3 frames in flight
 
 private:
     struct Mesh
     {
         ID3D11Buffer* vb = nullptr;
         ID3D11Buffer* ib = nullptr;
+        ID3D12Resource* subdivVb = nullptr;
+        ID3D12Resource* subdivIb = nullptr;
         D3D12_RAYTRACING_GEOMETRY_TRIANGLES_DESC tri{};
         uint64_t blas = 0, bytes = 0, seen = 0;
         uint32_t alphaRecord = 0;   // RtAlpha record + 1 (the instance ID); 0: none
@@ -142,6 +148,8 @@ private:
         D3D12_RAYTRACING_INSTANCE_DESC desc{};
         double absT[3] = {};
         uint32_t tris = 0;
+        uint32_t meshIdx = 0;
+        uint16_t stableFrames = 0;
         uint64_t lastSeen = 0;
     };
     std::unordered_map<uint64_t, PersistInst> m_persistInst;
@@ -159,6 +167,7 @@ private:
     bool m_evictPending = false;
     RtSkin m_skin;
     bool m_skinReady = false;
+    bool m_useSm69 = false;
     bool m_ommOn = false;
     UINT m_psoFlags = 0;
     // Water (RtWater.cpp).
@@ -166,7 +175,11 @@ private:
     UINT m_waterAt = 0;
     uint64_t m_tlasFrame = ~0ull;   // m_frame when the TLAS was last recorded
     ComPtr<ID3D12PipelineState> m_waterPso, m_sssPso;
-    ComPtr<ID3D12RootSignature> m_sssRoot;
+    ComPtr<ID3D12RootSignature> m_waterRoot, m_sssRoot;
+    ID3D12Resource* m_fluidWaterState = nullptr;
+    ID3D12Resource* m_fluidWaterNormal = nullptr;
+    float m_fluidWaterOrigin[2] = {0.0f, 0.0f};
+    float m_fluidWaterSpanU = 0.0f;
     ComPtr<ID3D12CommandAllocator> m_wAlloc[3];
     ComPtr<ID3D12GraphicsCommandList4> m_wList;
     ComPtr<ID3D12Resource> m_wCb[3], m_wTsRead;

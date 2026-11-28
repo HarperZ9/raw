@@ -1,0 +1,105 @@
+// RawCausticsCrafting.bld: RAW Engine Deterministic Water Caustics Optics & Crafting/Spellcraft Kernels in BuildLang 1.4.0.
+// Counterparts to RawWaterCausticsSim.hlsl, RtWater.hlsl, rt_crafting_inventory_gmst.cpp, and rt_spellcraft_gmst.cpp:
+//   1. snell_refract_cos      - Snell's Law water-air refraction transmitted cosine (0 on TIR)
+//   2. water_spectral_trans   - Underwater Beer-Lambert RGB spectral transmittance with turbidity
+//   3. caustic_jacobian_clamp - Energy-conserving caustic Jacobian focal intensity clamp
+//   4. crafting_anti_loop_mult - Bounded alchemy/enchanting anti-restoration-loop ceiling
+//   5. soul_gem_cast_charges  - Enchanted weapon / staff soul-gem cast count budget
+//   6. dual_cast_eff_ratio    - Dual-cast magnitude-per-magicka efficiency ratio
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+// 1. Exact Snell's Law transmitted cosine cos(theta_t) from incident cosine cos_i and index ratio eta = n1 / n2.
+//    Returns 0.0 under Total Internal Reflection (sin^2(theta_t) >= 1.0).
+// Matches src/d3d12_bridge/shaders/RawWaterCausticsSim.hlsl and RtWater.hlsl.
+fn snell_refract_cos(cos_i: f64, eta_ratio: f64) -> f64 {
+    let ci: f64 = clamp_f64(cos_i, 0.0, 1.0);
+    let eta: f64 = max_f64(eta_ratio, 0.1);
+    let sin2_t: f64 = eta * eta * (1.0 - ci * ci);
+    if sin2_t >= 1.0 {
+        0.0
+    } else {
+        sqrt(1.0 - sin2_t)
+    }
+}
+
+// 2. Underwater Beer-Lambert spectral transmittance modulated by suspended sediment turbidity.
+// Matches src/d3d12_bridge/shaders/RtWater.hlsl and RawWaterCausticsSim.hlsl.
+fn water_spectral_trans(depth_m: f64, sigma_ch: f64, turbidity: f64) -> f64 {
+    let d: f64 = max_f64(depth_m, 0.0);
+    let sig: f64 = max_f64(sigma_ch, 0.0);
+    let turb: f64 = clamp_f64(turbidity, 0.0, 3.0);
+    exp(-sig * (1.0 + 0.65 * turb) * d)
+}
+
+// 3. Energy-conserving refracted caustic Jacobian intensity clamped against focal singularities.
+// Matches src/d3d12_bridge/shaders/RawWaterCausticsSim.hlsl caustic concentration clamp.
+fn caustic_jacobian_clamp(area_in: f64, area_out: f64, max_gain: f64) -> f64 {
+    let cap: f64 = clamp_f64(max_gain, 1.0, 8.0);
+    let ratio: f64 = max_f64(area_in, 0.0) / max_f64(area_out, 1.0e-4);
+    clamp_f64(ratio, 0.0, cap)
+}
+
+// 4. Bounded alchemy/enchanting anti-restoration-loop multiplier strictly below min(hard_cap, 2.50).
+// Matches src/engine_rt/rt_crafting_inventory_gmst.cpp & rt_progression_economy.cpp.
+fn crafting_anti_loop_mult(alchemy_skill: f64, fortify_stack: f64, hard_cap: f64) -> f64 {
+    let cap: f64 = clamp_f64(hard_cap, 1.15, 2.50);
+    let span: f64 = cap - 1.0;
+    let skill01: f64 = clamp_f64(alchemy_skill / 100.0, 0.0, 1.5);
+    let raw: f64 = 0.65 * skill01 + max_f64(fortify_stack, 0.0);
+    1.0 + span * tanh(raw / max_f64(span, 1.0e-4))
+}
+
+// 5. Soul-gem weapon / staff charge budget (casts before recharge) scaled by magic school skill.
+// Matches src/engine_rt/rt_spellcraft_gmst.cpp & rt_crafting_inventory_gmst.cpp.
+fn soul_gem_cast_charges(gem_capacity: f64, base_cost: f64, skill_0_100: f64) -> f64 {
+    let cap: f64 = max_f64(gem_capacity, 0.0);
+    let s01: f64 = clamp_f64(skill_0_100 / 100.0, 0.0, 1.0);
+    let eff_cost: f64 = max_f64(max_f64(base_cost, 1.0) * (1.0 - 0.55 * s01), 1.0);
+    cap / eff_cost
+}
+
+// 6. Dual-cast magnitude-per-magicka efficiency ratio vs single-cast baseline.
+//    Canonical 1.7.104 values: cost_mult = 2.8, mag_mult = 2.2 -> 0.7857 efficiency for 2.2x burst.
+// Matches src/engine_rt/rt_spellcraft_gmst.cpp fMagicDualCastingCostMult / EffectivenessBase.
+fn dual_cast_eff_ratio(base_magicka: f64, base_magnitude: f64, cost_mult: f64, mag_mult: f64) -> f64 {
+    let bm: f64 = max_f64(base_magicka, 1.0);
+    let bmag: f64 = max_f64(base_magnitude, 1.0);
+    let single_eff: f64 = bmag / bm;
+    let dual_eff: f64 = (bmag * clamp_f64(mag_mult, 1.0, 4.0)) / (bm * max_f64(cost_mult, 0.5));
+    dual_eff / single_eff
+}
+
+fn main() ~ Console {
+    let snell_in: f64 = snell_refract_cos(0.5, 1.0 / 1.333);
+    let snell_tir: f64 = snell_refract_cos(0.5, 1.333);
+    let tr_red: f64 = water_spectral_trans(3.0, 0.45, 0.20);
+    let tr_blue: f64 = water_spectral_trans(3.0, 0.032, 0.20);
+    let caust_focus: f64 = caustic_jacobian_clamp(1.0, 0.25, 6.0);
+    let caust_sing: f64 = caustic_jacobian_clamp(1.0, 0.0001, 6.0);
+    let craft_legit: f64 = crafting_anti_loop_mult(100.0, 0.40, 2.25);
+    let craft_loop: f64 = crafting_anti_loop_mult(100.0, 999.0, 2.25);
+    let gem_nov: f64 = soul_gem_cast_charges(3000.0, 60.0, 15.0);
+    let gem_mas: f64 = soul_gem_cast_charges(3000.0, 60.0, 100.0);
+    let dual_eff: f64 = dual_cast_eff_ratio(50.0, 40.0, 2.8, 2.2);
+
+    println!("snell_refract_cos(air->water 60deg) = {} | (water->air TIR) = {}", snell_in, snell_tir);
+    println!("water_spectral_trans(3m red) = {} | (3m blue) = {}", tr_red, tr_blue);
+    println!("caustic_jacobian_clamp(focus 4x) = {} | (singularity cap) = {}", caust_focus, caust_sing);
+    println!("crafting_anti_loop_mult(legit) = {} | (restoration-loop cap) = {}", craft_legit, craft_loop);
+    println!("soul_gem_cast_charges(grand nov) = {} | (grand master) = {}", gem_nov, gem_mas);
+    println!("dual_cast_eff_ratio(2.2x / 2.8x) = {}", dual_eff);
+}

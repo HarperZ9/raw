@@ -60,6 +60,7 @@ struct alignas(16) GPULightData
     uint32_t           flags;              // bit 0: isSpot, bit 1: castShadow
     uint32_t           pad[3];
 };
+static_assert(sizeof(GPULightData) == 64u && alignof(GPULightData) == 16u, "GPULightData must be 64 bytes (16B aligned)");
 
 struct alignas(16) ClusterInfo
 {
@@ -67,6 +68,7 @@ struct alignas(16) ClusterInfo
     uint32_t count;      // Number of lights in this cluster
     uint32_t pad[2];
 };
+static_assert(sizeof(ClusterInfo) == 16u && alignof(ClusterInfo) == 16u, "ClusterInfo must be 16 bytes (16B aligned)");
 
 struct alignas(16) ClusterBuildCB
 {
@@ -82,6 +84,7 @@ struct alignas(16) ClusterBuildCB
     uint32_t clusterGridY;
     uint32_t clusterGridZ;
 };
+static_assert(sizeof(ClusterBuildCB) == 224u && alignof(ClusterBuildCB) == 16u, "ClusterBuildCB must be 224 bytes (16B aligned)");
 
 // ── CPU-side light data (collected from game scene graph) ────────────────
 

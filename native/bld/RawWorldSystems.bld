@@ -1,0 +1,135 @@
+// RawWorldSystems.bld: RAW Engine Deterministic World Systems & Auto-Exposure Kernels in BuildLang 1.4.0.
+// Counterparts to RawAutoExposureSim.hlsl, RawFactionDiplomacy.cpp, rt_adaptive_audio_director.cpp, and Tonemap.hlsl:
+//   1. log_lum_hist_bin      - 256-bin log2 luminance histogram index [0..255]
+//   2. eye_adapt_step        - Asymmetric human scotopic/photopic eye-adaptation EMA step
+//   3. diplomacy_price_mult  - Hold reputation + bounty merchant price multiplier [0.82..1.35]
+//   4. bounty_guard_posture  - Bounty & reputation guard-posture escalation level (0..3)
+//   5. audio_crossfade_gain  - Equal-power sinusoidal adaptive audio crossfade weight
+//   6. purkinje_night_weight - Scotopic Purkinje rod-vision night shift weight
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn smoothstep_01(x: f64) -> f64 {
+    let t: f64 = clamp_f64(x, 0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+// 1. 256-bin log2 luminance histogram bin index in [0..255].
+//    Bin 0 collects near-black pixels (lum <= 1e-5); bins [1..255] span [min_log2, min_log2 + 1/inv_log2_range].
+// Matches src/d3d12_bridge/shaders/RawAutoExposureSim.hlsl.
+fn log_lum_hist_bin(lum: f64, min_log2: f64, inv_log2_range: f64) -> i32 {
+    if lum <= 1.0e-5 {
+        0
+    } else {
+        let log2_lum: f64 = log(lum) / log(2.0);
+        let norm: f64 = clamp_f64((log2_lum - min_log2) * max_f64(inv_log2_range, 1.0e-4), 0.0, 1.0);
+        let bin: i32 = ((norm * 254.0 + 1.0) as i32);
+        if bin < 1 {
+            1
+        } else if bin > 255 {
+            255
+        } else {
+            bin
+        }
+    }
+}
+
+// 2. Asymmetric human scotopic/photopic eye-adaptation exponential moving average step:
+//    Bright transitions (target > cur) adapt quickly (speed_up); dark cave entry adapts slowly (speed_down).
+// Matches src/d3d12_bridge/shaders/RawAutoExposureSim.hlsl.
+fn eye_adapt_step(cur_lum: f64, target_lum: f64, dt_sec: f64, speed_up: f64, speed_down: f64) -> f64 {
+    let cur: f64 = max_f64(cur_lum, 1.0e-5);
+    let tgt: f64 = max_f64(target_lum, 1.0e-5);
+    let dt: f64 = max_f64(dt_sec, 0.0);
+    let rate: f64 = if tgt > cur { max_f64(speed_up, 0.0) } else { max_f64(speed_down, 0.0) };
+    let alpha: f64 = 1.0 - exp(-rate * dt);
+    cur + (tgt - cur) * alpha
+}
+
+// 3. Hold reputation [-100..+100] + bounty gold merchant price multiplier clamped to [0.82..1.35].
+// Matches src/worldgen/RawFactionDiplomacy.cpp RecomputeHoldDerived().
+fn diplomacy_price_mult(reputation: f64, bounty_gold: f64) -> f64 {
+    let rep: f64 = clamp_f64(reputation, -100.0, 100.0);
+    let bnt: f64 = max_f64(bounty_gold, 0.0);
+    let rep_adj: f64 = -0.18 * (rep / 100.0);
+    let bnt_pen: f64 = clamp_f64(bnt / 4000.0, 0.0, 0.25);
+    clamp_f64(1.0 + rep_adj + bnt_pen, 0.82, 1.35)
+}
+
+// 4. Guard posture escalation level from hold bounty & reputation:
+//    0 = Peaceful, 1 = Watchful, 2 = ArrestOnSight, 3 = KillOnSight.
+// Matches src/worldgen/RawFactionDiplomacy.cpp RecomputeHoldDerived().
+fn bounty_guard_posture(bounty_gold: f64, reputation: f64) -> i32 {
+    let bnt: f64 = max_f64(bounty_gold, 0.0);
+    let rep: f64 = clamp_f64(reputation, -100.0, 100.0);
+    if bnt >= 2000.0 || rep <= -85.0 {
+        3
+    } else if bnt >= 250.0 || rep <= -55.0 {
+        2
+    } else if bnt > 0.0 || rep <= -20.0 {
+        1
+    } else {
+        0
+    }
+}
+
+// 5. Equal-power sinusoidal adaptive audio crossfade weight (g_in^2 + g_out^2 == 1.0 everywhere).
+// Matches src/engine_rt/rt_adaptive_audio_director.cpp smooth hysteresis soundscape transitions.
+fn audio_crossfade_gain(t01: f64, is_incoming: i32) -> f64 {
+    let half_pi: f64 = 1.5707963267948966;
+    let t: f64 = clamp_f64(t01, 0.0, 1.0);
+    if is_incoming != 0 {
+        sin(t * half_pi)
+    } else {
+        cos(t * half_pi)
+    }
+}
+
+// 6. Scotopic Purkinje human rod-vision night shift weight:
+//    Smoothly active only in genuinely dim night/cave pixels (scene_lum < 0.018), strictly 0 in daylight/torches.
+// Matches src/d3d12_bridge/shaders/Tonemap.hlsl Purkinje rod-vision shift.
+fn purkinje_night_weight(scene_lum: f64, max_weight: f64) -> f64 {
+    let lum: f64 = max_f64(scene_lum, 0.0);
+    let cap: f64 = clamp_f64(max_weight, 0.0, 0.35);
+    if lum >= 0.018 {
+        0.0
+    } else {
+        let dim01: f64 = 1.0 - smoothstep_01(lum / 0.018);
+        dim01 * cap
+    }
+}
+
+fn main() ~ Console {
+    let bin_dark: i32 = log_lum_hist_bin(0.0, -8.0, 1.0 / 12.0);
+    let bin_mid: i32 = log_lum_hist_bin(0.18, -8.0, 1.0 / 12.0);
+    let adapt_sun: f64 = eye_adapt_step(0.05, 1.0, 0.25, 3.0, 0.8);
+    let adapt_cave: f64 = eye_adapt_step(1.0, 0.05, 0.25, 3.0, 0.8);
+    let p_hero: f64 = diplomacy_price_mult(65.0, 0.0);
+    let p_outlaw: f64 = diplomacy_price_mult(-60.0, 2500.0);
+    let g_peace: i32 = bounty_guard_posture(0.0, 10.0);
+    let g_kos: i32 = bounty_guard_posture(3500.0, -40.0);
+    let g_in: f64 = audio_crossfade_gain(0.5, 1);
+    let g_out: f64 = audio_crossfade_gain(0.5, 0);
+    let purk_night: f64 = purkinje_night_weight(0.004, 0.22);
+    let purk_day: f64 = purkinje_night_weight(0.25, 0.22);
+
+    println!("log_lum_hist_bin(dark) = {} | (0.18 mid) = {}", bin_dark, bin_mid);
+    println!("eye_adapt_step(to sun) = {} | (to cave) = {}", adapt_sun, adapt_cave);
+    println!("diplomacy_price_mult(hero) = {} | (outlaw) = {}", p_hero, p_outlaw);
+    println!("bounty_guard_posture(clean) = {} | (3500g) = {}", g_peace, g_kos);
+    println!("audio_crossfade_gain(0.5 in/out) = {} | {} | sumSq = {}", g_in, g_out, g_in * g_in + g_out * g_out);
+    println!("purkinje_night_weight(night 0.004) = {} | (day 0.25) = {}", purk_night, purk_day);
+}

@@ -1,0 +1,119 @@
+#pragma once
+// RawForgePipeline.h: Unified Studio Authoring, Baking & Validation Pipeline (`raw::pipeline`).
+// Clean-room MIT C++23 framework orchestrating RAW's first-principles engines for both general
+// gamedev reuse (glTF 2.0 .glb / Wavefront .obj / JSON / CSV / C++ tables) and Skyrim overrides:
+//   - BakeSeasonalFloraCatalog  : 5 hero species x 4 orbital seasons x 3 LODs (60 validated meshes + flora_manifest.json)
+//   - BakeWorldShowcaseDiorama  : 6 frontier biomes + biomechanical hero trees & geological props + world_manifest.json
+//   - BakeAnnualClimateAlmanac  : 365-day orbital climate/thermal/snow/ice/phenology simulation -> CSV + JSON summary
+//   - BakeMaterialCatalogManifest: Physically-measured optical tables (IOR, Cauchy, Beer-Lambert, F0) -> JSON + C++ header
+// Original work, MIT.
+
+#include "RawAssetValidator.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace raw::pipeline {
+
+struct BakeResult {
+    bool                          ok                 = false;
+    uint32_t                      assetsGenerated    = 0u;
+    uint32_t                      assetsValidated    = 0u;
+    uint32_t                      validationFailures = 0u;
+    uint32_t                      filesWritten       = 0u;
+    uint64_t                      totalGpuBytes      = 0ull;
+    uint32_t                      totalMeshlets      = 0u;
+    uint32_t                      totalTriangles     = 0u;
+    std::string                   manifestPath;
+    std::string                   summaryMessage;
+    std::vector<ValidationReport> reports;
+};
+
+// Generates, validates, and exports all 5 biomechanical flora species x 4 seasons (Spring, Summer, Autumn, Winter)
+// x 3 LODs (LOD0 hero, LOD1 mid, LOD2 distant forest) -> .glb + .obj + flora_manifest.json.
+BakeResult BakeSeasonalFloraCatalog(const std::string& outDir,
+                                    uint32_t seed = 202607u,
+                                    const ValidatorPolicy& policy = {},
+                                    bool writeGeometryFiles = true);
+
+// Generates, validates, and exports all 6 showcase frontier biomes + biome-matched biomechanical trees
+// and geological hero props -> .glb + .obj + world_manifest.json.
+BakeResult BakeWorldShowcaseDiorama(const std::string& outDir,
+                                    uint32_t seed = 202607u,
+                                    const ValidatorPolicy& policy = {},
+                                    bool writeGeometryFiles = true);
+
+// Steps RawWeatherSim across a full 365-day orbital year at `latitudeDeg` (daily solar declination, day length,
+// skin temperature, snowpack depth & metamorphic albedo, Stefan's law lake ice thickness, dawn inversion burn-off,
+// and 4-season botanical phenology) -> exports climate_almanac.csv + climate_summary.json.
+BakeResult BakeAnnualClimateAlmanac(const std::string& outDir,
+                                    uint32_t seed = 20261125u,
+                                    float latitudeDeg = 60.0f);
+
+// Validates and serializes RawMaterialLib's physically-measured optical registry (IOR, Cauchy dispersion,
+// Beer-Lambert absorption, roughness, F0, Planck blackbody, thin-film OPD) -> materials_manifest.json + raw_materials_catalog.h.
+BakeResult BakeMaterialCatalogManifest(const std::string& outDir);
+
+// Loads a real exterior Tamriel cell from a TES5 `.esm` plugin via RawEsmWorldLoader, validates the
+// generated 64v/126t GPU meshlet terrain through RawAssetValidator, and exports .glb/.obj + JSON metadata.
+BakeResult BakeEsmCellAsset(const std::string& esmPath,
+                            int32_t cellX,
+                            int32_t cellY,
+                            const std::string& outDir,
+                            uint32_t targetWorldFormId = 0x0000003Cu,
+                            const ValidatorPolicy& policy = {},
+                            bool writeGeometryFiles = true);
+
+// Loads a Skyrim SE `.nif` file from disk or extracts it directly from a `.bsa` archive via RawBsaArchive,
+// decodes hierarchical BSTriShape geometry & texture sets via RawNifLoader, validates 64v/126t GPU meshlets
+// through RawAssetValidator, and exports .glb/.obj + JSON metadata.
+BakeResult BakeNifFileAsset(const std::string& nifPath,
+                            const std::string& outDir,
+                            const ValidatorPolicy& policy = {},
+                            bool writeGeometryFiles = true);
+
+BakeResult BakeBsaNifAsset(const std::string& bsaPath,
+                           const std::string& virtualNifPath,
+                           const std::string& outDir,
+                           const ValidatorPolicy& policy = {},
+                           bool writeGeometryFiles = true);
+
+// Extracts a `.dds` texture from a `.bsa` archive (or reads from disk), decodes BC1..BC7/RGBA8 mip 0 via
+// RawDdsDecoder, runs PBR/Toksvig material analysis, and writes a JSON report + optional BMP preview image.
+BakeResult InspectDdsFileAsset(const std::string& ddsPath,
+                               const std::string& outDir,
+                               bool exportPreviewBmp = true);
+
+BakeResult InspectBsaDdsAsset(const std::string& bsaPath,
+                              const std::string& virtualDdsPath,
+                              const std::string& outDir,
+                              bool exportPreviewBmp = true);
+
+// Reconstructs a full Tamriel exterior cell scene (terrain + resolved STAT/TREE/ACTI .nif models from .bsa
+// + exact 6-DOF placements), validates every mesh through RawAssetValidator, and exports terrain + merged props
+// .glb/.obj + complete scene JSON manifest!
+BakeResult BakeTamrielCellSceneBundle(const std::string& esmPath,
+                                      const std::string& meshesBsaPath,
+                                      int32_t cellX,
+                                      int32_t cellY,
+                                      const std::string& outDir,
+                                      uint32_t maxUniqueModels = 64u,
+                                      const ValidatorPolicy& policy = {},
+                                      bool writeGeometryFiles = true);
+
+// Generates all 8 seamless 4D-torus-mapped procedural PBR texture sets (Albedo + Normal + ORMH + full mip chains),
+// round-trip verifies every exported DX10 .dds through RawDdsDecoder + PBR analysis, and writes textures_manifest.json.
+BakeResult BakeProceduralTextureLibrary(const std::string& outDir,
+                                        uint32_t resolution = 256u,
+                                        uint32_t seed = 202607u,
+                                        bool writeFiles = true);
+
+// Runs all 4 studio baking & quality-gate validation pipelines and emits pipeline_validation_report.json.
+BakeResult RunFullPipelineValidation(const std::string& outDir,
+                                     uint32_t seed = 202607u,
+                                     float latitudeDeg = 60.0f,
+                                     const ValidatorPolicy& policy = {},
+                                     bool writeGeometryFiles = true);
+
+}  // namespace raw::pipeline

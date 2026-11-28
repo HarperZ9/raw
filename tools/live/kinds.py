@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from session import G, LiveSession
+import visual_heuristics as vh
 
 ENGINE = "raw_engine.dll"
 
@@ -253,6 +254,62 @@ def script(s: LiveSession, a: dict, out: Path) -> dict:
     return {"log": s.report["steps"][first:], "files": sorted(p.name for p in out.iterdir())}
 
 
+def debug_view(s: LiveSession, a: dict, out: Path) -> dict:
+    """{view: int (0..33), capture: bool, hold_sec: float}: switches [Lighting] DebugView live via hot-reload
+    and optionally captures a frame of that debug layer."""
+    vid = int(a.get("view", 0))
+    if vid < 0 or vid > 33:
+        raise ValueError(f"debug_view {vid} out of valid range 0..33")
+    res = reload_ini(s, {"keys": {"DebugView": str(vid)}}, out)
+    hold_sec = float(a.get("hold_sec", 0.5))
+    if hold_sec > 0.0:
+        time.sleep(hold_sec)
+    data = {
+        "view": vid,
+        "name": vh.DEBUG_VIEW_NAMES.get(vid, f"View{vid}"),
+        "reload": res,
+    }
+    if a.get("capture", False):
+        cap_name = a.get("name", f"debug_view_{vid:02d}")
+        data["capture"] = capture(s, {"kind": "frame", "name": cap_name}, out)
+    return data
+
+
+def visual_audit(s: LiveSession, a: dict, out: Path) -> dict:
+    """{image: optional path, name: str}: captures a live frame (unless image is given), runs all single-frame
+    visual_heuristics detectors, and writes visual_audit.json."""
+    if a.get("image"):
+        img_path = Path(a["image"])
+    else:
+        cap = capture(s, {"kind": "frame", "name": a.get("name", "visual_audit")}, out)
+        img_path = out / cap["files"][0]
+    report = vh.audit_image(img_path, label=img_path.name)
+    (out / "visual_audit.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return report
+
+
+def camera_sweep_flicker(s: LiveSession, a: dict, out: Path) -> dict:
+    """{name: str, turn_cmd: optional console command, wait_sec: float}: captures two consecutive frames
+    across a camera turn and runs detect_camera_turn_shadow_flicker."""
+    name = a.get("name", "sweep")
+    cap_a = capture(s, {"kind": "frame", "name": f"{name}_a"}, out)
+    img_a = out / cap_a["files"][0]
+    if a.get("turn_cmd"):
+        console(s, {"command": a["turn_cmd"]}, out)
+    time.sleep(float(a.get("wait_sec", 0.6)))
+    cap_b = capture(s, {"kind": "frame", "name": f"{name}_b"}, out)
+    img_b = out / cap_b["files"][0]
+    flicker = vh.detect_camera_turn_shadow_flicker(img_a, img_b)
+    result = {
+        "frame_a": img_a.name,
+        "frame_b": img_b.name,
+        "flicker": flicker.to_dict(),
+    }
+    (out / "camera_sweep_flicker.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
 HANDLERS = {"reload_shader": reload_shader, "reload_ini": reload_ini, "ini_set": ini_set, "reload_module": reload_module,
             "console": console, "set_time": set_time, "set_weather": set_weather, "move": move, "capture": capture,
-            "measure": measure, "engine": engine, "script": script, "keyframe": lambda s, a, o: capture(s, {**a, "kind": "keyframe"}, o)}
+            "measure": measure, "engine": engine, "script": script, "keyframe": lambda s, a, o: capture(s, {**a, "kind": "keyframe"}, o),
+            "debug_view": debug_view, "visual_audit": visual_audit, "camera_sweep_flicker": camera_sweep_flicker}

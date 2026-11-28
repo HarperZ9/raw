@@ -22,7 +22,7 @@ namespace SB
 {
 
 // ── Atmosphere constants CB ───────────────────────────────────────────────
-struct AtmosphereCB
+struct alignas(16) AtmosphereCB
 {
     float earthRadius;       // 6360 km
     float atmosphereRadius;  // 6460 km
@@ -40,9 +40,10 @@ struct AtmosphereCB
     float sunAzimuth;
     float lutWidth, lutHeight;
 };
+static_assert(sizeof(AtmosphereCB) == 64u && alignof(AtmosphereCB) == 16u, "AtmosphereCB must be 64 bytes (16B aligned)");
 
 // ── Celestial constant buffer (sun disk, moon, stars) ─────────────────────
-struct CelestialCB
+struct alignas(16) CelestialCB
 {
     float sunZenithCos, sunAzimuth;
     float moonZenithCos, moonAzimuth;
@@ -53,6 +54,7 @@ struct CelestialCB
     uint32_t screenW, screenH;
     float pad[2];
 };
+static_assert(sizeof(CelestialCB) == 48u && alignof(CelestialCB) == 16u, "CelestialCB must be 48 bytes (16B aligned)");
 
 // ── Transmittance LUT compute shader ──────────────────────────────────────
 // Maps (altitude, zenith angle) → optical depth through the atmosphere
@@ -1014,9 +1016,10 @@ void AtmosphereRenderer::RenderCelestials(float sunZenithCos, float sunAzimuth)
 
 void AtmosphereRenderer::ExecuteSkyPass(PassContext& ctx)
 {
-    // TODO: Replace game sky shader with physically-based evaluation
-    // using the precomputed LUTs. For now, LUTs are available to any
-    // shader that samples t23/t24.
+    // Legacy D3D11 pass stub: live physically-based sky & atmosphere evaluation runs
+    // natively in the DX12 bridge (LightFog.hlsl / EnvCubePass.hlsl / RawWeatherAtmo.hlsli).
+    // Precomputed D3D11 LUTs remain bound at t23/t24 for any legacy consumers.
+    (void)ctx;
 }
 
 } // namespace SB

@@ -112,6 +112,44 @@ bool LoadWic(const std::string& path, RawTextureAsset* out, std::string* err)
 }
 } // namespace
 
+bool LoadModernTextureFromMemory(const uint8_t* bytes, size_t size, const std::string& label,
+                                 RawTextureAsset* outTex, std::string* outErr)
+{
+    if (!bytes || size < 8 || !outTex) {
+        if (outErr) *outErr = "empty texture memory buffer";
+        return false;
+    }
+    const HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const bool didInit = SUCCEEDED(hrCo);
+    ComPtr<IWICImagingFactory> fac;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&fac)))) {
+        if (didInit) CoUninitialize();
+        if (outErr) *outErr = "WIC factory creation failed";
+        return false;
+    }
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapDecoder> dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> conv;
+    bool ok = SUCCEEDED(fac->CreateStream(&stream))
+           && SUCCEEDED(stream->InitializeFromMemory(const_cast<BYTE*>(bytes), static_cast<DWORD>(size)))
+           && SUCCEEDED(fac->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &dec))
+           && SUCCEEDED(dec->GetFrame(0, &frame))
+           && SUCCEEDED(fac->CreateFormatConverter(&conv))
+           && SUCCEEDED(conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom));
+    if (ok) {
+        UINT w = 0, h = 0;
+        conv->GetSize(&w, &h);
+        outTex->width = w; outTex->height = h; outTex->name = label;
+        outTex->rgba8.resize(size_t(w) * size_t(h) * 4);
+        ok = SUCCEEDED(conv->CopyPixels(nullptr, w * 4, UINT(outTex->rgba8.size()), outTex->rgba8.data()));
+    }
+    conv.Reset(); frame.Reset(); dec.Reset(); stream.Reset(); fac.Reset();
+    if (didInit) CoUninitialize();
+    if (!ok && outErr) *outErr = "WIC memory decode failed: " + label;
+    return ok;
+}
+
 bool LoadModernTextureAsset(const std::string& path, RawTextureAsset* outTex, std::string* outErr)
 {
     if (!outTex) return false;

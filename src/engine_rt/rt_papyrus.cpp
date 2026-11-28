@@ -76,10 +76,15 @@ uint64_t LoopHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, ui
     return r;
 }
 
+constexpr uint64_t kWin32AllocGranularityMask = 0xFFFFull;
+constexpr uint64_t kNearRel32RangeBytes       = 0x7FF00000ull;
+static_assert(kNearRel32RangeBytes < 0x80000000ull, "x64 RIP-relative stub must remain inside +/-2 GiB");
+
 // 14 bytes within 2 GB of the image: jmp [rip+0]; dq target
 uint8_t* NearStub(const Image& img, void* target) {
     const uint64_t lo = uint64_t(img.base) + img.sizeOfImage;
-    for (uint64_t a = (lo + 0xFFFF) & ~0xFFFFull; a < lo + 0x7FF00000ull; a += 0x10000) {
+    for (uint64_t a = (lo + kWin32AllocGranularityMask) & ~kWin32AllocGranularityMask;
+         a < lo + kNearRel32RangeBytes; a += 0x10000) {
         auto* p = static_cast<uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(a), 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
         if (!p) continue;
         p[0] = 0xFF; p[1] = 0x25; std::memset(p + 2, 0, 4);

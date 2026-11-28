@@ -37,14 +37,44 @@ cbuffer P : register(b0) {
     float4 footTrail[32];           // persistent world-space footprint & terrain-deformation trail (xyz abs, w strength)
     float4 dofParams;               // x: dofMaxDist (0=off), y: dofRadius (px), z: dofOrbBoost, w: weatherLens (0/1)
     float4 timeEnv;                 // x: gameHour (0..24), y: sunElev (-1..+1), z: lightning, w: menuPaused (0/1)
-    float4 engineWorld;             // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: unused
+    float4 engineWorld;             // x: cell/worldspace waterHeight, y: camStateId, z: hasEngineCell (0/1), w: cameraMode
     float4 camOptics[2];            // [0]: sensorWidthMm, focalLengthMm, apertureFStop, bokehShape; [1]: nearScale, farScale, nearBleed, focusSpeed
+    float4 physWorld[2];            // [0]: simTimeSec (pause-aware, wrap-free), gravityMps2, tideHeightU, tideVelocityMs; [1]: beaufortScale, swellDirX, swellDirY, springTide01
+    float4 seasonThermal0;          // x: snowDepthM, y: snowAlbedo, z: snowCompaction01, w: surfaceTempC (RawWeatherSim)
+    float4 seasonThermal1;          // x: iceThicknessM, y: blackIce01, z: frostRime01, w: iceFracture01 (RawWeatherSim)
+    float4 phenology0;              // x: budBreak01, y: chlorophyll01, z: autumnCarotenoid01, w: autumnAnthocyanin01 (RawWeatherSim)
+    float4 phenology1;              // x: leafAbscission01, y: canopySnowLoadKgM2, z: inversionStrength01, w: puddleEvapRate (RawWeatherSim)
+    float4 impactDecalPosR[16];     // xyz: world absolute position, w: radiusU (0 = inactive) (rt_combat_impact)
+    float4 impactDecalMeta[16];     // x: kind (0=blood,1=chip,2=scorch,3=frost,4=shock), y: ageSec, z: seedAngle, w: intensity
 };
 
 static const uint FLAG_MATCH = 1u, FLAG_SOFT = 2u, FLAG_GGX = 4u, FLAG_FOG = 8u, FLAG_CONTACT = 16u, FLAG_AO = 32u,
                   FLAG_CASCADES = 64u, FLAG_SURFACE = 128u, FLAG_SHADOWS = 256u,
                   FLAG_FOG_REPLACES = 512u, FLAG_RT = 1024u, FLAG_SKY = 2048u, FLAG_BOUNCE = 4096u, FLAG_REFLECT = 8192u, FLAG_BOUNCE_IN = 16384u, FLAG_CLOUDS = 32768u, FLAG_REST = 65536u, FLAG_LOD = 131072u, FLAG_ENV = 262144u, FLAG_CHAR = 524288u, FLAG_UNDERWATER = 1048576u;
 static const float PI = 3.14159265358979f;
+
+// Shared 160x90x64 3D Froxel volumetric range (single source of truth for FroxelPass.hlsl and LightFog.hlsl).
+static const float kFroxNear = 24.0f;
+static const float kFroxFar  = 42000.0f;
+
+float froxelSliceZ(float s) {
+    return kFroxNear * pow(kFroxFar / kFroxNear, saturate(s / 64.0f));
+}
+
+float froxelZToSlice(float z) {
+    const float zCl = clamp(z, kFroxNear, kFroxFar);
+    return saturate(log(zCl / kFroxNear) / log(kFroxFar / kFroxNear)) * 63.0f;
+}
+
+// GPU architectural hardware tier packed into flags.x bits 24..26 (0=Fallback, 1=RTX 3060, 2=4070, 3=4090, 4=5090).
+uint hwTier() { return (flags.x >> 24u) & 7u; }
+// Linear-program GPU frame-budget allocated cloud march steps packed in flags.x bits 27..31 (0=use tier default, else 16 + v*2).
+uint lpCloudSteps() {
+    const uint code = (flags.x >> 27u) & 31u;
+    if (code > 0u) { return clamp(16u + code * 2u, 16u, 64u); }
+    const uint t = hwTier();
+    return (t <= 1u) ? 24u : (t == 2u ? 36u : (t == 3u ? 48u : 56u));
+}
 
 float4 vs(uint i : SV_VertexID) : SV_Position {
     return float4(i == 1u ? 3.0f : -1.0f, i == 2u ? -3.0f : 1.0f, 0.0f, 1.0f);
@@ -148,10 +178,11 @@ void skyPalette(out float3 zenith, out float3 mid, out float3 horiz) {
 void evalWorldAtmosphere(out float3 outSun, out float3 outSkyZ, out float3 outSkyH, out float3 outAmbUp, out float3 outAmbDown) {
     const float elev = astroSunElev();
     const float nightW = smoothstep(0.03f, -0.07f, elev);
-    const float goldenW = smoothstep(-0.04f, 0.04f, elev) * (1.0f - smoothstep(0.14f, 0.34f, elev));
-    const float highSun = smoothstep(0.20f, 0.48f, elev);
+    const float goldenW = smoothstep(-0.04f, 0.03f, elev) * (1.0f - smoothstep(0.08f, 0.18f, elev));
+    const float highSun = smoothstep(0.16f, 0.42f, elev);
     const float cover = saturate(clouds.x);
-    const float overcastW = saturate(cover * 0.82f - 0.10f + weather.w * 0.45f + weather.z * 0.42f);
+    // Keep partly-cloudy Nordic skies crisp blue-silver; only push full overcast desaturation above 0.58 cover or real storms:
+    const float overcastW = saturate((cover - 0.52f) * 1.9f + weather.w * 0.55f + weather.z * 0.48f);
 
     // Unified Physical Radiative-Transfer Sun & Hemisphere (replaces Skyrim's 40 inconsistent 2011 TESWeather color tables!):
     // Solar irradiance & spectrum derive directly from astronomical elevation (Kasten-Young air mass + Rayleigh/Mie extinction)
@@ -170,10 +201,10 @@ void evalWorldAtmosphere(out float3 outSun, out float3 outSkyZ, out float3 outSk
     // Unified sky zenith, horizon & hemisphere ambient (100% locked across sky dome, fog, clouds, water & terrain!):
     float3 sZ, sM, sH;
     skyPalette(sZ, sM, sH);
-    const float dayLumScale = lerp(0.32f, 0.85f, smoothstep(-0.02f, 0.35f, elev));
-    const float3 overcastZ = float3(0.18f, 0.23f, 0.32f) * dayLumScale;
-    const float3 overcastH = float3(0.36f, 0.42f, 0.50f) * dayLumScale;
-    const float3 snowH = float3(0.44f, 0.49f, 0.56f) * dayLumScale;
+    const float dayLumScale = lerp(0.11f, 0.68f, smoothstep(0.03f, 0.42f, elev));
+    const float3 overcastZ = float3(0.16f, 0.21f, 0.30f) * dayLumScale;
+    const float3 overcastH = float3(0.32f, 0.38f, 0.46f) * dayLumScale;
+    const float3 snowH = float3(0.40f, 0.45f, 0.52f) * dayLumScale;
     const float3 nightZ = lerp(float3(0.012f, 0.022f, 0.048f), float3(0.022f, 0.032f, 0.056f), overcastW);
     const float3 nightH = lerp(float3(0.024f, 0.040f, 0.074f), float3(0.042f, 0.054f, 0.082f), overcastW);
 
@@ -255,47 +286,173 @@ float3 evalDynamicEnvCube(float3 rd, float roughness) {
     return min(env, 4.0f.xxx);
 }
 
-float cascadeSample(float3 p, uint k, bool filtered) {
-    const float4 q = float4(p, 1.0f);
-    const float3 sc = float3(dot(cascade[3 * k], q), dot(cascade[3 * k + 1], q), dot(cascade[3 * k + 2], q));
-    if (any(sc.xy <= 0.0f) || any(sc.xy >= 1.0f)) { return 1.0f; }
+// True 2x2 bilinear hardware-equivalent PCF tap on the R32F shadow atlas (eliminates 1-texel staircase boiling).
+float cascadeTapBilinear(int baseX, float2 texF, float side, float z) {
+    const float maxC = max(side - 1.0f, 0.0f);
+    const float2 pF = clamp(texF - 0.5f.xx, 0.0f.xx, maxC.xx);
+    const int2 i0 = int2(floor(pF));
+    const int2 i1 = min(i0 + int2(1, 1), int2(int(maxC), int(maxC)));
+    const float2 f = frac(pF);
+    const float s00 = z <= Atlas.Load(int3(baseX + i0.x, i0.y, 0)) ? 1.0f : 0.0f;
+    const float s10 = z <= Atlas.Load(int3(baseX + i1.x, i0.y, 0)) ? 1.0f : 0.0f;
+    const float s01 = z <= Atlas.Load(int3(baseX + i0.x, i1.y, 0)) ? 1.0f : 0.0f;
+    const float s11 = z <= Atlas.Load(int3(baseX + i1.x, i1.y, 0)) ? 1.0f : 0.0f;
+    return lerp(lerp(s00, s10, f.x), lerp(s01, s11, f.x), f.y);
+}
+
+// World-space stabilized cascade shadow evaluator returning both visibility and smooth UV-border coverage weight.
+// Uses world-locked Vogel-disk rotation + 2x2 bilinear PCF + sun-aligned bias to stop camera-axis shadow flickering.
+float cascadeSampleWithEdge(float3 p, uint k, bool filtered, out float edgeFade) {
     const float side = cascadeInfo.w;
+    if (!all(isfinite(p)) || !isfinite(side) || side < 1.0f) {
+        edgeFade = 0.0f;
+        return 1.0f;
+    }
+    const float3 sunU = all(isfinite(sunDir.xyz)) ? sunDir.xyz : float3(0.0f, 0.0f, 1.0f);
+    const float3 pBias = p + sunU * (k == 0u ? 1.15f : 2.85f);
+    const float4 q = float4(pBias, 1.0f);
+    const float3 sc = float3(dot(cascade[3 * k], q), dot(cascade[3 * k + 1], q), dot(cascade[3 * k + 2], q));
+    if (!all(isfinite(sc)) || any(sc.xy <= 0.0f) || any(sc.xy >= 1.0f)) {
+        edgeFade = 0.0f;
+        return 1.0f;
+    }
+    const float edgeDist = min(min(sc.x, 1.0f - sc.x), min(sc.y, 1.0f - sc.y));
+    edgeFade = smoothstep(0.0f, 0.055f, edgeDist);
     const float z = sc.z - (k == 0u ? cascadeInfo.x : cascadeInfo.y);
     const float2 tF = sc.xy * side;
-    const int2 t = int2(tF);
-    if (!filtered) { return z <= Atlas.Load(int3(t.x + int(k * side), t.y, 0)) ? 1.0f : 0.0f; }
-    // 2027 16-Tap IGN-Rotated Vogel-Disk PCSS Cascade Shadows (blocker-distance variable penumbra, replaces 3x3 box PCF):
-    const float ang0 = ign(tF) * 6.2831853f;
+    const int baseX = int(k * side);
+    if (!filtered) { return cascadeTapBilinear(baseX, tF, side, z); }
+    // World-locked Vogel-disk rotation (invariant to camera yaw/pitch/translation -> zero shadow-edge boiling!):
+    const float3 wpQ = floor((p + camPosW.xyz) * 0.25f);
+    const float ang0 = frac(sin(dot(wpQ, float3(12.9898f, 78.233f, 37.719f))) * 43758.5453f) * 6.2831853f;
+    const int2 t = clamp(int2(tF), int2(0, 0), int2(int(side - 1.0f), int(side - 1.0f)));
     float blockerSum = 0.0f;
     float blockerCnt = 0.0f;
     [unroll] for (int bi = 0; bi < 6; ++bi) {
-        const float rB = sqrt((float(bi) + 0.5f) / 6.0f) * 3.5f;
+        const float rB = sqrt((float(bi) + 0.5f) / 6.0f) * 3.25f;
         const float aB = float(bi) * 2.39996323f + ang0;
-        const int2 cB = clamp(t + int2(round(float2(cos(aB), sin(aB)) * rB)), int2(0, 0), int2(side - 1.0f, side - 1.0f));
-        const float dB = Atlas.Load(int3(cB.x + int(k * side), cB.y, 0));
+        const int2 cB = clamp(t + int2(round(float2(cos(aB), sin(aB)) * rB)), int2(0, 0), int2(int(side - 1.0f), int(side - 1.0f)));
+        const float dB = Atlas.Load(int3(baseX + cB.x, cB.y, 0));
         if (dB < z) { blockerSum += (z - dB); blockerCnt += 1.0f; }
     }
     if (blockerCnt < 0.5f) { return 1.0f; }
     const float avgDelta = blockerSum / blockerCnt;
-    const float penRad = clamp(1.15f + avgDelta * 180.0f, 1.15f, 4.5f);
+    const float penRad = clamp(1.10f + avgDelta * 170.0f, 1.10f, 4.25f);
     float lit = 0.0f;
-    [unroll] for (int si = 0; si < 16; ++si) {
-        const float rS = sqrt((float(si) + 0.5f) / 16.0f) * penRad;
+    [unroll] for (int si = 0; si < 12; ++si) {
+        const float rS = sqrt((float(si) + 0.5f) / 12.0f) * penRad;
         const float aS = float(si) * 2.39996323f + ang0;
-        const int2 cS = clamp(t + int2(round(float2(cos(aS), sin(aS)) * rS)), int2(0, 0), int2(side - 1.0f, side - 1.0f));
-        lit += z <= Atlas.Load(int3(cS.x + int(k * side), cS.y, 0)) ? 1.0f : 0.0f;
+        const float2 tapF = tF + float2(cos(aS), sin(aS)) * rS;
+        lit += cascadeTapBilinear(baseX, tapF, side, z);
     }
-    return lit * (1.0f / 16.0f);
+    return lit * (1.0f / 12.0f);
 }
 
-// Sun visibility from the game's cascades with smooth cascade-transition blending (eliminates hard split seams).
+float cascadeSample(float3 p, uint k, bool filtered) {
+    float edgeFade = 0.0f;
+    const float vis = cascadeSampleWithEdge(p, k, filtered, edgeFade);
+    return lerp(1.0f, vis, edgeFade);
+}
+
+// Sun visibility from the game's cascades with linear-Z split blending and spatial UV-border fallback
+// (eliminates hard cascade-split pops and camera-rotation frustum-edge shadow flickering).
 float cascadeShadow(float3 p, float d, bool filtered) {
     if ((flags.x & FLAG_SHADOWS) == 0u || sunColour.w < 0.5f) { return 1.0f; }
     if (flags.z <= 1u) { return cascadeSample(p, 0u, filtered); }
-    const float split = cascadeInfo.z;
-    const float band = split * 0.90f;
-    if (d <= band) { return cascadeSample(p, 0u, filtered); }
-    if (d >= split) { return cascadeSample(p, 1u, filtered); }
-    const float w = smoothstep(band, split, d);
-    return lerp(cascadeSample(p, 0u, filtered), cascadeSample(p, 1u, filtered), w);
+    const float splitD = cascadeInfo.z;
+    float wZ = 0.0f;
+    if (isfinite(splitD) && splitD > 0.0f && splitD < proj.x) {
+        const float zCur = viewZOf(d);
+        const float zSplit = viewZOf(splitD);
+        wZ = smoothstep(zSplit * 0.78f, zSplit, zCur);
+    } else {
+        wZ = smoothstep(splitD * 0.90f, splitD, d);
+    }
+    if (wZ >= 0.999f) { return cascadeSample(p, 1u, filtered); }
+    float edge0 = 0.0f;
+    const float s0 = cascadeSampleWithEdge(p, 0u, filtered, edge0);
+    // Cross-fade into cascade 1 whenever approaching either the linear-Z split or cascade 0's rotating UV edge:
+    const float w = saturate(max(wZ, 1.0f - edge0));
+    if (w <= 0.001f) { return s0; }
+    const float s1 = cascadeSample(p, 1u, filtered);
+    return lerp(s0, s1, w);
 }
+
+// Wave 25 First-Step Trapping-Region Disocclusion Separator:
+// Stays 0 inside the converged temporal basin (|cur - prev| <= 1.65 * sigma on calm surfaces)
+// and snaps decisively toward 1 on step 1 when disocclusion or fast camera motion crosses the barrier.
+float rawTrappingSeparator(float curVal, float prevVal, float sigma, float speedPx, float edgeGate) {
+    const float safeSig = max(sigma, 0.035f);
+    const float zDist = abs(curVal - prevVal) / safeSig;
+    const float barrier = smoothstep(1.65f, 3.40f, zDist);
+    const float motionGate = saturate(speedPx * 0.085f + (1.0f - saturate(edgeGate)) * 0.72f);
+    return saturate(barrier * (0.45f + 0.55f * motionGate));
+}
+
+// Wave 46 Unified Wind-Advected Convective Cloud Shadow Model (shared 1:1 by Clouds.hlsl, Lighting.hlsl,
+// VolumetricPass.hlsl, FroxelPass.hlsl, LightFog.hlsl, DistantLod.hlsli, and RawTerrainWorld.hlsl!):
+// Zero cbuffer changes; projects worldPosAbs along sunDir to the convective LCL cloud base (clouds.y),
+// advects with cloudWind.xy * simTime * 0.28 (exact match to Clouds.hlsl!), and evaluates dual-octave
+// domain-warped convective coverage matching clouds.x cover & storm density.
+#define RAW_HAS_UNIFIED_CLOUD_SHADOW 1
+
+float rawCloudHash3(float3 p) {
+    p = frac(p * 0.3183099f + 0.1f);
+    p *= 17.0f;
+    return frac(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+
+float rawCloudNoise3(float3 x) {
+    const float3 i = floor(x), f = frac(x);
+    const float3 u = f * f * (3.0f - 2.0f * f);
+    return lerp(lerp(lerp(rawCloudHash3(i), rawCloudHash3(i + float3(1.0f, 0.0f, 0.0f)), u.x),
+                     lerp(rawCloudHash3(i + float3(0.0f, 1.0f, 0.0f)), rawCloudHash3(i + float3(1.0f, 1.0f, 0.0f)), u.x), u.y),
+                lerp(lerp(rawCloudHash3(i + float3(0.0f, 0.0f, 1.0f)), rawCloudHash3(i + float3(1.0f, 0.0f, 1.0f)), u.x),
+                     lerp(rawCloudHash3(i + float3(0.0f, 1.0f, 1.0f)), rawCloudHash3(i + float3(1.0f, 1.0f, 1.0f)), u.x), u.y),
+                u.z);
+}
+
+// Single-source-of-truth 2D wind-advected dual-octave domain-warped convective cloud field (shared with Clouds.hlsl).
+float rawCloudConvectiveField(float2 worldXY, float simTime) {
+    const float2 advXY = worldXY + cloudWind.xy * (simTime * 0.28f);
+    const float2 wUv = advXY * (1.0f / 46000.0f);
+    const float tMorph = simTime * 0.0022f;
+    const float2 warp = float2(
+        rawCloudNoise3(float3(wUv * 1.35f + float2(3.1f, 7.4f), tMorph * 0.65f)) - 0.5f,
+        rawCloudNoise3(float3(wUv * 1.35f + float2(11.7f, 2.3f), tMorph * 0.65f + 5.1f)) - 0.5f) * 0.44f;
+    const float o0 = rawCloudNoise3(float3(wUv + warp, 1.3f + tMorph));
+    const float o1 = rawCloudNoise3(float3((wUv - warp * 0.60f) * 2.35f + 7.1f, 3.7f - tMorph * 0.80f));
+    return o0 * 0.62f + o1 * 0.38f;
+}
+
+float cloudShadowN(float3 worldPosAbs, uint samples = 1u) {
+    if (clouds.x <= 0.005f || clouds.z <= 0.0f || clouds.w <= 0.0f) { return 1.0f; }
+    const float3 sunD = astroSunDir();
+    if (sunD.z <= 0.04f) { return 1.0f; }
+
+    const float simTime = physWorld[0].x > 0.001f ? physWorld[0].x : camPosW.w;
+    const float cover = saturate(clouds.x);
+    const float stormType = saturate(weather.w * 1.4f + max(cover - 0.78f, 0.0f) * 2.5f);
+
+    // Project absolute world position along sunDir up to the convective LCL cloud base (clouds.y + 0.16 * thickness):
+    const float lclZ = clouds.y + clouds.z * 0.16f;
+    const float tHit = min(max((lclZ - worldPosAbs.z) / max(sunD.z, 0.16f), 0.0f), 220000.0f);
+    const float2 projXY = worldPosAbs.xy + sunD.xy * tHit;
+
+    float wCov = rawCloudConvectiveField(projXY, simTime);
+    if (samples > 1u) {
+        // Optional 2nd sample at mid-tower altitude for thick convective cumulus banks:
+        const float tMid = min(max((clouds.y + clouds.z * 0.52f - worldPosAbs.z) / max(sunD.z, 0.16f), 0.0f), 220000.0f);
+        const float wMid = rawCloudConvectiveField(worldPosAbs.xy + sunD.xy * tMid, simTime);
+        wCov = wCov * 0.62f + wMid * 0.38f;
+    }
+
+    // Smooth physically soft cloud-shadow coverage matching Clouds.hlsl convective threshold & storm density:
+    const float thresh = lerp(0.70f, lerp(0.38f, 0.24f, stormType), cover);
+    const float cloudOcc = smoothstep(thresh - 0.14f, min(thresh + 0.26f, 0.96f), wCov);
+    const float sunElFade = smoothstep(0.04f, 0.16f, sunD.z);
+    const float shadowStrength = saturate(clouds.w) * lerp(0.56f, 0.84f, stormType) * saturate(cover * 1.32f) * sunElFade;
+    return saturate(1.0f - cloudOcc * shadowStrength);
+}
+
+float cloudShadow(float3 worldPosAbs) { return cloudShadowN(worldPosAbs, 1u); }

@@ -38,6 +38,26 @@ public:
     uint32_t GetDrawCalls()     const { return m_drawCalls; }
     uint32_t GetRTSwitches()    const { return m_rtSwitches; }
     uint32_t GetShaderChanges() const { return m_shaderChanges; }
+    uint32_t GetVanillaDrawCalls() const { return m_vanillaDrawCalls; }
+    uint32_t GetTransformedDrawCalls() const { return m_transformedDrawCalls; }
+    float    GetVanillaPassthroughPct() const {
+        const uint32_t total = m_vanillaDrawCalls + m_transformedDrawCalls;
+        return total > 0u ? (100.0f * static_cast<float>(m_vanillaDrawCalls) / static_cast<float>(total)) : 0.0f;
+    }
+
+    // Wave 88: Zero-allocation cached Input-Assembler + SRV bind state for live 14-class draw-call classification.
+    struct DrawBindState {
+        D3D11_PRIMITIVE_TOPOLOGY topology      = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+        ID3D11InputLayout*       inputLayout   = nullptr;
+        ID3D11Buffer*            vertexBuffer0 = nullptr;
+        UINT                     vb0Stride     = 0u;
+        UINT                     vb0Offset     = 0u;
+        ID3D11Buffer*            indexBuffer   = nullptr;
+        DXGI_FORMAT              ibFormat      = DXGI_FORMAT_UNKNOWN;
+        UINT                     ibOffset      = 0u;
+        uint64_t                 psSrvHash     = 0u;
+    };
+    const DrawBindState& GetDrawBindState() const { return m_drawBindState; }
 
     // State cache optimization statistics (per-frame, reset in ResetFrameStats)
     uint32_t GetRedundantSRVCalls()   const { return m_redundantSRV; }
@@ -205,6 +225,11 @@ private:
     uint32_t m_drawCalls     = 0;
     uint32_t m_rtSwitches    = 0;
     uint32_t m_shaderChanges = 0;
+    uint32_t m_vanillaDrawCalls = 0;
+    uint32_t m_transformedDrawCalls = 0;
+    uint32_t m_classDrawHistogram[15] = {};
+    DrawBindState m_drawBindState{};
+    void RecordLiveDrawClassification(uint32_t indexOrVertexCount, bool indexed, bool transformedActive);
 
     // Current state tracking
     ID3D11PixelShader*  m_currentPS = nullptr;

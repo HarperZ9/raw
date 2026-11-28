@@ -31,6 +31,18 @@ Fn g_detachAll = nullptr, g_killAll = nullptr;
 BuildFn g_build = nullptr;
 std::string g_hookResult;
 
+struct GridCellArrayLayout {
+    uint64_t vtable;
+    int32_t  shiftX;
+    int32_t  shiftY;
+    uint32_t length;
+    uint32_t pad0;
+    uint64_t cellsPtr;
+};
+static_assert(offsetof(GridCellArrayLayout, shiftX) == 0x08u, "GridCellArray::shiftX offset must be 0x08");
+static_assert(offsetof(GridCellArrayLayout, length) == 0x10u, "GridCellArray::length offset must be 0x10");
+static_assert(offsetof(GridCellArrayLayout, cellsPtr) == 0x18u, "GridCellArray::cells offset must be 0x18");
+
 struct Grid { uint8_t* arr = nullptr; int32_t x = 0, y = 0; uint32_t length = 0; uint64_t cells = 0; uint32_t loaded = 0; };
 
 bool Read(const Image& img, Grid* g) {
@@ -39,8 +51,9 @@ bool Read(const Image& img, Grid* g) {
     if (!single || !cells) return false;
     if (!ReadU64(img.base + single, &tes) || !tes) return false;
     if (!ReadU64(reinterpret_cast<void*>(tes + cells), &arr) || !arr) return false;
-    if (!ReadU64(reinterpret_cast<void*>(arr + 0x08), &xy) || !ReadU64(reinterpret_cast<void*>(arr + 0x10), &len)) return false;
-    if (!ReadU64(reinterpret_cast<void*>(arr + 0x18), &g->cells)) return false;
+    if (!ReadU64(reinterpret_cast<void*>(arr + offsetof(GridCellArrayLayout, shiftX)), &xy) ||
+        !ReadU64(reinterpret_cast<void*>(arr + offsetof(GridCellArrayLayout, length)), &len)) return false;
+    if (!ReadU64(reinterpret_cast<void*>(arr + offsetof(GridCellArrayLayout, cellsPtr)), &g->cells)) return false;
     g->arr = reinterpret_cast<uint8_t*>(arr);
     g->x = int32_t(uint32_t(xy));
     g->y = int32_t(uint32_t(xy >> 32));
@@ -61,7 +74,7 @@ bool Empty(const Grid& g) { return g.loaded == 0; }
 // The new length lands while the array holds no cell; the next SetCenter fills the new grid.
 std::string Apply(const Grid& g, uint32_t want) {
     const uint32_t before = g.length;
-    *reinterpret_cast<volatile uint32_t*>(g.arr + 0x10) = want;
+    *reinterpret_cast<volatile uint32_t*>(g.arr + offsetof(GridCellArrayLayout, length)) = want;
     std::string old;
     const bool ok = SetSetting(*g_img, *g_refs, "uGridsToLoad:General", std::to_string(want), &old);
     char extra[128];
@@ -85,7 +98,7 @@ uint64_t BuildHook(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
     const uint64_t r = g_build(a, b, c, d);
     ++g_builds;
     uint64_t len = 0;
-    if (ReadU64(reinterpret_cast<void*>(a + 0x10), &len) && uint32_t(len) && uint32_t(len) < 32) g_lastBuildLength = uint32_t(len);
+    if (ReadU64(reinterpret_cast<void*>(a + offsetof(GridCellArrayLayout, length)), &len) && uint32_t(len) && uint32_t(len) < 32) g_lastBuildLength = uint32_t(len);
     return r;
 }
 

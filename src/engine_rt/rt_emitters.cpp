@@ -54,6 +54,23 @@ std::string Lower(const char* p, size_t max) {
     return s;
 }
 
+// Wave 82 ABI layout guards (SkyrimSE 1.7.104.0 verified BSRenderPass / BSGeometry / BSEffectShaderMaterial offsets):
+static constexpr uint32_t kCe17104OffPassProp    = 0x08u;
+static constexpr uint32_t kCe17104OffPassGeo     = 0x10u;
+static constexpr uint32_t kCe17104OffGeoWorldPos = 0xE4u;
+static constexpr uint32_t kCe17104OffGeoRadius   = 0xF0u;
+static constexpr uint32_t kCe17104OffGeoAlpha    = 0x120u;
+static constexpr uint32_t kCe17104OffAlphaFlags  = 0x30u;
+static constexpr uint32_t kCe17104OffPropMat     = 0x78u;
+static constexpr uint32_t kCe17104OffMatBaseCol  = 0x48u;
+static constexpr uint32_t kCe17104OffMatScale    = 0x6Cu;
+static constexpr uint32_t kCe17104OffMatTexPath  = 0x70u;
+static_assert(kCe17104OffGeoRadius == kCe17104OffGeoWorldPos + 12u, "NiBound radius follows worldPos vec3");
+static_assert(kCe17104OffMatTexPath == kCe17104OffMatScale + 4u, "Effect material tex path follows scale");
+static_assert(kCe17104OffPassProp == 0x08u && kCe17104OffPassGeo == 0x10u && kCe17104OffGeoAlpha == 0x120u &&
+              kCe17104OffAlphaFlags == 0x30u && kCe17104OffPropMat == 0x78u && kCe17104OffMatBaseCol == 0x48u,
+              "BSRenderPass/BSGeometry emitter ABI lock");
+
 // the draw's fields, read under structured exception handling (no objects that need unwinding here)
 bool ReadDraw(uint64_t pass, Raw* r, char* path, size_t pathMax) {
     auto no = [](int k) { ++g_why[k]; return false; };

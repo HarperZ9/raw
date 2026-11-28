@@ -754,7 +754,7 @@ bool VolumetricClouds::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx, I
             return false;
     }
 
-    // Defer noise generation to first ExecutePass — dispatching compute shaders
+    // Defer noise generation to first ExecutePass: dispatching compute shaders
     // during kDataLoaded init corrupts D3D11 state and breaks Scaleform UI.
     // m_noiseGenerated = false already, so first ExecutePass will generate them.
 
@@ -776,11 +776,9 @@ bool VolumetricClouds::Initialize(ID3D11Device* dev, ID3D11DeviceContext* ctx, I
     // Register SRV at t27 for shader passes
     SRVInjector::Get().RegisterSRV(kCloudSRVSlot, m_cloudSRV);
 
-    // Register as PostGeometry pipeline pass
-    // Register at PostGeometry with priority 80 (after core effects at 15-25,
-    // before SceneCompositor at 90).  PostSky is ideal but currently never
-    // fires because no sky shader hashes are registered for phase detection.
-    // TODO: re-enable PostSky once sky shader hash discovery is implemented.
+    // Register as PostGeometry pipeline pass at priority 80 (after core effects at 15-25,
+    // before SceneCompositor at 90). Live volumetric clouds are superseded by the native
+    // DX12 compute pass (RawVolCloudsPass.hlsl); this legacy D3D11 stage stays on PostGeometry.
     m_pipelineHandle = pl.AddPass({
         .name     = "VolumetricClouds",
         .stage    = PipelineStage::PostGeometry,

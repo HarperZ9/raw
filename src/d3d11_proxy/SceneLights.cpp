@@ -262,13 +262,25 @@ void AddEngineLights(SceneLighting& f)
                           [&](uint32_t a, uint32_t b) { return importance[a] > importance[b]; });
         candCount = raw::bridge::kMaxSceneLights;
     }
-    // Fundamental Engine-Level World-Space Temporal Light Stabilizer:
-    // 1) Smooths BOTH 3D world position (kills Skyrim's 60Hz LIGH FLICKER XYZ jitter that caused RT shadow strobing!)
-    //    AND color/radius with calm 0.08 EMA.
-    // 2) Holds lights that momentarily drop out of Skyrim's frustum culler for 16 frames with smooth fade-out so
-    //    interior lighting NEVER pops or flickers when turning the camera!
+    // Wave 33 Fundamental Engine-Level World-Space Temporal Light Stabilizer:
+    // 1) Resets cleanly on cell transitions / fast-travel (posAdjust jump > 900u or interior flip) so old-cell lights never ghost.
+    // 2) Smooths 3D world position (10u deadband kills 60Hz LIGH FLICKER XYZ shadow strobe) + calm 0.08 color/radius EMA.
+    // 3) Holds frustum-culled stationary lights for 180 frames (3s) at full brightness + 60-frame smooth fade-out so
+    //    indoor window/hearth/brazier lights NEVER pop or pump when turning the camera!
     struct SmoothLight { float wpos[3]; float col[3]; float radius; int shadowCh; uint32_t age; };
     static std::vector<SmoothLight> g_smooth;
+    static float g_prevAdj[3] = {};
+    static bool g_prevInit = false;
+    static bool g_prevInt = false;
+    if (g_prevInit) {
+        const float jx = f.posAdjust[0] - g_prevAdj[0], jy = f.posAdjust[1] - g_prevAdj[1], jz = f.posAdjust[2] - g_prevAdj[2];
+        if (jx * jx + jy * jy + jz * jz > 900.0f * 900.0f || (f.hasEngineCell && f.isInterior != g_prevInt)) {
+            g_smooth.clear();
+        }
+    }
+    for (int c = 0; c < 3; ++c) g_prevAdj[c] = f.posAdjust[c];
+    g_prevInit = true;
+    if (f.hasEngineCell) g_prevInt = f.isInterior;
     for (auto& sl : g_smooth) ++sl.age;
     auto smoothLight = [&](float wpos[3], float col[3], float& radius, int shadowCh) {
         int hit = -1;
@@ -280,16 +292,13 @@ void AddEngineLights(SceneLighting& f)
         }
         if (hit >= 0) {
             SmoothLight& sl = g_smooth[hit];
-            // Position deadband hysteresis (10u): completely kills Skyrim's 60Hz LIGH FLICKER XYZ position strobe
-            // on stationary hearths, candles & braziers while still tracking moving torches & spells smoothly!
             const float pdx = wpos[0] - sl.wpos[0], pdy = wpos[1] - sl.wpos[1], pdz = wpos[2] - sl.wpos[2];
             const float pDist2 = pdx * pdx + pdy * pdy + pdz * pdz;
             const float posAlpha = (pDist2 < 10.0f * 10.0f) ? 0.0f : 0.10f;
             for (int c = 0; c < 3; ++c) {
                 if (posAlpha > 0.0f) sl.wpos[c] = sl.wpos[c] + (wpos[c] - sl.wpos[c]) * posAlpha;
                 wpos[c] = sl.wpos[c];
-                // Calm 0.055 color EMA kills 60Hz candle/torch/particle intensity flicker indoors & outdoors!
-                sl.col[c] = sl.col[c] + (col[c] - sl.col[c]) * 0.055f;
+                sl.col[c] = sl.col[c] + (col[c] - sl.col[c]) * 0.06f;
                 col[c] = sl.col[c];
             }
             sl.radius = sl.radius + (radius - sl.radius) * 0.06f;
@@ -298,7 +307,7 @@ void AddEngineLights(SceneLighting& f)
             sl.age = 0;
         } else if (g_smooth.size() < 256) {
             SmoothLight sl{};
-            for (int c = 0; c < 3; ++c) { sl.wpos[c] = wpos[c]; sl.col[c] = col[c] * 0.25f; col[c] = sl.col[c]; }
+            for (int c = 0; c < 3; ++c) { sl.wpos[c] = wpos[c]; sl.col[c] = col[c] * 0.85f; col[c] = sl.col[c]; }
             sl.radius = radius;
             sl.shadowCh = shadowCh;
             sl.age = 0;
@@ -361,13 +370,13 @@ void AddEngineLights(SceneLighting& f)
             for (int c = 0; c < 3; ++c) l.position[c] = wp[c] - f.posAdjust[c];
         }
     }
-    // Graceful 16-frame frustum-cull persistence & fade-out: prevents lights from popping/flickering off for 1-8 frames
-    // when turning the camera in interiors or near doorways!
+    // Wave 33 Zero-Flicker Frustum-Cull Persistence: hold stationary interior/nearby lights for 180 frames (3.0s)
+    // at full brightness + 60-frame smooth fade-out so turning away from indoor windows/braziers NEVER flickers!
     for (const SmoothLight& sl : g_smooth) {
-        if (sl.age >= 1 && sl.age <= 16 && f.lightCount < raw::bridge::kMaxSceneLights) {
+        if (sl.age >= 1 && sl.age <= 240 && f.lightCount < raw::bridge::kMaxSceneLights) {
             const float rx = sl.wpos[0] - f.posAdjust[0], ry = sl.wpos[1] - f.posAdjust[1], rz = sl.wpos[2] - f.posAdjust[2];
-            if (rx * rx + ry * ry + rz * rz < 2800.0f * 2800.0f) {
-                const float fade = 1.0f - float(sl.age) / 17.0f;
+            if (rx * rx + ry * ry + rz * rz < 3200.0f * 3200.0f) {
+                const float fade = sl.age <= 180 ? 1.0f : (1.0f - float(sl.age - 180) / 61.0f);
                 SceneLight& l = f.lights[f.lightCount++];
                 l.position[0] = rx; l.position[1] = ry; l.position[2] = rz;
                 l.colour[0] = sl.col[0] * fade; l.colour[1] = sl.col[1] * fade; l.colour[2] = sl.col[2] * fade;
@@ -377,7 +386,19 @@ void AddEngineLights(SceneLighting& f)
             }
         }
     }
-    g_smooth.erase(std::remove_if(g_smooth.begin(), g_smooth.end(), [](const SmoothLight& sl) { return sl.age > 24; }), g_smooth.end());
+    g_smooth.erase(std::remove_if(g_smooth.begin(), g_smooth.end(), [](const SmoothLight& sl) { return sl.age > 248; }), g_smooth.end());
+    // Deterministic world-space order across the active lights so RtShadow.hlsl light indices stay rock-solid across camera turns!
+    if (f.lightCount > 1) {
+        std::sort(f.lights, f.lights + f.lightCount, [&](const SceneLight& a, const SceneLight& b) {
+            const int ax = int(std::floor((a.position[0] + f.posAdjust[0]) * 0.0625f));
+            const int bx = int(std::floor((b.position[0] + f.posAdjust[0]) * 0.0625f));
+            if (ax != bx) return ax < bx;
+            const int ay = int(std::floor((a.position[1] + f.posAdjust[1]) * 0.0625f));
+            const int by = int(std::floor((b.position[1] + f.posAdjust[1]) * 0.0625f));
+            if (ay != by) return ay < by;
+            return int(std::floor((a.position[2] + f.posAdjust[2]) * 0.0625f)) < int(std::floor((b.position[2] + f.posAdjust[2]) * 0.0625f));
+        });
+    }
     if (hasEngineSun) {
         f.hasSun = true;
         for (int c = 0; c < 3; ++c) f.sunDirection[c] = engineSunDir[c];

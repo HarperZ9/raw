@@ -25,6 +25,8 @@
 #include "OcclusionCuller.h"
 #include "WeatherDrive.h"
 #include "Tonemap.h"
+#include "../ui/RawStudioUi.h"
+#include "../d3d12_bridge/HardwareProfile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -106,6 +108,7 @@ void LightingApplyTuning()
         rt.skinCull = t.rtSkinCull; rt.skinRatio = t.rtSkinRatio; rt.skinMin = t.rtSkinMin;
         rt.incremental = t.rtIncremental;
         rt.camSteps = t.rtCamSteps;
+        rt.hwTier = t.hwTier;
         Bridge()->TuneRt(rt);
     }
     g_sceneGeometryActive = Cfg().enabled && t.rtShadows && TxMode_Get() == 1;
@@ -117,7 +120,11 @@ void LightingApplyTuning()
     SceneGeometry_SetSkinFilter(t.rtSkinFilter);
     SceneGeometry_SetAlphaFollow(t.rtAlphaFollow);
     SceneGeometry_SetSkinAlpha(t.rtSkinAlpha);
-    GameComposite_Set({t.mode == 2 && t.ao, t.mode == 2 && t.volumetricFog && t.fogReplacesGame});
+    const bool anyDebugView = (t.view != 0 || t.waterView != 0);
+    GameComposite_Set({
+        anyDebugView || (t.mode == 2 && t.ao),
+        anyDebugView || (t.mode == 2 && t.volumetricFog && t.fogReplacesGame)
+    });
 }
 
 void LoadLightingConfig(const std::string& ini)
@@ -129,25 +136,17 @@ void LoadLightingConfig(const std::string& ini)
         GetPrivateProfileStringA("Lighting", k, "", buf, sizeof(buf), ini.c_str());
         return buf[0] ? std::strtof(buf, nullptr) : d;
     };
-    // Quality presets (0=Performance, 1=Balanced, 2=High, 3=Ultra, 4=Overdrive; -1=Auto-detect from GPU VRAM).
+    // Architectural Hardware Profiler (RTX 3060-5090, RDNA2-4, Arc):
+    // Quality=-1 auto-detects from GPU architecture/VRAM; HwTier=-1 auto-selects adaptive ray/cloud tier (0..4).
+    const raw::bridge::HardwareProfile hw = raw::bridge::DetectHardwareProfile();
     int quality = i("Quality", -1);
     if (quality < 0) {
-        size_t vramGB = 16;
-        IDXGIFactory1* fac = nullptr;
-        if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), reinterpret_cast<void**>(&fac))) && fac) {
-            IDXGIAdapter1* ad = nullptr;
-            if (SUCCEEDED(fac->EnumAdapters1(0, &ad)) && ad) {
-                DXGI_ADAPTER_DESC1 desc{};
-                if (SUCCEEDED(ad->GetDesc1(&desc))) {
-                    vramGB = static_cast<size_t>(desc.DedicatedVideoMemory / (1024ULL * 1024ULL * 1024ULL));
-                }
-                ad->Release();
-            }
-            fac->Release();
-        }
-        quality = (vramGB >= 16) ? 4 : (vramGB >= 10) ? 3 : (vramGB >= 7) ? 2 : (vramGB >= 5) ? 1 : 0;
-        Log("[Lighting] Auto GPU tier: %zu GB VRAM -> Quality=%d", vramGB, quality);
+        quality = hw.recommendedQuality;
     }
+    const int hwTierIni = i("HwTier", -1);
+    t.hwTier = (hwTierIni >= 0 && hwTierIni <= 4) ? hwTierIni : hw.tier;
+    Log("[Lighting] GPU profile: '%s' (%u MB VRAM, %u cores) -> HwTier=%d, Quality=%d (recommended tx Workers=%u)",
+        hw.gpuName.empty() ? "unknown" : hw.gpuName.c_str(), hw.vramMB, hw.logicalCores, t.hwTier, quality, hw.recommendedTxWorkers);
     int defRt = 1, defRtSky = 1, defRtRefl = 1, defRtFar = 1, defRtSkin = 1, defClouds = 1, defFog = 1;
     if (quality == 0) {
         defRt = 0; defRtSky = 0; defRtRefl = 0; defRtFar = 0; defRtSkin = 0; defClouds = 0; defFog = 0;
@@ -335,6 +334,62 @@ bool LightingAtOpaque(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr)
     if (!mask)
         for (uint32_t k = 0; k < l.lightCount; ++k) l.lights[k].shadowChannel = -1;
     b->SetLighting(l);
+    if (TxMode_Get() == 1) {
+        if (auto* pi = PG_GetProxyInterface(); pi && pi->device) {
+            const auto& sim = raw::ui::GetWorldSimTuning();
+            if (sim.geomSubdivLevel > 0) {
+                const float curv = sim.geomCurvature;
+                const float disp = sim.geomDisplaceScale * 0.08f;
+                // Keep static vertex snow-lift at 0.0u so Z-prepass, Havok doors, and adjacent cell borders stay
+                // bit-exact (3D sastrugi snowdrift relief & overhang rims run in Lighting.hlsl without shifting mesh vertices).
+                raw::tx::SetSubdivParams(pi->device, curv, 0.0f, disp);
+            }
+            // Wave 35: Push live planetary time, gravity, Nirn dual-moon tides & Beaufort sea state into raw::tx
+            // so Skyrim's water geometry physically tessellates (1->16 / 1->4) and rolls in real 3D!
+            struct WorldSimWaterPod {
+                uint32_t simTicks, actorsTracked, navMeshesLoaded, navVertsLoaded, navTrisLoaded;
+                uint8_t  activeDirective, tacticalAction, attackTokensUsed, navReady;
+                float    expectedPayoff, strideDampMult, snowDepthU, windSpeed;
+                float    ambientTempC, coreWarmth, shiverIntensity, staminaRegenMult;
+                float    physicsSubstepMs, acousticRt60Sec, acousticLowPassHz;
+                uint8_t  physicsSubsteps, acousticEnvClass, freezingRisk, marketTier;
+                float    economyBuyMult, lockOnFovDeg, largestSaveMb;
+                uint32_t totalSavesFound;
+                uint8_t  camLockedOn, saveBloatWarn, squadMstComps, squadMstRounds;
+                float    squadSpanLengthU;
+                float    synopticHpa, adaptiveQuality, synopticCloud, synopticRain, synopticSnow, synopticLightning;
+                float    gravityMps2, tideHeightU, tideVelocityMs, springTide01, beaufortScale, swellDirX, swellDirY, simClockSec;
+            };
+            using WaterTelFn = int (*)(WorldSimWaterPod*);
+            static HMODULE s_wMod = nullptr;
+            static WaterTelFn s_wFn = nullptr;
+            if (!s_wFn) {
+                if (!s_wMod) s_wMod = GetModuleHandleA("raw_engine.dll");
+                if (s_wMod) s_wFn = reinterpret_cast<WaterTelFn>(GetProcAddress(s_wMod, "RAW_GetWorldSimTelemetry"));
+            }
+            static LARGE_INTEGER s_wFreq{}, s_wStart{};
+            if (!s_wFreq.QuadPart) { QueryPerformanceFrequency(&s_wFreq); QueryPerformanceCounter(&s_wStart); }
+            LARGE_INTEGER wNow{};
+            QueryPerformanceCounter(&wNow);
+            float wTime = (s_wFreq.QuadPart > 0) ? float(double(wNow.QuadPart - s_wStart.QuadPart) / double(s_wFreq.QuadPart)) : 0.0f;
+            const bool isCoastalSea = !l.isInterior && std::abs(l.waterHeight - (-14000.0f)) < 350.0f;
+            float wGrav = 9.80665f, wTide = 0.0f, wBeauf = isCoastalSea ? 2.2f : 0.45f, wSx = 0.866f, wSy = 0.500f;
+            WorldSimWaterPod wp{};
+            if (s_wFn && s_wFn(&wp) && wp.simTicks > 0u) {
+                if (wp.simClockSec > 0.0f) wTime = wp.simClockSec;
+                if (wp.gravityMps2 > 1.0f) wGrav = wp.gravityMps2;
+                // Apply ocean tides & heavy Beaufort swell geometry strictly on coastal sea-level water (Z ~ -14000u).
+                // Inland Whiterun stone basins & Riverwood streams stay gently rippled so pools never empty or flood masonry!
+                wTide  = isCoastalSea ? std::clamp(wp.tideHeightU * 0.25f, -6.0f, 6.0f) : 0.0f;
+                wBeauf = l.isInterior ? 0.25f : (isCoastalSea ? wp.beaufortScale : std::min(wp.beaufortScale, 0.55f));
+                wSx    = wp.swellDirX;
+                wSy    = wp.swellDirY;
+            } else if (l.isInterior) {
+                wBeauf = 0.25f;
+            }
+            raw::tx::SetWaterWaveState(pi->device, wTime, wGrav, wTide, wBeauf, wSx, wSy);
+        }
+    }
     b->SetRtDraws(SceneGeometry_Take());
     raw::bridge::PassConstants k = Cfg().k;
     return b->Execute(sceneHdr, sceneHdr, k);
@@ -358,13 +413,17 @@ bool LightingAtWater(ID3D11DeviceContext* real, ID3D11Resource* sceneHdr, bool w
 {
     raw::bridge::D3D12Bridge* b = Bridge();
     const LightingTuning& t = Cfg().light;
+    // Never let RtWater overwrite Lighting Debug Views (1..36, e.g. view_motion_outline=35, view_normals=1)
+    // on streams/lakes; skip skin SSS on all Lighting/Water debug views as well.
+    if (t.view != 0 && t.waterView == 0) water = false;
     water = water && t.water;
-    if (!b || !b->Ready() || !sceneHdr || t.mode != 2 || !t.rtShadows || (!water && t.sss <= 0.0f)) return false;
+    const float sssAmt = (t.view != 0 || t.waterView != 0) ? 0.0f : t.sss;
+    if (!b || !b->Ready() || !sceneHdr || t.mode != 2 || !t.rtShadows || (!water && sssAmt <= 0.0f)) return false;
     ID3D11Texture2D* layer = GBuffer_Textures().layer;
     if (!layer) return false;
     // The composite's targets are still bound; the game binds its next ones right after this.
     real->OMSetRenderTargets(0, nullptr, nullptr);
-    const bool ran = b->ExecuteWater(sceneHdr, layer, water, t.sssWidth, t.sss);
+    const bool ran = b->ExecuteWater(sceneHdr, layer, water, t.sssWidth, sssAmt);
     static uint32_t runs = 0, misses = 0;
     (ran ? runs : misses)++;
     if ((runs + misses) % 600 == 1) Log("[RT] after water (water %d, skin scattering %.2f): ran %u frames, did not run %u", water ? 1 : 0, t.sss, runs, misses);

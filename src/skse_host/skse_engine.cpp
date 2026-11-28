@@ -53,19 +53,40 @@ int CompareName(uintptr_t key, const char* want) {
     __try { return key && strcmp(reinterpret_cast<const char*>(key), want) == 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
 
+struct BstHashMapHeaderLayout {
+    uint64_t pad0;
+    uint32_t pad1;
+    uint32_t capacity;
+    uint64_t pad2;
+    uint64_t pad3;
+    uint64_t pad4;
+    uint64_t entriesPtr;
+};
+struct BstHashMapEntryLayout {
+    uint64_t key;
+    uint64_t menuPtr;
+    uint64_t createFn;
+    uint64_t nextPtr;
+};
+static_assert(offsetof(BstHashMapHeaderLayout, pad1) == 0x08u, "BSTHashMap capacity word offset guard");
+static_assert(offsetof(BstHashMapHeaderLayout, entriesPtr) == 0x28u, "BSTHashMap entries offset guard");
+static_assert(sizeof(BstHashMapEntryLayout) == 0x20u, "BSTHashMap entry stride guard");
+static_assert(offsetof(BstHashMapEntryLayout, menuPtr) == 0x08u && offsetof(BstHashMapEntryLayout, nextPtr) == 0x18u,
+              "BSTHashMap entry field offset guard");
+
 // UI::menuMap (BSTHashMap<BSFixedString, MenuEntry>, at UI+0x128): capacity +0x0C, entries +0x28. Each entry is
 // key (BSFixedString), menu (GPtr<IMenu>), create function, next; an entry is empty when next is null.
 bool MenuMade(const char* name) {
     const uintptr_t ui = ReadPtr(Addr(kAddrUI));
     if (!ui || !g_offv[kOffUiMenuMap]) return false;
     const uintptr_t map = ui + g_offv[kOffUiMenuMap];
-    const uint32_t cap = uint32_t(ReadPtr(map + 0x08) >> 32);
-    const uintptr_t entries = ReadPtr(map + 0x28);
+    const uint32_t cap = uint32_t(ReadPtr(map + offsetof(BstHashMapHeaderLayout, pad1)) >> 32);
+    const uintptr_t entries = ReadPtr(map + offsetof(BstHashMapHeaderLayout, entriesPtr));
     if (!entries || cap == 0 || cap > 4096) return false;
     for (uint32_t i = 0; i < cap; ++i) {
-        const uintptr_t e = entries + uintptr_t(i) * 0x20;
-        if (!ReadPtr(e + 0x18)) continue;
-        if (CompareName(ReadPtr(e), name)) return ReadPtr(e + 0x08) != 0;
+        const uintptr_t e = entries + uintptr_t(i) * sizeof(BstHashMapEntryLayout);
+        if (!ReadPtr(e + offsetof(BstHashMapEntryLayout, nextPtr))) continue;
+        if (CompareName(ReadPtr(e), name)) return ReadPtr(e + offsetof(BstHashMapEntryLayout, menuPtr)) != 0;
     }
     return false;
 }

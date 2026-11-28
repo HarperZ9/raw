@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "../common/raw_engine_profile.h"
 #include "rt_callgraph.h"
 #include "rt_image.h"
 
@@ -28,6 +29,7 @@ RunningExe ReadRunningExe(const Image& img);
 bool LoadVersionTable(const Image& img, const std::string& gameDir, std::string* why);
 const std::string& TableVersion();          // "" until a table is loaded
 uint32_t RuntimeVersion();                  // packed major<<24 | minor<<16 | build<<4, 0 when unknown
+const raw::versions::EngineProfile& ActiveProfile();
 
 // An entry's value for the running version; 0 when the table has no value (the feature then stays off).
 uint32_t Addr(const char* name);
@@ -40,5 +42,10 @@ std::string MissingEntries();
 // Deferred first-frame .data pointer-to-RTTI-vtable scan: resolves core singletons on pure vanilla
 // installs with neither a static .tsv nor Address Library installed. Returns number of newly resolved entries.
 uint32_t ResolveDeferredSingletons(const Image& img);
+// Fail-closed Zydis startup verification of all critical struct offsets against the live executable's machine code.
+// Returns true if verified (or no static offset rules apply to this title); returns false & latches fail-closed on ANY mismatch!
+bool VerifyStartupBinaryOffsets(const Image& img, std::string* reportOut = nullptr);
+bool AreBinaryOffsetsVerified();
+std::string BinaryOffsetVerificationJson();
 
 }  // namespace raw::rt

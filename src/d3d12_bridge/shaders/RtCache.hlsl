@@ -27,24 +27,52 @@ void resolve(uint3 id : SV_DispatchThreadID) {
     bool alive = (key != 0u && key != CACHE_TOMB);
     if (alive) {
         const uint4 sum = CacheAccum.Load4(a);
-        const uint count = CacheAccum.Load(a + 16u);
-        uint2 meta = CacheValue.Load2(a + 16u);   // frames of history, last frame with a sample
+        const uint4 extra = CacheAccum.Load4(a + 16u);   // count, freeDistSum (x16), lumSqSum (x1024), skySqSum (x1024)
+        const uint count = extra.x;
+        uint4 meta = CacheValue.Load4(a + 16u);          // frames, lastFrame, asuint(freeFlightMin), asuint(entropy)
         if (count > 0u) {
-            const float4 mean = float4(sum) / (CACHE_FIXED * float(count));
-            const float4 old = asfloat(CacheValue.Load4(a));
-            // Fast-convergence variance reset: reacts 8x faster to sudden spells, torches, lightning, or opening doors
-            // while keeping full 32-frame temporal smoothness when lighting is steady.
+            const float invCount = 1.0f / float(count);
+            const float4 mean = sanitizeCache4(float4(sum) * (invCount / CACHE_FIXED));
+            const float4 old = sanitizeCache4(asfloat(CacheValue.Load4(a)));
+            // SIGGRAPH Advances 2026 ORCA (GI-18) + Wave 75 Relative-L2 Online Hash Radiance Cache EMA:
+            // reacts in 1-2 frames to spells, torches, lightning, or opening doors while guaranteeing 0 NaN/Inf!
             const float oldLum = dot(old.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float newLum = dot(mean.rgb, float3(0.2126f, 0.7152f, 0.0722f));
             const float relDelta = abs(newLum - oldLum) / max(oldLum, 0.05f);
-            if (relDelta > 0.35f) { meta.x = min(meta.x, 4u); }
+            const float chrDelta = length(mean.rgb / max(newLum, 0.05f) - old.rgb / max(oldLum, 0.05f));
+            const float3 radDiff = mean.rgb - old.rgb;
+            const float relL2 = dot(radDiff, radDiff) / (dot(old.rgb, old.rgb) + 0.01f);
+            if (relDelta > 0.35f || chrDelta > 0.42f) { meta.x = min(meta.x, 2u); }
             meta.x = min(meta.x + 1u, maxFrames);
-            const float4 v = meta.x <= 1u ? mean : lerp(old, mean, 1.0f / float(meta.x));
+            const float baseAlpha = 1.0f / float(meta.x);
+            const float alpha = clamp(max(baseAlpha, smoothstep(0.12f, 1.25f, relL2) * 0.45f), 0.05f, 0.85f);
+            const float4 v = sanitizeCache4(meta.x <= 1u ? mean : lerp(old, mean, alpha));
             CacheValue.Store4(a, asuint(v));
+
+            // Negative-Space Conservative Free-Flight Radius: shrinks quickly on new occluders, expands cautiously in open air.
+            const float meanFree = float(extra.y) * (invCount / CACHE_DIST_FIXED);
+            const float oldFree = asfloat(meta.z);
+            const float freeFlight = (meta.x <= 1u)
+                ? meanFree
+                : lerp(oldFree, meanFree, meanFree < oldFree ? 0.55f : 0.14f);
+
+            // Visibility + Radiance Welford Entropy Score [0, 1]: peaks at penumbra edges, contact creases & light transitions.
+            const float meanLumSq = float(extra.z) * (invCount / CACHE_FIXED);
+            const float meanSkySq = float(extra.w) * (invCount / CACHE_FIXED);
+            const float lumVar = max(meanLumSq - newLum * newLum, 0.0f);
+            const float skyVar = max(meanSkySq - mean.a * mean.a, 0.0f);
+            const float lumEnt = saturate(sqrt(lumVar) / max(newLum + 0.08f, 0.08f));
+            const float skyEnt = saturate(sqrt(skyVar) * 2.4f);
+            const float instEnt = saturate(max(skyEnt, lumEnt * 0.85f) + saturate(relDelta * 0.65f));
+            const float oldEnt = asfloat(meta.w);
+            const float entropy = (meta.x <= 1u) ? instEnt : lerp(oldEnt, instEnt, max(alpha, 0.25f));
+
             meta.y = frame;
-            CacheValue.Store2(a + 16u, meta);
+            meta.z = asuint(freeFlight);
+            meta.w = asuint(entropy);
+            CacheValue.Store4(a + 16u, meta);
             CacheAccum.Store4(a, uint4(0u, 0u, 0u, 0u));
-            CacheAccum.Store(a + 16u, 0u);
+            CacheAccum.Store4(a + 16u, uint4(0u, 0u, 0u, 0u));
         } else if (frame - meta.y > maxAge) {
             CacheKeys.Store(s * 4u, CACHE_TOMB);   // freed; the probe runs through it stay whole
             CacheValue.Store4(a + 16u, uint4(0u, 0u, 0u, 0u));

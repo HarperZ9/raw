@@ -1,0 +1,135 @@
+// RawGpuPipeline.bld: RAW Engine Deterministic GPU Pipeline & Frame-Pacing Kernels in BuildLang 1.4.0.
+// Counterparts to LightingCommon.hlsli, RawVolumetricFroxelSim, RawShadowPcssHost, RawSsrSim,
+// rt_frame_governor, RawLightClusterSim, and RawWorldEventDirector:
+//   1. froxel_log_slice      - Logarithmic 3D froxel Z-slice index
+//   2. cascade_texel_snap    - World-to-light-space texel-snapped cascade origin
+//   3. ssr_edge_fade         - Screen-space reflection border confidence vignette [0..1]
+//   4. frame_governor_step   - Asymmetric PI dynamic frame-pacing resolution/quality governor step
+//   5. sphere_aabb_dist_sq   - Exact Arvo 3D clustered sphere-vs-AABB squared distance
+//   6. event_scarcity_reward - Scarcity- and urgency-scaled world-event bounty gold
+// Original work, MIT.
+
+fn clamp_f64(v: f64, lo: f64, hi: f64) -> f64 {
+    if v < lo {
+        lo
+    } else if v > hi {
+        hi
+    } else {
+        v
+    }
+}
+
+fn max_f64(a: f64, b: f64) -> f64 {
+    if a > b { a } else { b }
+}
+
+fn min_f64(a: f64, b: f64) -> f64 {
+    if a < b { a } else { b }
+}
+
+fn smoothstep_01(x: f64) -> f64 {
+    let t: f64 = clamp_f64(x, 0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn floor_f64(x: f64) -> f64 {
+    let t: f64 = (x as i32) as f64;
+    if x < t {
+        t - 1.0
+    } else {
+        t
+    }
+}
+
+// 1. Logarithmic 3D froxel Z-slice index in [0, num_slices - 1].
+// Matches src/d3d12_bridge/shaders/LightingCommon.hlsli (froxelZToSlice, L64-L67) & RawVolumetricFroxelSim.hlsl.
+fn froxel_log_slice(view_z: f64, z_near: f64, z_far: f64, num_slices: f64) -> f64 {
+    let zn: f64 = max_f64(z_near, 1.0e-3);
+    let zf: f64 = max_f64(z_far, zn + 1.0);
+    let zc: f64 = clamp_f64(view_z, zn, zf);
+    let slices: f64 = max_f64(num_slices, 2.0);
+    let norm: f64 = clamp_f64(log(zc / zn) / log(zf / zn), 0.0, 1.0);
+    norm * (slices - 1.0)
+}
+
+// 2. Texel-snapped directional shadow cascade light-space origin (eliminates sub-texel shadow swimming).
+// Matches src/d3d12_bridge/RawShadowPcssHost.cpp (BuildTexelSnappedCascade).
+fn cascade_texel_snap(coord_ls: f64, texel_size_ls: f64) -> f64 {
+    let t: f64 = max_f64(texel_size_ls, 1.0e-5);
+    floor_f64(coord_ls / t) * t
+}
+
+// 3. Screen-space reflection (SSR) border edge confidence vignette [0..1]:
+//    Smoothly fades to 0 near screen borders (distance < margin) while keeping center rays at 1.0.
+// Matches src/d3d12_bridge/shaders/RawSsrSim.hlsl & EnvCubePass.hlsl.
+fn ssr_edge_fade(u: f64, v: f64, margin: f64) -> f64 {
+    let m: f64 = max_f64(margin, 1.0e-4);
+    let edge_x: f64 = min_f64(u, 1.0 - u);
+    let edge_y: f64 = min_f64(v, 1.0 - v);
+    let edge_min: f64 = min_f64(edge_x, edge_y);
+    if edge_min <= 0.0 {
+        0.0
+    } else {
+        smoothstep_01(edge_min / m)
+    }
+}
+
+// 4. Asymmetric PI dynamic frame-pacing governor step (returns updated resolution/quality scale in [0.50, 1.00]):
+//    Drops briskly via kp_down when frame_ms > target_ms (over budget), recovers gently via kp_up with headroom.
+// Matches src/engine_rt/rt_frame_governor.cpp.
+fn frame_governor_step(cur_scale: f64, frame_ms: f64, target_ms: f64, kp_down: f64, kp_up: f64) -> f64 {
+    let sc: f64 = clamp_f64(cur_scale, 0.50, 1.00);
+    let tgt: f64 = max_f64(target_ms, 1.0);
+    let err_rel: f64 = (frame_ms - tgt) / tgt;
+    if err_rel > 0.02 {
+        let drop: f64 = max_f64(kp_down, 0.0) * err_rel;
+        clamp_f64(sc - drop, 0.50, 1.00)
+    } else if err_rel < -0.08 {
+        let lift: f64 = max_f64(kp_up, 0.0) * (-err_rel - 0.08);
+        clamp_f64(sc + lift, 0.50, 1.00)
+    } else {
+        sc
+    }
+}
+
+// 5. Exact Arvo 3D clustered sphere-vs-AABB squared distance (0.0 when sphere center lies inside AABB).
+// Matches src/d3d12_bridge/shaders/RawLightClusterSim.hlsl cluster light culling.
+fn sphere_aabb_dist_sq(cx: f64, cy: f64, cz: f64, min_x: f64, min_y: f64, min_z: f64, max_x: f64, max_y: f64, max_z: f64) -> f64 {
+    let qx: f64 = clamp_f64(cx, min_x, max_x);
+    let qy: f64 = clamp_f64(cy, min_y, max_y);
+    let qz: f64 = clamp_f64(cz, min_z, max_z);
+    let dx: f64 = cx - qx;
+    let dy: f64 = cy - qy;
+    let dz: f64 = cz - qz;
+    dx * dx + dy * dy + dz * dz
+}
+
+// 6. Emergent world-event scarcity- and urgency-scaled bounty gold reward.
+// Matches src/worldgen/RawWorldEventDirector.cpp reward computation.
+fn event_scarcity_reward(base_gold: f64, price_ratio: f64, urgency01: f64) -> f64 {
+    let base: f64 = max_f64(base_gold, 10.0);
+    let pr: f64 = clamp_f64(price_ratio, 0.5, 4.0);
+    let urg: f64 = clamp_f64(urgency01, 0.0, 1.0);
+    base * (0.75 + 0.55 * pr) * (1.0 + 0.45 * urg)
+}
+
+fn main() ~ Console {
+    let sl_near: f64 = froxel_log_slice(24.0, 24.0, 42000.0, 64.0);
+    let sl_mid: f64 = froxel_log_slice(1000.0, 24.0, 42000.0, 64.0);
+    let snap_pos: f64 = cascade_texel_snap(12.37, 0.25);
+    let snap_neg: f64 = cascade_texel_snap(-12.37, 0.25);
+    let ssr_ctr: f64 = ssr_edge_fade(0.50, 0.50, 0.12);
+    let ssr_edg: f64 = ssr_edge_fade(0.03, 0.50, 0.12);
+    let gov_drop: f64 = frame_governor_step(1.00, 22.0, 16.6667, 0.25, 0.06);
+    let gov_lift: f64 = frame_governor_step(0.85, 11.0, 16.6667, 0.25, 0.06);
+    let d2_in: f64 = sphere_aabb_dist_sq(2.0, 3.0, 4.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0);
+    let d2_out: f64 = sphere_aabb_dist_sq(8.0, 3.0, 9.0, 0.0, 0.0, 0.0, 5.0, 5.0, 5.0);
+    let reward: f64 = event_scarcity_reward(150.0, 1.80, 0.75);
+
+    println!("froxel_log_slice(24) = {} | (1000) = {}", sl_near, sl_mid);
+    println!("cascade_texel_snap(+12.37, 0.25) = {} | (-12.37, 0.25) = {}", snap_pos, snap_neg);
+    println!("ssr_edge_fade(center) = {} | (edge 0.03) = {}", ssr_ctr, ssr_edg);
+    println!("frame_governor_step(22ms over) = {} | (11ms under) = {}", gov_drop, gov_lift);
+    println!("sphere_aabb_dist_sq(inside) = {} | (outside 3,0,4) = {}", d2_in, d2_out);
+    println!("event_scarcity_reward(150g, 1.8x, urg=0.75) = {}", reward);
+}

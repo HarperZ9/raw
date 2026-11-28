@@ -25,6 +25,26 @@ float puddleField(float2 w) {
     return valueNoise(q) * 0.55f + valueNoise(q * 2.13f + 7.1f) * 0.3f + valueNoise(q * 4.37f + 3.3f) * 0.15f;
 }
 
+// Wave 75: Pure world-space terrain micro-heightfield & positive Laplacian concavity (nabla^2 H > 0)
+// for screen-edge-invariant puddle drainage pooling (0.0 screen-UV dependence across camera pan/crop!).
+float rawWorldMicroHeight(float2 wpXY) {
+    const float2 q = wpXY * 0.014f;
+    return 0.55f * sin(q.x) * cos(q.y)
+         + 0.30f * cos(q.x * 2.13f + 1.7f) * sin(q.y * 1.91f - 0.8f)
+         + 0.15f * sin((q.x + q.y) * 3.17f + 0.5f);
+}
+
+float rawWorldDrainageConcavity(float2 wpXY) {
+    const float hStep = 18.0f;
+    const float hC  = rawWorldMicroHeight(wpXY);
+    const float hPx = rawWorldMicroHeight(wpXY + float2(hStep, 0.0f));
+    const float hMx = rawWorldMicroHeight(wpXY - float2(hStep, 0.0f));
+    const float hPy = rawWorldMicroHeight(wpXY + float2(0.0f, hStep));
+    const float hMy = rawWorldMicroHeight(wpXY - float2(0.0f, hStep));
+    const float lapH = (hPx + hMx + hPy + hMy - 4.0f * hC) / (hStep * hStep * 0.0004f);
+    return saturate(max(lapH, 0.0f) * 0.65f);
+}
+
 struct Wet { float wet, puddle, snow; };
 
 // Rain on standing water: each cell of a world-fixed grid (ringCell units) takes a drop about once a
@@ -95,7 +115,10 @@ Wet wetAt(float3 p, float3 n, float3 ng, float skyVis) {
     w.wet = saturate(effWet * saturate(lerp(0.32f, 1.0f, up) + windWall) * skyVis);
     if (weather.y > 0.0f) {
         const float flat = saturate((ng.z - 0.88f) / 0.08f);
-        const float f = puddleField(wp.xy);
+        const float fNoise = puddleField(wp.xy);
+        // Wave 75: Heightfield-coupled world-space puddle drainage concavity (100% screen-edge invariant):
+        const float drainConcav = rawWorldDrainageConcavity(wp.xy);
+        const float f = saturate(fNoise * 0.68f + drainConcav * 0.32f);
         w.puddle = saturate((f - (1.0f - 0.62f * weather.y)) * 8.0f) * flat * skyVis;
         // Damp capillary meniscus ring around every puddle edge.
         const float dampRing = saturate((f - (1.0f - 0.72f * weather.y)) * 6.0f) * flat * skyVis;

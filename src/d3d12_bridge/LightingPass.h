@@ -90,17 +90,17 @@ struct LightingTuning
     // Pre-Pass DSLR / Medium Format Camera & DoF Optics (DofPass.hlsl) + RAWLSS 5.0 (Rawlss5Pass.hlsl):
     bool  rawlss5 = true;           // Rawlss5: native SM 6.9 FP16 3D-Guided Neural & Physical Reconstruction
     bool  dof = true;               // Dof: 5-pass 91-tap concentric physical DSLR / Medium Format cinema DoF
-    float dofMaxDist = 420.0f;      // DofMaxDist: master DoF optical gain (0=off, 150..2500)
-    float dofRadius = 11.0f;        // DofRadius: max bokeh aperture radius (2..28 px)
-    float dofOrbBoost = 1.85f;      // DofOrbBoost: specular bokeh highlight orb boost (0..5)
+    float dofMaxDist = 360.0f;      // DofMaxDist: master DoF optical gain (0=off, 150..2500)
+    float dofRadius = 6.5f;         // DofRadius: max bokeh aperture radius (2..18 px)
+    float dofOrbBoost = 1.25f;      // DofOrbBoost: specular bokeh highlight orb boost (0..5)
     int   dofSensor = 1;            // DofSensor: 0=APS-C 24mm, 1=35mm Full-Frame, 2=MF 645 44mm, 3=MF 6x7 70mm
-    float dofFocalMm = 50.0f;       // DofFocalMm: lens focal length in mm (24..200)
-    float dofFStop = 1.8f;          // DofFStop: lens aperture f-stop (0.95..16.0)
+    float dofFocalMm = 35.0f;       // DofFocalMm: lens focal length in mm (24..200)
+    float dofFStop = 4.0f;          // DofFStop: refined gameplay aperture f-stop (2.8..16.0)
     int   dofBokehShape = 2;        // DofBokehShape: 0=5-Blade, 1=6-Blade, 2=7-Blade, 3=9-Blade, 4=Circle, 5=Anamorphic, 6=Petzval Swirl
     int   cameraMode = 0;           // CameraMode: 0=Cinema Prime, 1=Tilt-Shift Miniature, 2=ARPG Isometric Diorama, 3=Anamorphic 2.39:1, 4=Petzval Swirl, 5=Vertical Tilt-Rise
-    float dofNearScale = 1.0f;      // DofNearScale: near-plane blur multiplier (0..2.5)
-    float dofFarScale = 1.35f;      // DofFarScale: far-plane blur multiplier (0..2.5)
-    float dofNearBleed = 1.0f;      // DofNearBleed: foreground silhouette bleed/feather (0..2.0)
+    float dofNearScale = 0.55f;     // DofNearScale: near-plane blur multiplier (0..1.5)
+    float dofFarScale = 0.85f;      // DofFarScale: far-plane blur multiplier (0..1.5)
+    float dofNearBleed = 0.45f;     // DofNearBleed: foreground silhouette bleed/feather (0..1.0)
     float dofFocusSpeed = 0.09f;    // DofFocusSpeed: cinema follow-focus motor speed (0.02..0.30)
     bool  weatherLens = true;       // WeatherLens: procedural HDR rain-on-lens droplets & blizzard frost
     float waterReflect = 1.0f;      // WaterReflect: the ray-traced reflection's share of the Fresnel weight
@@ -114,6 +114,7 @@ struct LightingTuning
     float sss = 0.75f;              // Sss: screen-space scattering on skin (Sss.hlsl), 0 off to 1
     float sssWidth = 0.5f;          // SssWidth: the red's scattering width, game units (green 0.42, blue 0.22 of it); 1.0 washed out the pores
     int   season = 0;               // Season: 0 Auto, 1 Spring, 2 Summer, 3 Autumn, 4 Winter
+    int   hwTier = 3;               // HwTier: 0..4 GPU architectural tier (3060=1, 4070=2, 4090=3, 5090=4)
 };
 
 // Lights into clusters: out[cluster] holds one bit per light index.
@@ -122,9 +123,22 @@ void BuildClusters(const SceneLighting& s, float nearZ, float farZ, uint32_t (*o
 std::unique_ptr<IBridgePass> MakeLightingPass();
 bool LightingPassTune(IBridgePass* pass, const LightingTuning& t);
 bool LightingPassUniform(IBridgePass* pass, const void** data, size_t* bytes);   // cbuffer P as filled for this frame
+struct LightingFluidInputs {
+    float simTimeSec = 0.0f;
+    float windXY[2] = {};
+    float ambientTempC = 6.0f;
+    float rainIntensity = 0.0f;
+    float beaufortScale = 1.0f;
+    float swellDirXY[2] = {0.866f, 0.5f};
+    float waterPlaneZ = 0.0f;
+    float footTrail[32][4] = {};
+};
+bool LightingPassFluidInputs(IBridgePass* pass, LightingFluidInputs* out);
 struct ExtraShaders {
     std::vector<uint8_t> clouds, volumetric, bloomPre, bloomDown, bloomUp, bloomComp, reflFilter, rawlss5;
     std::vector<uint8_t> dofFocus, dofCoc, dofGather, dofPost, dofComp;
+    std::vector<uint8_t> froxelInject, froxelBlock, froxelInt;
+    std::vector<uint8_t> giAt1, giAt2, giAt4, worldSim;
 };
 bool LightingPassReload(IBridgePass* pass, const std::vector<uint8_t>& vs, const std::vector<uint8_t>& fs,
                         const std::vector<uint8_t>& fogFs, std::string& err, const ExtraShaders* extra = nullptr);

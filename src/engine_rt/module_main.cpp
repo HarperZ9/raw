@@ -22,10 +22,38 @@
 #include <thread>
 
 #include "ProxyAPI.h"
+#include "rt_adaptive_audio_director.h"
+#include "rt_audio_bridge.h"
+#include "rt_boot_selfcheck.h"
 #include "rt_callgraph.h"
+#include "rt_combat_ai.h"
+#include "rt_combat_impact.h"
+#include "rt_console_diag.h"
 #include "rt_control.h"
+#include "rt_core_fixes.h"
+#include "rt_crash_forensics.h"
+#include "rt_depth_topology.h"
+#include "rt_economy_ledger.h"
+#include "rt_engine_health.h"
 #include "rt_forensics.h"
+#include "rt_frame_governor.h"
+#include "rt_hotkey_router.h"
+#include "rt_live_config.h"
+#include "rt_live_dashboard.h"
+#include "rt_memory_guards.h"
+#include "rt_mod_load_audit.h"
+#include "rt_movement_combat.h"
+#include "rt_npc_behavior.h"
+#include "rt_profile_presets.h"
+#include "rt_safe_recovery.h"
+#include "rt_save_papyrus_guard.h"
+#include "rt_sdk_bridge.h"
+#include "rt_shader_hotreload.h"
 #include "rt_softbody.h"
+#include "rt_stealth_survival.h"
+#include "rt_telemetry_recorder.h"
+#include "rt_terrain_lod.h"
+#include "rt_world_sim.h"
 #include "rt_papyrus.h"
 #include "rt_passes.h"
 #include "rt_vtrace.h"
@@ -91,8 +119,139 @@ void OnPresent(ID3D11DeviceContext* ctx, IDXGISwapChain* sc) {
         }
     }
     raw::rt::HavokFixOnPresent();
+    // Wave 39: Skeleton/IK/XPBD physics now runs strictly post-Havok / pre-skinning in Main::Draw (0x6565B0);
+    // SoftBodyOnPresent() is intentionally removed from OnPresent() to prevent double-stepping or post-draw drift.
     raw::rt::VTraceOnPresent();
     raw::rt::ControlOnPresent(ctx, sc);
+    raw::rt::MemoryGuardsOnPresent();
+    raw::rt::TerrainLodOnPresent();
+    {
+        static uint8_t s_lastTfc = 0;
+        static uint32_t s_tfcLogFrames = 0;
+        raw::rt::RawTerrainLodTelemetry tl{};
+        if (RAW_GetTerrainLodTelemetry(&tl)) {
+            if (tl.tfcActive != s_lastTfc || (tl.tfcActive && (++s_tfcLogFrames % 300u) == 1u)) {
+                s_lastTfc = tl.tfcActive;
+                if (!tl.tfcActive) s_tfcLogFrames = 0;
+                Log("[TerrainLOD] tfc=%u bypass_tvdt=%u full_refreshes=%u grid=[%d,%d] lod_bands=[%.0f,%.0f,%.0f,%.0f]",
+                    tl.tfcActive, tl.bypassTvdtLive, tl.tfcFullRefreshes, tl.gridCenterX, tl.gridCenterY,
+                    tl.lodBandStarts[0], tl.lodBandStarts[1], tl.lodBandStarts[2], tl.lodBandStarts[3]);
+            }
+        }
+    }
+    raw::rt::DepthTopologyOnPresent();
+    raw::rt::WorldSimOnPresent();
+    {
+        raw::rt::EngineView evImpact{};
+        RAW_EngineView(&evImpact);
+        raw::rt::CombatImpactOnPresent(evImpact.menuPaused != 0u);
+    }
+    raw::rt::MovementCombatOnTick();
+    raw::rt::LiveConfigOnPresent([](const char* msg) { Log("%s", msg); });
+    raw::rt::AudioBridgeOnPresent();
+    raw::rt::CrashForensicsOnPresent();
+    raw::rt::NpcBehaviorOnPresent();
+    raw::rt::EngineHealthOnPresent();
+    raw::rt::ProfilePresetsOnPresent();
+    raw::rt::ShaderHotReloadOnPresent();
+    raw::rt::LiveDashboardOnPresent();
+    raw::rt::HotkeyRouterOnPresent();
+    raw::rt::ConsoleDiagOnPresent();
+    {
+        static LARGE_INTEGER s_qpcFreq{};
+        static LARGE_INTEGER s_prevQpc{};
+        LARGE_INTEGER nowQpc{};
+        if (s_qpcFreq.QuadPart == 0) QueryPerformanceFrequency(&s_qpcFreq);
+        QueryPerformanceCounter(&nowQpc);
+        if (s_prevQpc.QuadPart != 0 && s_qpcFreq.QuadPart > 0) {
+            const double frameMs = double(nowQpc.QuadPart - s_prevQpc.QuadPart) * 1000.0 / double(s_qpcFreq.QuadPart);
+            raw::rt::SavePapyrusGuardOnPresent(frameMs);
+            raw::rt::AudioDirectorOnPresent(static_cast<float>(frameMs * 0.001));
+            raw::rt::FlightRecorderOnPresent(frameMs);
+            raw::rt::FrameGovernorOnPresent(frameMs);
+        }
+        s_prevQpc = nowQpc;
+    }
+    {
+        static uint32_t s_liveLogTick = 0;
+        if ((++s_liveLogTick % 300u) == 150u) {
+            const auto sk = raw::rt::GetSkeletonPhysicsStats();
+            if (sk.mainDrawHookActive) {
+                Log("[SkeletonPhysics] Main::Draw hook active; actors=%u, ikBones=%u, xpbdBones=%u, updatedNodes=%u, runs=%llu",
+                    sk.activeActors, sk.lastFrameIkBones, sk.lastFrameXpbdBones, sk.lastFrameUpdated,
+                    (unsigned long long)sk.totalHooksRun);
+            }
+            raw::rt::GameplayHookTelemetry gp{};
+            if (raw::rt::GameplayHooksGetStats(&gp) && gp.hooksActive) {
+                Log("[GameplayHooks] mask=0x%02X hits=%u parries=%u guardBreaks=%u counterHits=%u ai(atk=%u blk=%u bash=%u) barter=%u",
+                    gp.hooksActive, gp.hitsProcessed, gp.timedParries, gp.guardBreaks, gp.counterHits,
+                    gp.aiAttackEvals, gp.aiBlockEvals, gp.aiBashEvals, gp.barterOpens);
+            }
+            raw::rt::StealthSurvivalTelemetry ss{};
+            if (raw::rt::StealthSurvivalGetTelemetry(&ss) && (ss.sneakHookActive || ss.staminaGmstBound)) {
+                Log("[StealthSurvival] sneakHook=%u checks=%u masked=%u crunch=%u warmth=%.1f wet=%.2f chill=%.1fC stamMult=%.2f hearth=%.2f acEnv=%u rt60=%.2fs",
+                    ss.sneakHookActive, ss.sneakChecksTotal, ss.sneakMaskedCount, ss.sneakCrunchCount,
+                    ss.coreWarmth, ss.wetness01, ss.windChillC, ss.staminaRegenMult,
+                    ss.hearthProximity01, ss.acousticEnvKind, ss.acousticRt60Sec);
+            }
+            raw::rt::CombatImpactTelemetry ci{};
+            if (raw::rt::CombatImpactGetTelemetry(&ci)) {
+                Log("[CombatImpact] hitstopVerified=%u active=%u triggers=%u skippedSlowTime=%u decalsActive=%u/%u timeScale=%.2f",
+                    ci.hitstopVerified, ci.hitstopActive, ci.hitstopTriggers, ci.hitstopSkipped,
+                    ci.decalsActiveNow, ci.decalsTotal, ci.currentTimeScale);
+            }
+            raw::rt::EconomyLedgerTelemetry ec{};
+            if (raw::rt::EconomyLedgerGetTelemetry(&ec) && ec.initialized) {
+                Log("[EconomyLedger] hold=%s tier=%u days=%u doy=%u buy=%.2f sell=%.2f scarcity=%.2f caravanDisrupt=%.2f trades=%u queries=%u saves=%u npc(dir=%u sh=%.2f torch=%.2f alert=%.2f)",
+                    raw::rt::SkyrimHoldName(static_cast<raw::rt::SkyrimHold>(ec.activeHold)),
+                    ec.marketTier, ec.daysSimulated, ec.dayOfYear, ec.buyPriceMult, ec.sellPriceMult,
+                    ec.scarcity01, ec.caravanDisruption01, ec.totalPlayerTrades, ec.barterQueries, ec.jsonSaves,
+                    ec.npcDirective, ec.npcShelterUrgency01, ec.npcTorchNeed01, ec.npcAlertness01);
+            }
+            raw::rt::MovementCombatTelemetry mc{};
+            if (raw::rt::MovementCombatGetTelemetry(&mc) && mc.verified) {
+                Log("[MovementCombat] dodges=%u evaded=%u lowStam=%u sprint=%u drawn=%u baseFov=%.1f fovOff=+%.2f resyncs=%u",
+                    mc.dodgesTriggered, mc.evadedHits, mc.dodgesRejectedStam, mc.sprintingNow,
+                    mc.weaponDrawnNow, mc.baselineFovDeg, mc.appliedFovOffset, mc.fovBaselineResyncs);
+            }
+            raw::rt::RawMemoryGuardTelemetry mg{};
+            if (RAW_GetMemoryGuardTelemetry(&mg)) {
+                if (mg.refHandleWarnLevel >= static_cast<uint8_t>(raw::rt::RefHandleHealthLevel::Warning)) {
+                    Log("[MemGuard] WARNING: active ref-handles ~%u/%u (%.1f%% saturation, level=%u) - approaching 1M CE ref-cap!",
+                        mg.refHandlesEstimated, raw::rt::kRefHandleCapacity, mg.refHandleSatPct, mg.refHandleWarnLevel);
+                } else {
+                    Log("[MemGuard] refHandles=~%u/%u (%.1f%%, lvl=%u) landPool=%u/%u grid=%u ws=%lluMB",
+                        mg.refHandlesEstimated, raw::rt::kRefHandleCapacity, mg.refHandleSatPct, mg.refHandleWarnLevel,
+                        mg.landPoolActive, mg.landPoolFree, mg.liveGridLength,
+                        static_cast<unsigned long long>(mg.workingSetMB));
+                }
+            }
+            raw::rt::AudioBridgeTelemetry ab{};
+            if (raw::rt::AudioBridgeGetTelemetry(&ab) && (ab.enabled || ab.toggleStarts > 0u)) {
+                Log("[AudioBridge] enabled=%u running=%u device=%u env=%u gain=%.2f muted=%u starts=%u stops=%u frames=%llu rms=%.4f",
+                    ab.enabled ? 1u : 0u, ab.streamRunning ? 1u : 0u, ab.deviceActive ? 1u : 0u,
+                    ab.mappedDspEnv, ab.appliedGain, ab.muted ? 1u : 0u,
+                    ab.toggleStarts, ab.toggleStops,
+                    static_cast<unsigned long long>(ab.framesRendered), ab.lastRms);
+            }
+            raw::rt::RawSavePapyrusHealth sph{};
+            if (RAW_GetSavePapyrusHealth(&sph) && sph.guardEnabled) {
+                Log("[SaveGuard] saves=%u worst=%s maxStr=%u/65535 maxMB=%.2f | hitches(>50ms)=%u (60s=%u) worst=%.1fms p95=%.1fms",
+                    sph.savesAudited,
+                    raw::rt::SaveHealthLevelName(static_cast<raw::rt::SaveHealthLevel>(sph.worstSaveHealth)),
+                    sph.worstStringCount, sph.worstSaveSizeMb,
+                    sph.hitchCount, sph.hitchesLast60Sec, sph.worstHitchMs, sph.p95FrameMs);
+            }
+            raw::rt::RawNpcBehaviorState nbs{};
+            if (RAW_GetNpcBehaviorState(&nbs) && nbs.behaviorEnabled) {
+                Log("[NpcBehavior] season=%u shelter=%.2f torches=%.2f guardAlert=%.2fx market=%.2f wildlife=%.2f banditElem=%s mageElem=%s",
+                    nbs.season, nbs.shelterPressure01, nbs.torchDeploymentRatio,
+                    nbs.guardAlertnessMult, nbs.marketActivity01, nbs.wildlifeActivity01,
+                    raw::rt::PreferredElementName(static_cast<raw::rt::PreferredElement>(nbs.preferredBanditElement)),
+                    raw::rt::PreferredElementName(static_cast<raw::rt::PreferredElement>(nbs.preferredMageElement)));
+            }
+        }
+    }
 }
 
 }  // namespace
@@ -103,22 +262,25 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     GetPrivateProfileStringA("EngineRT", "OutDir", "raw_engine_out", outName, MAX_PATH, (g_dir + "d3d11_proxy.ini").c_str());
     g_out = g_dir + outName;
     CreateDirectoryA(g_out.c_str(), nullptr);
-    // Fix Skyrim SE's infamous 512-handle False Save Corruption Bug ("The save game is corrupt and cannot be loaded"):
-    // raise ucrtbase.dll + local CRT _setmaxstdio from 512 to 8192 so BGSSaveLoadManager never exhausts stdio handles.
-    int maxStdioHost = _setmaxstdio(8192);
-    if (HMODULE ucrt = GetModuleHandleA("ucrtbase.dll")) {
-        using SetMaxStdioFn = int(__cdecl*)(int);
-        if (auto fn = reinterpret_cast<SetMaxStdioFn>(GetProcAddress(ucrt, "_setmaxstdio"))) {
-            const int r = fn(8192);
-            if (r > 0) maxStdioHost = r;
-        }
-    }
-    Log("save-fix: raised CRT _setmaxstdio limit to %d (prevents 512-handle false save corruption)", maxStdioHost);
+    // Stage 1 Core Creation Engine OS fixes (0.5ms timer, EcoQoS P-core scheduling, LFH heaps, 8192 CRT stdio):
+    // Runs on ALL Creation Engine titles (Skyrim SE/AE/VR, Fallout 4/VR, Fallout 76, Starfield CE2) before version lookup.
+    Log("%s", raw::rt::CoreFixesInitProcess().c_str());
     if (!g_img.Load()) { Log("image: no code section or no .pdata"); return; }
     Log("image: text 0x%X-0x%X, %zu pdata functions", g_img.textBegin, g_img.textEnd, g_img.funcs.size());
     std::string why;
     if (!raw::rt::LoadVersionTable(g_img, g_dir, &why)) { Log("version: %s", why.c_str()); return; }
     Log("version: %s", why.c_str());
+    // Fail-closed Zydis binary verification of critical struct offsets directly against host machine code:
+    // if ANY offset mismatches the live executable, struct writes remain locked to prevent memory corruption.
+    {
+        std::string zydisReport;
+        const bool verified = raw::rt::VerifyStartupBinaryOffsets(g_img, &zydisReport);
+        Log("%s", zydisReport.c_str());
+        if (!verified) {
+            Log("SAFETY: binary offset verification failed closed - live struct writes disabled");
+        }
+    }
+    const auto& prof = raw::rt::ActiveProfile();
     g_refs = raw::rt::VersionRefs();
     Log("refs: %zu settings and globals from the table", g_refs.size());
     const std::string ini = g_dir + "d3d11_proxy.ini";
@@ -128,40 +290,48 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // Startup settings land before the renderer creates its targets (this runs inside the game's
     // first D3D11CreateDevice), so iShadowMapResolution and iNumSplits size the shadow atlas. In a reload the
     // targets exist already, so they are not touched again.
-    if (!generation) {
+    if (!generation && !prof.isMultiplayerOnline) {
         Log("startup settings: %zu applied", raw::rt::ApplyStartupSettings(g_img, g_refs, ini, g_out + "\\engine_rt.log"));
-        if (const int atlas = IniInt("ShadowAtlas", 4096); atlas > 0)
-            Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
-        // Pre-TES::Init Engine-Level Full-Detail Mesh, 3D Skinned Trees, Zero-Pop-In LOD & Dense Flora Overhaul:
-        // Directly mutates Skyrim SE's live Setting singletons before TES::Init (never hot-mutated mid-session).
-        raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "1.75");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "75000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "140000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fBlockMaximumDistance:TerrainManager", "250000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:TerrainManager", "150000.0");
-        raw::rt::SetSetting(g_img, g_refs, "bKeepLowDetailTerrain:TerrainManager", "0");
-        raw::rt::SetSetting(g_img, g_refs, "bForceFullDetail:Trees", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bRenderSkinnedTrees:Trees", "1");
-        raw::rt::SetSetting(g_img, g_refs, "uiMaxSkinnedTreesToRender:Trees", "256");
-        raw::rt::SetSetting(g_img, g_refs, "bTreesReceiveShadows:Display", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bDrawLandShadows:Display", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bActorSelfShadowing:Display", "1");
-        raw::rt::SetSetting(g_img, g_refs, "bLandSpecular:Landscape", "1");
-        raw::rt::SetSetting(g_img, g_refs, "uLargeRefLODGridSize:General", "11");
-        raw::rt::SetSetting(g_img, g_refs, "fDistanceMultiplier:LOD", "1.80");
-        raw::rt::SetSetting(g_img, g_refs, "fLODBoundRadiusMult:LOD", "1.60");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultObjects:LOD", "30.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultItems:LOD", "20.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultActors:LOD", "25.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultComplex:LOD", "2.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultCity:LOD", "2.0");
-        raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultInterior:LOD", "2.0");
-        raw::rt::SetSetting(g_img, g_refs, "iMinGrassSize:Grass", "24");
-        raw::rt::SetSetting(g_img, g_refs, "iMaxGrassTypesPerTexure:Grass", "15");
-        raw::rt::SetSetting(g_img, g_refs, "fGrassStartFadeDistance:Grass", "14000.0");
-        raw::rt::SetSetting(g_img, g_refs, "fGrassMaxStartFadeDistance:Grass", "16000.0");
+        if (prof.gen == raw::versions::EngineGen::CE1_DX11) {
+            if (const int atlas = IniInt("ShadowAtlas", 4096); atlas > 0)
+                Log("%s", raw::rt::ResizeShadowAtlas(g_img, g_refs, uint32_t(atlas)).c_str());
+            // Pre-TES::Init Engine-Level Full-Detail Mesh, 3D Skinned Trees, Zero-Pop-In LOD & Dense Flora Overhaul:
+            // Directly mutates Skyrim SE's live Setting singletons before TES::Init (never hot-mutated mid-session).
+            raw::rt::SetSetting(g_img, g_refs, "fSplitDistanceMult:TerrainManager", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel0Distance:TerrainManager", "95000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockLevel1Distance:TerrainManager", "180000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fBlockMaximumDistance:TerrainManager", "450000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fTreeLoadDistance:TerrainManager", "220000.0");
+            raw::rt::SetSetting(g_img, g_refs, "bKeepLowDetailTerrain:TerrainManager", "1");
+            raw::rt::SetSetting(g_img, g_refs, "fSkyCellRefFadeDistance", "350000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultSkyCell:LOD", "2.5");
+            raw::rt::SetSetting(g_img, g_refs, "bForceFullDetail:Trees", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bRenderSkinnedTrees:Trees", "1");
+            raw::rt::SetSetting(g_img, g_refs, "uiMaxSkinnedTreesToRender:Trees", "256");
+            raw::rt::SetSetting(g_img, g_refs, "bTreesReceiveShadows:Display", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bDrawLandShadows:Display", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bActorSelfShadowing:Display", "1");
+            raw::rt::SetSetting(g_img, g_refs, "bLandSpecular:Landscape", "1");
+            raw::rt::SetSetting(g_img, g_refs, "uLargeRefLODGridSize:General", "11");
+            raw::rt::SetSetting(g_img, g_refs, "fDistanceMultiplier:LOD", "1.80");
+            raw::rt::SetSetting(g_img, g_refs, "fLODBoundRadiusMult:LOD", "1.60");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultObjects:LOD", "30.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultItems:LOD", "20.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutMultActors:LOD", "25.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultComplex:LOD", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultCity:LOD", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "fLODFadeOutObjectMultInterior:LOD", "2.0");
+            raw::rt::SetSetting(g_img, g_refs, "iMinGrassSize:Grass", "24");
+            raw::rt::SetSetting(g_img, g_refs, "iMaxGrassTypesPerTexure:Grass", "15");
+            raw::rt::SetSetting(g_img, g_refs, "fGrassStartFadeDistance:Grass", "14000.0");
+            raw::rt::SetSetting(g_img, g_refs, "fGrassMaxStartFadeDistance:Grass", "16000.0");
+        }
     }
-    if (IniInt("EngineTuning", 1)) Log("%s", raw::rt::ApplyEngineTuning(g_img, g_refs).c_str());
+    if (IniInt("CoreFixes", 1)) Log("%s", raw::rt::CoreFixesApplyEngine(g_img, g_refs).c_str());
+    if (IniInt("EngineTuning", 1)) {
+        Log("%s", raw::rt::ApplyEngineTuning(g_img, g_refs).c_str());
+        Log("%s", raw::rt::WorldSimBindDynamicSettings(g_img, g_refs).c_str());
+    }
     if (IniInt("HavokFix", 1)) Log("%s", raw::rt::HavokFixInit(g_img, g_refs).c_str());
     raw::rt::ControlInit(g_img, &g_refs, g_dir, g_out, proxy ? proxy->InvalidateStateCache : nullptr);
     // GPU time per pass and the shadow atlas's viewports (rt_passes.cpp); GpuTiming=0 keeps the draw counts only
@@ -202,10 +372,52 @@ extern "C" __declspec(dllexport) void RAW_ModuleStart(SB::Proxy::ProxyInterface*
     // with the view (camera, cell, time, screen; RAW_EngineView) and the glowing emitters (rt_emitters.h)
     if (IniInt("LiveState", 1)) { raw::rt::LiveStateInit(g_img, g_out, IniInt("EmitterLights", 1) != 0); raw::rt::ViewInit(g_img); }
     raw::rt::ForensicsInit(g_out);
+    raw::rt::MemoryGuardsInit(g_img);
+    raw::rt::TerrainLodInit(g_img);
+    Log("%s", raw::rt::TerrainLodInitStatus().c_str());
+    raw::rt::DepthTopologyInit(g_img, g_refs);
+    Log("engine-remaster: %s", raw::rt::MemoryGuardsStatsJson().c_str());
     if (IniInt("SoftBody", 1)) {
         raw::rt::SoftBodyInit(g_img);
-        Log("softbody: %s", raw::rt::SoftBodyStatsJson().c_str());
+        const bool skOk = raw::rt::SkeletonPhysicsInstallHooks(reinterpret_cast<uintptr_t>(g_img.base));
+        Log("[SkeletonPhysics] Main::Draw (0x6565B0) hook: %s | %s",
+            skOk ? "ACTIVE" : "inactive (fail-closed)", raw::rt::SoftBodyStatsJson().c_str());
     }
+    raw::rt::WorldSimInit(g_img, g_dir);
+    Log("worldsim: live zero-SKSE world simulation & Skyrim.esm compressed NAVM loader started");
+    if (IniInt("EconomyLedger", 1)) {
+        Log("%s", raw::rt::EconomyLedgerInit(g_out + "\\economy_ledger.json").c_str());
+    }
+    if (IniInt("GameplayHooks", 1)) {
+        Log("%s", raw::rt::GameplayHooksInit(g_img).c_str());
+    }
+    if (IniInt("StealthSurvival", 1)) {
+        Log("%s", raw::rt::StealthSurvivalInstallHooks(g_img).c_str());
+    }
+    if (IniInt("CombatImpact", 1)) {
+        Log("%s", raw::rt::CombatImpactInit(g_img).c_str());
+    }
+    if (IniInt("MovementCombat", 1)) {
+        Log("%s", raw::rt::MovementCombatInit(g_img).c_str());
+    }
+    Log("%s", raw::rt::LiveConfigInit(g_dir + "raw_engine.ini", g_out + "\\live_status_dump.txt").c_str());
+    Log("%s", raw::rt::CrashForensicsInit(g_img, g_dir, g_out).c_str());
+    Log("%s", raw::rt::SavePapyrusGuardInit().c_str());
+    Log("%s", raw::rt::ModLoadAuditInit(g_dir).c_str());
+    Log("%s", raw::rt::NpcBehaviorInit().c_str());
+    Log("%s", raw::rt::AudioDirectorInit().c_str());
+    Log("%s", raw::rt::FlightRecorderInit(g_out).c_str());
+    Log("%s", raw::rt::FrameGovernorInit().c_str());
+    Log("%s", raw::rt::EngineHealthInit().c_str());
+    Log("%s", raw::rt::AudioBridgeInit().c_str());
+    Log("%s", raw::rt::SdkBridgeInit(g_out).c_str());
+    Log("%s", raw::rt::ProfilePresetsInit().c_str());
+    Log("%s", raw::rt::SafeRecoveryInit(g_out).c_str());
+    Log("%s", raw::rt::ShaderHotReloadInit(g_dir + "raw_shaders").c_str());
+    Log("%s", raw::rt::LiveDashboardInit(g_out).c_str());
+    Log("%s", raw::rt::HotkeyRouterInit().c_str());
+    Log("%s", raw::rt::ConsoleDiagInit(g_out).c_str());
+    Log("%s", raw::rt::BootSelfCheckInit(g_dir, g_out).c_str());
     if (proxy && proxy->RegisterPrePresent) proxy->RegisterPrePresent(&OnPresent);
     if (const std::string m = raw::rt::MissingEntries(); !m.empty()) Log("version: not in the table, left off: %s", m.c_str());
     if (IniInt("CallGraph", 0)) {
@@ -233,8 +445,37 @@ extern "C" __declspec(dllexport) int RAW_ModuleStop(char* why, unsigned n) {
         std::snprintf(why, n, "%d background thread(s) running (sample or call graph); ask again when they finish", t);
         return 0;
     }
+    raw::rt::BootSelfCheckShutdown();
+    raw::rt::ConsoleDiagShutdown();
+    raw::rt::HotkeyRouterShutdown();
+    raw::rt::LiveDashboardShutdown();
+    raw::rt::ShaderHotReloadShutdown();
+    raw::rt::SafeRecoveryShutdown();
+    raw::rt::ProfilePresetsShutdown();
+    raw::rt::SdkBridgeShutdown();
+    raw::rt::AudioBridgeShutdown();
+    raw::rt::EngineHealthShutdown();
+    raw::rt::FrameGovernorShutdown();
+    raw::rt::FlightRecorderShutdown();
+    raw::rt::AudioDirectorShutdown();
+    raw::rt::NpcBehaviorShutdown();
+    raw::rt::ModLoadAuditShutdown();
+    raw::rt::SavePapyrusGuardShutdown();
+    raw::rt::CrashForensicsShutdown();
+    raw::rt::LiveConfigShutdown();
+    raw::rt::MovementCombatShutdown();
+    raw::rt::CombatImpactShutdown();
+    raw::rt::StealthSurvivalShutdown();
+    raw::rt::GameplayHooksShutdown();
+    raw::rt::EconomyLedgerShutdown();
+    raw::rt::WorldSimShutdown();
+    raw::rt::DepthTopologyShutdown();
+    raw::rt::TerrainLodShutdown();
+    raw::rt::MemoryGuardsShutdown();
+    raw::rt::SkeletonPhysicsShutdown();
     raw::rt::SoftBodyShutdown();
     raw::rt::ForensicsShutdown();
+    raw::rt::CoreFixesShutdown();
     std::string failures;
     const size_t had = raw::rt::PatchCount(), restored = raw::rt::PatchRestoreAll(&failures);
     std::snprintf(why, n, "%zu of %zu patches restored%s%s", restored, had, failures.empty() ? "" : "; ", failures.c_str());

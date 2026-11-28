@@ -67,53 +67,64 @@ uint32_t RtScene::PlaceStaged(D3D12_RAYTRACING_INSTANCE_DESC* inst, uint32_t slo
         std::memcpy(inst + n++, &x, sizeof x);
         alphaN += (x.Flags & D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE) == 0;
         sceneTris += m_stageTris[di];
-        // Cache ONLY genuinely static off-screen world instances:
-        // 1) Never persist actor/skinned draws or meshes within 180u of the camera (player gear, weapons, helmet, torch).
-        // 2) Detect moving rigid meshes (same mi seen at a shifted world position within 8 frames -> mark dynamic & never persist!).
+        // Wave 31 Stable Off-Screen Static TLAS Persistence (fixes exterior shadow popping AND indoor window-light flicker!):
+        // 1) Never persist actor/skinned draws or meshes detected moving within 1200u (s_dynamicMeshes -> 0 player shadow trails!).
+        // 2) Allow verified stationary static architecture/walls/pillars/trees (stableFrames >= 4) to persist down to 140u
+        //    for 600 frames (~4-10 sec) so indoor room walls (<650u) and nearby trees NEVER pop out of the TLAS when turning!
         const float rx = x.Transform[0][3], ry = x.Transform[1][3], rz = x.Transform[2][3];
         const float camDistSq = rx * rx + ry * ry + rz * rz;
         const double ax = double(rx) + m_camPos[0];
         const double ay = double(ry) + m_camPos[1];
         const double az = double(rz) + m_camPos[2];
-        if (camDistSq < 180.0f * 180.0f) {
+        if (camDistSq < 1200.0f * 1200.0f) {
             auto prev = s_lastMeshPos.find(mi);
-            if (prev != s_lastMeshPos.end() && m_frame <= uint64_t(prev->second[3]) + 8) {
+            if (prev != s_lastMeshPos.end() && m_frame > uint64_t(prev->second[3]) && m_frame <= uint64_t(prev->second[3]) + 6) {
                 const double dx = ax - prev->second[0], dy = ay - prev->second[1], dz = az - prev->second[2];
-                if (dx * dx + dy * dy + dz * dz > 1.0 && dx * dx + dy * dy + dz * dz < 160000.0) {
+                const double d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 > 0.25 && d2 < 90000.0) {
                     s_dynamicMeshes.insert(mi);
                 }
             }
             s_lastMeshPos[mi] = {ax, ay, az, double(m_frame)};
         }
+        const bool isAlphaDraw = (x.Flags & D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE) == 0;
+        const float minPersistDistSq = isAlphaDraw ? (260.0f * 260.0f) : (140.0f * 140.0f);
         if (!m_draws[di].lodLand && !m_draws[di].actor && !m_draws[di].skinned &&
-            camDistSq >= 180.0f * 180.0f && s_dynamicMeshes.find(mi) == s_dynamicMeshes.end() &&
+            camDistSq >= minPersistDistSq && s_dynamicMeshes.find(mi) == s_dynamicMeshes.end() &&
             m_persistInst.size() < 24000) {
             uint64_t h = uint64_t(mi) * 0x9E3779B97F4A7C15ull;
             h ^= uint64_t(int64_t(ax * 0.25)) * 0xBF58476D1CE4E5B9ull;
             h ^= uint64_t(int64_t(ay * 0.25)) * 0x94D049BB133111EBull;
             h ^= uint64_t(int64_t(az * 0.25)) * 0x2545F4914F6CDD1Dull;
             PersistInst& pi = m_persistInst[h];
+            if (pi.lastSeen + 1 == m_frame && pi.meshIdx == mi) {
+                if (pi.stableFrames < 60000) ++pi.stableFrames;
+            } else if (pi.lastSeen != m_frame) {
+                pi.stableFrames = 1;
+            }
             pi.desc = x;
             pi.absT[0] = ax; pi.absT[1] = ay; pi.absT[2] = az;
             pi.tris = m_stageTris[di];
+            pi.meshIdx = mi;
             pi.lastSeen = m_frame;
         }
     }
-    // Re-emit recently seen frustum-culled static instances in current camera-relative space:
-    // Immediately evict any cached instance within 180u of the camera (it would be visible if still there!).
+    // Re-emit verified stationary (stableFrames >= 4) off-screen static instances in camera-relative space:
     for (auto it = m_persistInst.begin(); it != m_persistInst.end(); ) {
         const PersistInst& pi = it->second;
         const bool isAlpha = (pi.desc.Flags & D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE) == 0;
-        const uint64_t ttl = isAlpha ? 45 : 360;
+        const uint64_t ttl = isAlpha ? 180 : 600;
         const float relX = float(pi.absT[0] - m_camPos[0]);
         const float relY = float(pi.absT[1] - m_camPos[1]);
         const float relZ = float(pi.absT[2] - m_camPos[2]);
         const float relDistSq = relX * relX + relY * relY + relZ * relZ;
-        if (m_frame > pi.lastSeen + ttl || (pi.lastSeen < m_frame && relDistSq < 180.0f * 180.0f)) {
+        const float minKeepSq = isAlpha ? (260.0f * 260.0f) : (140.0f * 140.0f);
+        const bool isDyn = s_dynamicMeshes.find(pi.meshIdx) != s_dynamicMeshes.end();
+        if (isDyn || m_frame > pi.lastSeen + ttl || (pi.lastSeen < m_frame && (relDistSq < minKeepSq || pi.stableFrames < 4))) {
             it = m_persistInst.erase(it);
             continue;
         }
-        if (pi.lastSeen < m_frame && n < kMaxInstances) {
+        if (pi.lastSeen < m_frame && pi.stableFrames >= 4 && n < kMaxInstances) {
             D3D12_RAYTRACING_INSTANCE_DESC x = pi.desc;
             x.Transform[0][3] = relX;
             x.Transform[1][3] = relY;
